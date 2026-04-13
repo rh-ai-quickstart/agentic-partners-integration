@@ -458,7 +458,10 @@ class DirectHTTPStrategy(CommunicationStrategy):
                 # that prevents unauthorized access regardless of LLM output.
                 # Uses permission intersection: Effective = User Departments ∩ Agent Capabilities
                 from shared_models.identity import make_spiffe_id
-                from shared_models.opa_client import Delegation, check_agent_authorization
+                from shared_models.opa_client import (
+                    Delegation,
+                    check_agent_authorization,
+                )
 
                 caller_id = make_spiffe_id("service", "request-manager")
                 delegation = Delegation(

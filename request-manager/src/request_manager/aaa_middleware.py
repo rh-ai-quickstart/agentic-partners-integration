@@ -4,9 +4,9 @@ AAA Middleware for Request Manager.
 Builds user context with department-based access control for OPA authorization.
 """
 
-from typing import Dict, Any
-import structlog
+from typing import Any, Dict
 
+import structlog
 from shared_models.aaa_service import AAAService
 from sqlalchemy.ext.asyncio import AsyncSession
 

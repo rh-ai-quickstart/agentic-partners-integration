@@ -10,7 +10,6 @@ from request_manager.auth_endpoints import (
     decode_token,
 )
 
-
 # ---------------------------------------------------------------------------
 # _extract_departments
 # ---------------------------------------------------------------------------
@@ -267,7 +266,7 @@ class TestRefreshEndpoint:
     @patch("request_manager.auth_endpoints.httpx.AsyncClient")
     async def test_refresh_valid_token(self, mock_client_cls):
         """Valid refresh token returns new access token."""
-        from request_manager.auth_endpoints import refresh, RefreshRequest
+        from request_manager.auth_endpoints import RefreshRequest, refresh
 
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -288,7 +287,7 @@ class TestRefreshEndpoint:
     @patch("request_manager.auth_endpoints.httpx.AsyncClient")
     async def test_refresh_expired_token(self, mock_client_cls):
         """Expired refresh token raises 401."""
-        from request_manager.auth_endpoints import refresh, RefreshRequest
+        from request_manager.auth_endpoints import RefreshRequest, refresh
 
         mock_resp = MagicMock()
         mock_resp.status_code = 400
@@ -420,6 +419,7 @@ class TestDecodeKeycloakJwt:
     def test_raises_on_invalid_token(self, mock_get_client):
         """Raises PyJWTError for invalid tokens."""
         import jwt as pyjwt
+
         from request_manager.auth_endpoints import _decode_keycloak_jwt
 
         mock_client = MagicMock()
@@ -445,6 +445,7 @@ class TestLoginEndpointExtended:
     async def test_login_jwt_validation_failure(self, mock_http_cls, mock_decode_jwt, mock_aaa):
         """When Keycloak token validation fails, raise 401 (lines 160-161)."""
         import jwt as pyjwt
+
         from request_manager.auth_endpoints import LoginRequest, login
 
         mock_response = MagicMock()
@@ -516,6 +517,7 @@ class TestMeEndpointExtended:
     async def test_me_expired_token(self, mock_decode, mock_aaa):
         """Expired token raises 401 (lines 193-194)."""
         import jwt as pyjwt
+
         from request_manager.auth_endpoints import me
 
         mock_decode.side_effect = pyjwt.ExpiredSignatureError()
@@ -531,6 +533,7 @@ class TestMeEndpointExtended:
     async def test_me_invalid_token(self, mock_decode, mock_aaa):
         """Invalid JWT raises 401 (lines 195-196)."""
         import jwt as pyjwt
+
         from request_manager.auth_endpoints import me
 
         mock_decode.side_effect = pyjwt.PyJWTError("bad signature")
@@ -594,7 +597,7 @@ class TestRefreshEndpointExtended:
     @patch("request_manager.auth_endpoints.httpx.AsyncClient")
     async def test_refresh_returns_new_refresh_token(self, mock_client_cls):
         """Keycloak returns a rotated refresh token."""
-        from request_manager.auth_endpoints import refresh, RefreshRequest
+        from request_manager.auth_endpoints import RefreshRequest, refresh
 
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -615,7 +618,7 @@ class TestRefreshEndpointExtended:
     @patch("request_manager.auth_endpoints.httpx.AsyncClient")
     async def test_refresh_no_refresh_token_in_response(self, mock_client_cls):
         """When Keycloak omits refresh_token, field is None."""
-        from request_manager.auth_endpoints import refresh, RefreshRequest
+        from request_manager.auth_endpoints import RefreshRequest, refresh
 
         mock_resp = MagicMock()
         mock_resp.status_code = 200

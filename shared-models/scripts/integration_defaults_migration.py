@@ -10,16 +10,18 @@ from typing import Any, Dict
 # Add the src directory to Python path and import shared_models modules
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 try:
+    from sqlalchemy import select
+
     from shared_models import configure_logging
     from shared_models.database import get_database_manager
     from shared_models.models import UserIntegrationConfig
-    from sqlalchemy import select
 except ImportError:
     # If running in container, try direct import
+    from sqlalchemy import select
+
     from shared_models import configure_logging
     from shared_models.database import get_database_manager
     from shared_models.models import UserIntegrationConfig
-    from sqlalchemy import select
 
 # Configure logging with structured logging support
 logger = configure_logging("integration-defaults-migration")

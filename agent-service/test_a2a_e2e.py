@@ -18,21 +18,21 @@ from a2a.client import Client as A2AClient
 from a2a.client.card_resolver import A2ACardResolver
 from a2a.client.client import ClientConfig as A2AClientConfig
 from a2a.client.client_factory import ClientFactory as A2AClientFactory
-from a2a.server.apps import A2AStarletteApplication
 from a2a.server.agent_execution import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
+from a2a.server.apps import A2AStarletteApplication
 from a2a.server.events.event_queue import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.server.tasks.task_updater import TaskUpdater
 from a2a.types import (
     AgentCard,
+    DataPart,
     Message,
     Part,
     Role,
     TaskState,
     TextPart,
-    DataPart,
     TransportProtocol,
 )
 from a2a.utils import new_task

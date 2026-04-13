@@ -1,7 +1,8 @@
 """Tests for agent_service.llm.base."""
 
-import pytest
 from unittest.mock import AsyncMock
+
+import pytest
 
 from agent_service.llm.base import (
     BaseLLMClient,

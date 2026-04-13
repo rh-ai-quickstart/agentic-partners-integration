@@ -71,9 +71,9 @@ jobs:
 
       - name: Check formatting (isort)
         run: |
-          cd shared-models && uv run --with isort isort --check-only --diff .
-          cd ../agent-service && uv run --with isort isort --check-only --diff .
-          cd ../request-manager && uv run --with isort isort --check-only --diff .
+          cd shared-models && uv run --with isort isort --check-only --diff --skip .venv --skip alembic .
+          cd ../agent-service && uv run --with isort isort --check-only --diff --skip .venv .
+          cd ../request-manager && uv run --with isort isort --check-only --diff --skip .venv .
 
       - name: Type check (mypy)
         run: |

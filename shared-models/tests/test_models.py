@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 from pydantic import ValidationError
+
 from shared_models.models import (
     AgentResponse,
     ErrorResponse,

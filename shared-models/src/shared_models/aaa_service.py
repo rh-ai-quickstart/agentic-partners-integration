@@ -5,11 +5,11 @@ Authorization is now handled by OPA (Open Policy Agent) with Rego policies.
 This module retains user management and department-based access helpers.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, List, Optional
 
 import structlog
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import User, UserRole
 from .opa_client import get_user_departments_from_opa

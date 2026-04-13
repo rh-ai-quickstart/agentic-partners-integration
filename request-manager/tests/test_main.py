@@ -47,8 +47,8 @@ class TestCredentialContextMiddleware:
 
     def test_extracts_authorization_header(self):
         """Middleware should extract Authorization header."""
-        from request_manager.main import app
         from request_manager.credential_service import CredentialService
+        from request_manager.main import app
 
         client = TestClient(app)
 
@@ -65,8 +65,8 @@ class TestCredentialContextMiddleware:
 
     def test_extracts_user_id_header(self):
         """Middleware extracts X-User-ID header."""
-        from request_manager.main import app
         from request_manager.credential_service import CredentialService
+        from request_manager.main import app
 
         client = TestClient(app)
 
@@ -81,8 +81,8 @@ class TestCredentialContextMiddleware:
 
     def test_extracts_session_id_header(self):
         """Middleware extracts X-Session-ID header."""
-        from request_manager.main import app
         from request_manager.credential_service import CredentialService
+        from request_manager.main import app
 
         client = TestClient(app)
 
@@ -97,8 +97,8 @@ class TestCredentialContextMiddleware:
 
     def test_clears_credentials_after_request(self):
         """Credentials are always cleared after request processing."""
-        from request_manager.main import app
         from request_manager.credential_service import CredentialService
+        from request_manager.main import app
 
         client = TestClient(app)
 
@@ -118,8 +118,8 @@ class TestCredentialContextMiddleware:
 
     def test_clears_credentials_on_error(self):
         """Credentials are cleared even when the request handler errors."""
-        from request_manager.main import app
         from request_manager.credential_service import CredentialService
+        from request_manager.main import app
 
         client = TestClient(app)
 
@@ -185,6 +185,7 @@ class TestSessionCleanupTask:
     async def test_cleanup_task_runs_and_cleans(self):
         """Cleanup task expires old sessions and deletes inactive ones (lines 33-85)."""
         import asyncio
+
         from request_manager.main import _session_cleanup_task
 
         mock_db = AsyncMock()
@@ -222,6 +223,7 @@ class TestSessionCleanupTask:
     async def test_cleanup_task_handles_errors(self):
         """Cleanup task continues running even on errors (lines 78-85)."""
         import asyncio
+
         from request_manager.main import _session_cleanup_task
 
         call_count = 0
@@ -252,6 +254,7 @@ class TestSessionCleanupTask:
     async def test_cleanup_task_cancelled(self):
         """Cleanup task handles CancelledError gracefully (lines 75-77)."""
         import asyncio
+
         from request_manager.main import _session_cleanup_task
 
         async def cancel_immediately(seconds):
@@ -264,6 +267,7 @@ class TestSessionCleanupTask:
     async def test_cleanup_task_reads_env_vars(self, monkeypatch):
         """Cleanup task reads configuration from env vars (lines 37-41)."""
         import asyncio
+
         from request_manager.main import _session_cleanup_task
 
         monkeypatch.setenv("SESSION_CLEANUP_INTERVAL_HOURS", "6")
@@ -332,10 +336,10 @@ class TestExceptionHandlersExtended:
 
     def test_http_exception_returns_structured_error(self):
         """HTTPException handler returns ErrorResponse format (lines 214-223)."""
-        from request_manager.main import app
-
         # Add a temporary route that raises HTTPException
         from fastapi import HTTPException as FastAPIHTTPException
+
+        from request_manager.main import app
 
         @app.get("/test-http-error")
         async def raise_http_error():
@@ -382,8 +386,8 @@ class TestCredentialContextMiddlewareExtended:
 
     def test_no_headers_still_works(self):
         """Middleware works fine when no credential headers are present."""
-        from request_manager.main import app
         from request_manager.credential_service import CredentialService
+        from request_manager.main import app
 
         client = TestClient(app)
         resp = client.get("/health")
@@ -396,8 +400,8 @@ class TestCredentialContextMiddlewareExtended:
 
     def test_user_id_from_query_param(self):
         """Middleware extracts user_id from query params (line 162)."""
-        from request_manager.main import app
         from request_manager.credential_service import CredentialService
+        from request_manager.main import app
 
         client = TestClient(app)
         resp = client.get("/health?user_id=query-user")
@@ -408,8 +412,8 @@ class TestCredentialContextMiddlewareExtended:
 
     def test_session_id_from_query_param(self):
         """Middleware extracts session_id from query params (line 167)."""
-        from request_manager.main import app
         from request_manager.credential_service import CredentialService
+        from request_manager.main import app
 
         client = TestClient(app)
         resp = client.get("/health?session_id=query-sess")

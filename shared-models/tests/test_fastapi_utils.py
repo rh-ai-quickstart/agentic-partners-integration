@@ -4,7 +4,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from shared_models.fastapi_utils import create_health_check_endpoint, create_shared_lifespan
+from shared_models.fastapi_utils import (
+    create_health_check_endpoint,
+    create_shared_lifespan,
+)
 
 
 class TestCreateHealthCheckEndpoint:

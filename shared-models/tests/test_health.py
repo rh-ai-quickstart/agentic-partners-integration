@@ -2,7 +2,7 @@
 
 from unittest.mock import AsyncMock
 
-from shared_models.health import HealthCheckResult, HealthChecker, simple_health_check
+from shared_models.health import HealthChecker, HealthCheckResult, simple_health_check
 
 
 class TestHealthCheckResult:

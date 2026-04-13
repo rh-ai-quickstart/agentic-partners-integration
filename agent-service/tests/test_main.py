@@ -28,6 +28,7 @@ def patched_app():
     ):
         # Force re-import of main to pick up the patches
         import importlib
+
         import agent_service.main
 
         importlib.reload(agent_service.main)
@@ -354,9 +355,8 @@ class TestInvokeAgent:
         self, mock_agent_manager_cls, mock_httpx_cls, patched_app
     ):
         """Lines 323-329: httpx.HTTPError during RAG call returns 503."""
-        from fastapi.testclient import TestClient
-
         import httpx
+        from fastapi.testclient import TestClient
 
         mock_agent = AsyncMock()
         mock_manager = MagicMock()

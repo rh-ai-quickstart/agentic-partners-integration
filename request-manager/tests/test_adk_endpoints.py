@@ -7,7 +7,6 @@ from fastapi import HTTPException
 
 from request_manager.adk_endpoints import _append_conversation_turn
 
-
 # ---------------------------------------------------------------------------
 # _append_conversation_turn
 # ---------------------------------------------------------------------------

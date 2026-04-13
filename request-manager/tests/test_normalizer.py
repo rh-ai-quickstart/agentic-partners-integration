@@ -1,8 +1,9 @@
 """Tests for request normalizer."""
 
+from shared_models.models import IntegrationType
+
 from request_manager.normalizer import RequestNormalizer
 from request_manager.schemas import WebRequest
-from shared_models.models import IntegrationType
 
 
 class TestRequestNormalizer:

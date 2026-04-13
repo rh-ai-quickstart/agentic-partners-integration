@@ -6,6 +6,7 @@ for the SPIFFE identity module.
 """
 
 from fastapi.testclient import TestClient
+
 from request_manager.main import app
 
 

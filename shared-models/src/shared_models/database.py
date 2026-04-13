@@ -7,6 +7,7 @@ from typing import Any, AsyncGenerator
 import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
 logger = structlog.get_logger()
 
 

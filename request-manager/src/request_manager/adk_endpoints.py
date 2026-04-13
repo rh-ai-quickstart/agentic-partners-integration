@@ -4,20 +4,20 @@ ADK-Compatible API Endpoints.
 Provides Google Agent Development Kit (ADK) compatible endpoints for web UI integration.
 """
 
-from typing import Optional, List, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any, Dict, List, Optional
 
 import structlog
-
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, Field
+from shared_models.aaa_service import AAAService
 from shared_models.database import get_db
+from shared_models.models import IntegrationType
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from .aaa_middleware import AAAMiddleware
 from .auth_endpoints import decode_token
-from .communication_strategy import get_communication_strategy, UnifiedRequestProcessor
-from shared_models.aaa_service import AAAService
+from .communication_strategy import UnifiedRequestProcessor, get_communication_strategy
 from .schemas import WebRequest
-from shared_models.models import IntegrationType
 
 logger = structlog.get_logger()
 

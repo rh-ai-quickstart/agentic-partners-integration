@@ -15,6 +15,7 @@ from shared_models import (
 )
 from shared_models.models import ErrorResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from . import __version__
 from .communication_strategy import (
     UnifiedRequestProcessor,
@@ -132,14 +133,17 @@ app.add_middleware(
 
 # Add SPIFFE identity middleware
 from shared_models.identity_middleware import IdentityMiddleware
+
 app.add_middleware(IdentityMiddleware)
 
 # Include auth endpoints (mock OIDC / real Keycloak)
 from .auth_endpoints import router as auth_router
+
 app.include_router(auth_router)
 
 # Include ADK (Agent Development Kit) web UI compatible endpoints
 from .adk_endpoints import router as adk_router
+
 app.include_router(adk_router)
 
 

@@ -13,6 +13,7 @@ from shared_models import (
     simple_health_check,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from . import __version__
 from .agents import AgentManager
 from .schemas import AgentInvokeRequest, AgentInvokeResponse

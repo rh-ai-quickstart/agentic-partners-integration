@@ -9,15 +9,14 @@ JWTs are validated via Keycloak's JWKS endpoint (RS256).
 import os
 from typing import Optional
 
-import jwt
 import httpx
+import jwt
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from shared_models.database import get_db
 from shared_models.aaa_service import AAAService
+from shared_models.database import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = structlog.get_logger()
 

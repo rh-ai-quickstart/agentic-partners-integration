@@ -10,7 +10,6 @@ from request_manager.communication_strategy import (
     get_communication_strategy,
 )
 
-
 # ---------------------------------------------------------------------------
 # get_communication_strategy
 # ---------------------------------------------------------------------------
@@ -489,28 +488,36 @@ class TestShouldFilterSessionsByIntegrationType:
 
     def test_default_returns_false(self, monkeypatch):
         """Default (env var not set) should return False."""
-        from request_manager.communication_strategy import _should_filter_sessions_by_integration_type
+        from request_manager.communication_strategy import (
+            _should_filter_sessions_by_integration_type,
+        )
 
         monkeypatch.delenv("SESSION_PER_INTEGRATION_TYPE", raising=False)
         assert _should_filter_sessions_by_integration_type() is False
 
     def test_returns_true_when_set(self, monkeypatch):
         """When env var is 'true', returns True."""
-        from request_manager.communication_strategy import _should_filter_sessions_by_integration_type
+        from request_manager.communication_strategy import (
+            _should_filter_sessions_by_integration_type,
+        )
 
         monkeypatch.setenv("SESSION_PER_INTEGRATION_TYPE", "true")
         assert _should_filter_sessions_by_integration_type() is True
 
     def test_returns_true_case_insensitive(self, monkeypatch):
         """Case-insensitive comparison for 'TRUE'."""
-        from request_manager.communication_strategy import _should_filter_sessions_by_integration_type
+        from request_manager.communication_strategy import (
+            _should_filter_sessions_by_integration_type,
+        )
 
         monkeypatch.setenv("SESSION_PER_INTEGRATION_TYPE", "TRUE")
         assert _should_filter_sessions_by_integration_type() is True
 
     def test_returns_false_for_other_values(self, monkeypatch):
         """Any value other than 'true' returns False."""
-        from request_manager.communication_strategy import _should_filter_sessions_by_integration_type
+        from request_manager.communication_strategy import (
+            _should_filter_sessions_by_integration_type,
+        )
 
         monkeypatch.setenv("SESSION_PER_INTEGRATION_TYPE", "yes")
         assert _should_filter_sessions_by_integration_type() is False
@@ -605,6 +612,7 @@ class TestCreateOrGetSessionSharedExtended:
     async def test_provided_session_id_found_and_reused(self):
         """When session_id is provided in metadata and found, reuse it (lines 78-104)."""
         from datetime import datetime, timedelta, timezone
+
         from request_manager.communication_strategy import create_or_get_session_shared
 
         # Create a mock session that has not expired
@@ -643,6 +651,7 @@ class TestCreateOrGetSessionSharedExtended:
     async def test_provided_session_id_expired_creates_new(self):
         """When provided session_id is expired, create a new session (lines 105-110)."""
         from datetime import datetime, timedelta, timezone
+
         from request_manager.communication_strategy import create_or_get_session_shared
 
         # Expired provided session
