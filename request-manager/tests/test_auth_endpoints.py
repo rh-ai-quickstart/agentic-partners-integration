@@ -264,37 +264,42 @@ class TestMeEndpoint:
 class TestRefreshEndpoint:
     """Tests for the /auth/refresh endpoint handler."""
 
-    @patch("request_manager.auth_endpoints._decode_keycloak_jwt")
-    async def test_refresh_valid_token(self, mock_decode):
-        """Valid token should be returned as-is."""
-        from request_manager.auth_endpoints import refresh
+    @patch("request_manager.auth_endpoints.httpx.AsyncClient")
+    async def test_refresh_valid_token(self, mock_client_cls):
+        """Valid refresh token returns new access token."""
+        from request_manager.auth_endpoints import refresh, RefreshRequest
 
-        mock_decode.return_value = {"email": "user@example.com"}
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "access_token": "new-access-token",
+            "refresh_token": "new-refresh-token",
+        }
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_resp
+        mock_client.__aenter__.return_value = mock_client
+        mock_client_cls.return_value = mock_client
 
-        resp = await refresh(authorization="Bearer still-valid")
+        resp = await refresh(request=RefreshRequest(refresh_token="old-refresh"))
 
-        assert resp.token == "still-valid"
+        assert resp.token == "new-access-token"
+        assert resp.refresh_token == "new-refresh-token"
 
-    async def test_refresh_missing_auth(self):
-        """Missing auth header raises 401."""
-        from request_manager.auth_endpoints import refresh
+    @patch("request_manager.auth_endpoints.httpx.AsyncClient")
+    async def test_refresh_expired_token(self, mock_client_cls):
+        """Expired refresh token raises 401."""
+        from request_manager.auth_endpoints import refresh, RefreshRequest
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 400
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_resp
+        mock_client.__aenter__.return_value = mock_client
+        mock_client_cls.return_value = mock_client
 
         with pytest.raises(HTTPException) as exc_info:
-            await refresh(authorization=None)
+            await refresh(request=RefreshRequest(refresh_token="expired-refresh"))
         assert exc_info.value.status_code == 401
-
-    @patch("request_manager.auth_endpoints._decode_keycloak_jwt")
-    async def test_refresh_expired_token(self, mock_decode):
-        """Expired token raises 401."""
-        from request_manager.auth_endpoints import refresh
-        import jwt as pyjwt
-
-        mock_decode.side_effect = pyjwt.ExpiredSignatureError()
-
-        with pytest.raises(HTTPException) as exc_info:
-            await refresh(authorization="Bearer expired")
-        assert exc_info.value.status_code == 401
-        assert "expired" in exc_info.value.detail.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -586,23 +591,41 @@ class TestMeEndpointExtended:
 class TestRefreshEndpointExtended:
     """Extended tests for /auth/refresh endpoint."""
 
-    @patch("request_manager.auth_endpoints._decode_keycloak_jwt")
-    async def test_refresh_invalid_jwt(self, mock_decode):
-        """Invalid JWT on refresh raises 401 (lines 231-232)."""
-        import jwt as pyjwt
-        from request_manager.auth_endpoints import refresh
+    @patch("request_manager.auth_endpoints.httpx.AsyncClient")
+    async def test_refresh_returns_new_refresh_token(self, mock_client_cls):
+        """Keycloak returns a rotated refresh token."""
+        from request_manager.auth_endpoints import refresh, RefreshRequest
 
-        mock_decode.side_effect = pyjwt.PyJWTError("corrupt token")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "access_token": "rotated-access",
+            "refresh_token": "rotated-refresh",
+        }
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_resp
+        mock_client.__aenter__.return_value = mock_client
+        mock_client_cls.return_value = mock_client
 
-        with pytest.raises(HTTPException) as exc_info:
-            await refresh(authorization="Bearer corrupt-jwt")
-        assert exc_info.value.status_code == 401
-        assert "Invalid token" in exc_info.value.detail
+        resp = await refresh(request=RefreshRequest(refresh_token="old"))
 
-    async def test_refresh_non_bearer_auth(self):
-        """Non-Bearer auth header on refresh raises 401."""
-        from request_manager.auth_endpoints import refresh
+        assert resp.token == "rotated-access"
+        assert resp.refresh_token == "rotated-refresh"
 
-        with pytest.raises(HTTPException) as exc_info:
-            await refresh(authorization="Basic abc123")
-        assert exc_info.value.status_code == 401
+    @patch("request_manager.auth_endpoints.httpx.AsyncClient")
+    async def test_refresh_no_refresh_token_in_response(self, mock_client_cls):
+        """When Keycloak omits refresh_token, field is None."""
+        from request_manager.auth_endpoints import refresh, RefreshRequest
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"access_token": "new-token"}
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_resp
+        mock_client.__aenter__.return_value = mock_client
+        mock_client_cls.return_value = mock_client
+
+        resp = await refresh(request=RefreshRequest(refresh_token="rt"))
+
+        assert resp.token == "new-token"
+        assert resp.refresh_token is None

@@ -826,14 +826,18 @@
 
         async function refreshToken() {
             try {
+                const rt = localStorage.getItem('refresh_token');
+                if (!rt) throw new Error('no refresh token');
                 const r = await fetch(`${API_ENDPOINT}/auth/refresh`, {
                     method: 'POST',
-                    headers: { 'Authorization': `Bearer ${token}` }
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ refresh_token: rt })
                 });
                 if (!r.ok) throw new Error('fail');
                 const d = await r.json();
                 token = d.token;
                 localStorage.setItem('jwt_token', token);
+                if (d.refresh_token) localStorage.setItem('refresh_token', d.refresh_token);
             } catch (e) {
                 clearInterval(refreshInterval);
                 showModal({
@@ -851,7 +855,7 @@
         }
 
         function startTokenRefresh() {
-            refreshInterval = setInterval(refreshToken, 4 * 60 * 1000);
+            refreshInterval = setInterval(refreshToken, 25 * 60 * 1000);
         }
 
         // ── Init ──

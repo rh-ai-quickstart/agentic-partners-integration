@@ -11,8 +11,8 @@
   "bruteForceProtected": true,
   "permanentLockout": false,
   "failureFactor": 30,
-  "accessTokenLifespan": 300,
-  "ssoSessionIdleTimeout": 1800,
+  "accessTokenLifespan": 1800,
+  "ssoSessionIdleTimeout": 3600,
   "ssoSessionMaxLifespan": 36000,
   "roles": {
     "realm": [

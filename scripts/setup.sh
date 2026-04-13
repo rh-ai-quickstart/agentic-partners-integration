@@ -15,17 +15,22 @@ cd "$PROJECT_ROOT"
 
 # Auto-load .env if GOOGLE_API_KEY not set
 if [ -z "$GOOGLE_API_KEY" ] && [ -f ".env" ]; then
-    echo "Loading GOOGLE_API_KEY from .env..."
+    echo "Loading environment from .env..."
     source .env
 fi
 
-# Check prerequisites
+# Prompt for GOOGLE_API_KEY if still not set
 if [ -z "$GOOGLE_API_KEY" ]; then
-    echo "ERROR: GOOGLE_API_KEY not set"
+    echo "GOOGLE_API_KEY is not set."
     echo ""
-    echo "Set it first:"
-    echo "  export GOOGLE_API_KEY=your-api-key"
-    exit 1
+    read -rp "Enter your Google API key: " GOOGLE_API_KEY
+    if [ -z "$GOOGLE_API_KEY" ]; then
+        echo "ERROR: GOOGLE_API_KEY is required."
+        exit 1
+    fi
+    # Save to .env so future runs pick it up automatically
+    echo "GOOGLE_API_KEY=${GOOGLE_API_KEY}" >> .env
+    echo "Saved to .env"
 fi
 
 # Colors
@@ -34,10 +39,14 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # ============================================
-# 1. BUILD CONTAINERS (FRESH)
+# 1. BUILD CONTAINERS (skip if SKIP_BUILD=true)
 # ============================================
-echo -e "${YELLOW}Building fresh containers...${NC}"
-bash scripts/build_containers.sh
+if [ "${SKIP_BUILD}" = "true" ]; then
+    echo -e "${YELLOW}Skipping build (SKIP_BUILD=true)${NC}"
+else
+    echo -e "${YELLOW}Building containers...${NC}"
+    bash scripts/build_containers.sh
+fi
 
 # ============================================
 # 2. START INFRASTRUCTURE
@@ -215,15 +224,37 @@ docker run -d \
     partner-rag-api:latest
 echo "  RAG API starting..."
 
-# Wait for services
+# Wait for all services to be ready
 echo "  Waiting for services to be ready..."
-for i in {1..30}; do
-    if curl -s http://localhost:8001/health > /dev/null 2>&1 && \
-       curl -s http://localhost:8000/health > /dev/null 2>&1; then
+AGENT_READY=false
+RM_READY=false
+RAG_READY=false
+for i in {1..60}; do
+    if [ "$AGENT_READY" = false ] && curl -sf http://localhost:8001/health > /dev/null 2>&1; then
+        echo "  Agent service ready"
+        AGENT_READY=true
+    fi
+    if [ "$RM_READY" = false ] && curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+        echo "  Request manager ready"
+        RM_READY=true
+    fi
+    if [ "$RAG_READY" = false ] && curl -sf http://localhost:8003/health > /dev/null 2>&1; then
+        echo "  RAG API ready"
+        RAG_READY=true
+    fi
+    if [ "$AGENT_READY" = true ] && [ "$RM_READY" = true ] && [ "$RAG_READY" = true ]; then
         break
     fi
     sleep 2
 done
+
+if [ "$AGENT_READY" = false ] || [ "$RM_READY" = false ] || [ "$RAG_READY" = false ]; then
+    echo -e "  ${YELLOW}WARNING: Some services failed to start:${NC}"
+    [ "$AGENT_READY" = false ] && echo "    - Agent service (port 8001)"
+    [ "$RM_READY" = false ] && echo "    - Request manager (port 8000)"
+    [ "$RAG_READY" = false ] && echo "    - RAG API (port 8003)"
+    echo "  Check logs: docker logs <container-name>"
+fi
 
 # ============================================
 # 5. INITIALIZE DATA
@@ -236,8 +267,21 @@ docker cp rag-service/ingest_knowledge.py partner-rag-api-full:/app/
 docker cp data partner-rag-api-full:/app/ 2>/dev/null || true
 
 echo "  Ingesting RAG knowledge..."
-docker exec -e GOOGLE_API_KEY="${GOOGLE_API_KEY}" partner-rag-api-full python /app/ingest_knowledge.py > /dev/null 2>&1 || true
-echo "  RAG knowledge ingested"
+INGEST_OK=false
+for attempt in 1 2 3; do
+    if docker exec -e "GOOGLE_API_KEY=${GOOGLE_API_KEY}" partner-rag-api-full python /app/ingest_knowledge.py 2>&1; then
+        INGEST_OK=true
+        break
+    fi
+    echo "  Ingestion attempt $attempt failed, retrying in 10s..."
+    sleep 10
+done
+if [ "$INGEST_OK" = true ]; then
+    echo "  RAG knowledge ingested"
+else
+    echo -e "  ${YELLOW}WARNING: RAG ingestion failed after 3 attempts. RAG queries may return empty results.${NC}"
+    echo "  You can retry manually: source .env && docker exec -e GOOGLE_API_KEY=\${GOOGLE_API_KEY} partner-rag-api-full python /app/ingest_knowledge.py"
+fi
 
 # Start PF Chat UI
 echo "  Starting PF Chat UI..."
@@ -250,32 +294,77 @@ docker run -d \
 echo "  PF Chat UI started"
 
 # ============================================
-# 6. DONE
+# 6. VERIFY & DONE
 # ============================================
 echo ""
+echo -e "${YELLOW}Verifying setup...${NC}"
+
+CHECKS_PASSED=0
+CHECKS_TOTAL=6
+
+# Check each service
+for svc in "PostgreSQL:partner-postgres-full:5433" "Keycloak:localhost:9090/health/ready" "OPA:localhost:8181/health"; do
+    name="${svc%%:*}"
+    if echo "$svc" | grep -q "postgres"; then
+        docker exec partner-postgres-full pg_isready -U user -d partner_agent >/dev/null 2>&1 && \
+            CHECKS_PASSED=$((CHECKS_PASSED + 1)) && echo -e "  ${GREEN}OK${NC}  $name" || echo -e "  FAIL  $name"
+    else
+        endpoint="${svc#*:}"
+        curl -sf "http://$endpoint" > /dev/null 2>&1 && \
+            CHECKS_PASSED=$((CHECKS_PASSED + 1)) && echo -e "  ${GREEN}OK${NC}  $name" || echo -e "  FAIL  $name"
+    fi
+done
+for svc in "Request Manager:8000" "Agent Service:8001" "RAG API:8003"; do
+    name="${svc%%:*}"
+    port="${svc#*:}"
+    curl -sf "http://localhost:$port/health" > /dev/null 2>&1 && \
+        CHECKS_PASSED=$((CHECKS_PASSED + 1)) && echo -e "  ${GREEN}OK${NC}  $name" || echo -e "  FAIL  $name"
+done
+
+# Check RAG data
+RAG_DOCS=$(curl -sf http://localhost:8003/collections 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(sum(c['count'] for c in d['collections']))" 2>/dev/null || echo "0")
+if [ "$RAG_DOCS" -gt 0 ] 2>/dev/null; then
+    echo -e "  ${GREEN}OK${NC}  RAG knowledge base ($RAG_DOCS documents)"
+else
+    echo -e "  ${YELLOW}WARN${NC}  RAG knowledge base is empty"
+fi
+
+echo ""
 echo "════════════════════════════════════════════════════════════"
-echo -e "${GREEN}Setup Complete!${NC}"
+if [ "$CHECKS_PASSED" -eq "$CHECKS_TOTAL" ]; then
+    echo -e "${GREEN}Setup Complete! All $CHECKS_TOTAL services running.${NC}"
+else
+    echo -e "${YELLOW}Setup Complete ($CHECKS_PASSED/$CHECKS_TOTAL services running)${NC}"
+fi
 echo "════════════════════════════════════════════════════════════"
 echo ""
-echo "Services Running:"
-echo "  Web UI:     http://localhost:3000"
-echo "  API:        http://localhost:8000"
-echo "  Agent:      http://localhost:8001"
-echo "  RAG API:    http://localhost:8003"
-echo "  Keycloak:   http://localhost:8090 (admin/admin123)"
-echo "  OPA:        http://localhost:8181"
+echo "Open the Web UI to get started:"
 echo ""
-echo "Login Credentials (Keycloak):"
-echo "  carlos@example.com / carlos123 (Software dept)"
-echo "  luis@example.com / luis123 (Network dept)"
-echo "  sharon@example.com / sharon123 (All depts - Admin)"
-echo "  josh@example.com / josh123 (No dept access)"
+echo -e "  ${GREEN}http://localhost:3000${NC}"
 echo ""
-echo "Users are managed in Keycloak. DB records are auto-created"
-echo "on first login from Keycloak JWT claims."
+echo "Login with one of these test users:"
 echo ""
-echo "Next Steps:"
-echo "  Test: bash scripts/test.sh"
-echo "  Logs: docker logs -f partner-request-manager-full"
-echo "  Stop: bash scripts/stop.sh"
+echo "  Email                    Password     Departments"
+echo "  ───────────────────────  ───────────  ──────────────────────"
+echo "  carlos@example.com       carlos123    software"
+echo "  luis@example.com         luis123       network"
+echo "  sharon@example.com       sharon123    software, network (admin)"
+echo "  josh@example.com         josh123      (none - access denied)"
+echo ""
+echo "Each user can only chat with agents matching their departments."
+echo "Authorization is enforced by OPA policy (departments x agent capabilities)."
+echo ""
+echo "Other Services:"
+echo "  API:        http://localhost:8000    Request Manager"
+echo "  Agent:      http://localhost:8001    Agent Service"
+echo "  RAG:        http://localhost:8003    Knowledge Base API"
+echo "  Keycloak:   http://localhost:8090    Identity Provider (admin/admin123)"
+echo "  OPA:        http://localhost:8181    Policy Engine"
+echo ""
+echo "Commands:"
+echo "  make test          Run E2E tests against running services"
+echo "  make test-unit     Run unit tests (no containers needed)"
+echo "  make stop          Stop all containers"
+echo "  make clean         Stop and remove all containers"
+echo "  make logs-*        Tail service logs (e.g. make logs-request-manager)"
 echo ""

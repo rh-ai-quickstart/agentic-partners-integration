@@ -99,6 +99,7 @@ class LoginUser(BaseModel):
 
 class LoginResponse(BaseModel):
     token: str
+    refresh_token: Optional[str] = None
     user: LoginUser
 
 
@@ -108,8 +109,13 @@ class MeResponse(BaseModel):
     departments: list[str]
 
 
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
 class RefreshResponse(BaseModel):
     token: str
+    refresh_token: Optional[str] = None
 
 
 class ConfigResponse(BaseModel):
@@ -173,6 +179,7 @@ async def login(
 
     return LoginResponse(
         token=access_token,
+        refresh_token=token_data.get("refresh_token"),
         user=LoginUser(email=email, role=role, departments=departments),
     )
 
@@ -207,29 +214,29 @@ async def me(
 
 @router.post("/refresh", response_model=RefreshResponse)
 async def refresh(
-    authorization: Optional[str] = Header(None),
+    request: RefreshRequest,
 ):
-    """Validate an existing JWT. If still valid, return it.
+    """Exchange a Keycloak refresh token for a new access token."""
+    token_url = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token"
 
-    Full refresh_token flow (using Keycloak's refresh_token grant) can be
-    added when needed. For now, the UI refreshes by re-validating the
-    current access token.
-    """
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Authorization header required")
-
-    token = authorization[7:]
-
-    try:
-        _decode_keycloak_jwt(token)
-        return RefreshResponse(token=token)
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(
-            status_code=401,
-            detail="Token expired. Please login again.",
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            token_url,
+            data={
+                "grant_type": "refresh_token",
+                "client_id": KEYCLOAK_CLIENT_ID,
+                "refresh_token": request.refresh_token,
+            },
         )
-    except jwt.PyJWTError as e:
-        raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=401, detail="Refresh token expired. Please login again.")
+
+    token_data = resp.json()
+    return RefreshResponse(
+        token=token_data["access_token"],
+        refresh_token=token_data.get("refresh_token"),
+    )
 
 
 @router.get("/config", response_model=ConfigResponse)

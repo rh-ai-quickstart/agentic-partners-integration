@@ -6,6 +6,17 @@
 
 Users sign in, describe their issue, and the system routes them to the right specialist agent (software support or network support) based on their permissions. Agents query a knowledge base of historical support tickets via RAG to provide grounded, context-aware responses. Every request is logged with full accounting.
 
+## TL;DR
+
+```bash
+git clone <repo-url>
+cd agentic-partners-integration
+export GOOGLE_API_KEY=your-key-here   # or add to .env
+make setup                            # builds, starts, and configures everything
+```
+
+Open http://localhost:3000 and log in as `carlos@example.com` / `carlos123`.
+
 ## Quick Start
 
 ### Prerequisites
@@ -13,19 +24,26 @@ Users sign in, describe their issue, and the system routes them to the right spe
 - Docker
 - Google API Key (for Gemini LLM and embeddings)
 
-### One-Command Setup
+### Setup
 
 ```bash
-export GOOGLE_API_KEY=your-key-here
+git clone <repo-url>
+cd agentic-partners-integration
 make setup
 ```
 
-This builds containers, starts all services, runs migrations, creates users, ingests RAG knowledge, and launches the web UI. When it finishes:
+On first run it prompts for your Google API key and saves it to `.env`. Then it builds all container images, starts infrastructure (PostgreSQL, ChromaDB, Keycloak, OPA), runs database migrations, starts application services, ingests the RAG knowledge base, and launches the web UI. At the end it verifies all services are healthy and prints login credentials.
 
-- **Web UI:** http://localhost:3000
-- **API:** http://localhost:8000
-- **Agent Service:** http://localhost:8001
-- **RAG API:** http://localhost:8003
+**Services:**
+
+| Service | URL |
+|---------|-----|
+| Web UI | http://localhost:3000 |
+| Request Manager API | http://localhost:8000 |
+| Agent Service | http://localhost:8001 |
+| RAG API | http://localhost:8003 |
+| Keycloak (admin) | http://localhost:8090 |
+| OPA | http://localhost:8181 |
 
 ### Test Users
 
@@ -754,68 +772,81 @@ curl -X POST http://localhost:8001/api/v1/agents/routing-agent/invoke \
 
 ### Makefile Targets
 
-The project uses a `Makefile` for common operations:
-
 ```bash
 make help                  # Show all available targets
-
-# Setup & Deploy
-make setup                 # Build containers, start services, initialize data
-make build                 # Build all container images
-make stop                  # Stop all running containers
-make clean                 # Stop and remove all containers, volumes, and network
-
-# Testing
-make test                  # Run end-to-end tests against running services
-make test-unit             # Run unit tests for all packages
-make test-shared-models    # Run shared-models unit tests
-make test-request-manager  # Run request-manager unit tests
-make test-agent-service    # Run agent-service unit tests
-
-# Code Quality
-make format                # Run isort and Black formatting
-make lint                  # Run flake8, isort check, and mypy
-make lint-shared-models    # Run mypy on shared-models
-make lint-agent-service    # Run mypy on agent-service
-make lint-request-manager  # Run mypy on request-manager
-
-# Lockfile Management
-make check-lockfiles       # Check if all uv.lock files are up-to-date
-make update-lockfiles      # Update all uv.lock files
-
-# Dependencies
-make install               # Install all package dependencies locally (via uv)
-make reinstall             # Force reinstall all dependencies
-
-# Logs
-make logs-request-manager  # Tail request-manager container logs
-make logs-agent-service    # Tail agent-service container logs
-make logs-rag-api          # Tail RAG API container logs
 ```
+
+**Setup & Deploy:**
+
+| Command | What it does |
+|---------|-------------|
+| `make setup` | Full stack: build images, start all containers, run migrations, ingest RAG data, verify health. This is the only command you need. |
+| `make build` | Build container images only (no start). Useful for pre-building before `setup`. |
+| `make stop` | Stop all running containers (preserves data). |
+| `make clean` | Stop and remove all containers, volumes, and network. Run `make setup` again after this. |
+
+**Testing:**
+
+| Command | What it does |
+|---------|-------------|
+| `make test` | Run E2E tests against running services (requires `make setup` first). |
+| `make test-unit` | Run unit tests for all packages (no containers needed). |
+| `make test-coverage` | Run unit tests with coverage report. |
+
+**Development:**
+
+| Command | What it does |
+|---------|-------------|
+| `make install` | Install all package dependencies locally (via uv). |
+| `make format` | Run isort and Black formatting. |
+| `make lint` | Run flake8, isort check, and mypy. |
+| `make logs-request-manager` | Tail request-manager container logs. |
+| `make logs-agent-service` | Tail agent-service container logs. |
+| `make logs-rag-api` | Tail RAG API container logs. |
 
 ### Build Containers
 
-```bash
-# Build all service images (including web UI)
-bash scripts/build_containers.sh
+`make setup` builds automatically. To build images without starting:
 
-# Or individually
+```bash
+make build
+```
+
+To build individual images:
+
+```bash
 docker build -t partner-agent-service:latest -f agent-service/Containerfile .
 docker build -t partner-request-manager:latest -f request-manager/Containerfile .
 docker build -t partner-rag-api:latest -f rag-service/Containerfile .
 docker build -t partner-pf-chat-ui:latest -f pf-chat-ui/Containerfile .
 ```
 
-### Deployment Options
+### Typical Workflow
 
-There are two ways to run the stack locally:
+```bash
+make setup          # First time: build + start everything (~3-5 min)
+make test           # Verify all 24 E2E tests pass
+# ... use the UI at http://localhost:3000 ...
+make stop           # Done for the day
 
-| Method | Command | Ports | Best For |
-|--------|---------|-------|----------|
-| Setup script | `make setup` | PG:5433, Chroma:8002, RAG:8003 | Production-like setup, first-time users |
-| Docker Compose | `docker compose up` | PG:5432, Chroma:8100, RAG:8080 | Development, quick iteration |
+make setup          # Next time: rebuilds and starts fresh
+make clean          # When you want to wipe everything
+```
 
-Both methods expose the Web UI on port 3000, Request Manager on 8000, and Agent Service on 8001.
+`make setup` is idempotent — it stops existing containers, rebuilds images, and starts fresh every time.
+
+### Alternative: Docker Compose
+
+```bash
+docker compose up   # Starts stack with different port mappings
+```
+
+| Method | Command | PG Port | Chroma Port | RAG Port |
+|--------|---------|---------|-------------|----------|
+| Makefile (recommended) | `make setup` | 5433 | 8002 | 8003 |
+| Docker Compose | `docker compose up` | 5432 | 8100 | 8080 |
+
+Both expose Web UI on 3000, Request Manager on 8000, and Agent Service on 8001.
 
 ---
 
@@ -925,22 +956,11 @@ The RAG service has no caching, no reranking, and uses a one-time ingestion scri
 | Web UI (nginx) | Plain HTTP, no headers | **TLS + security headers** (Caddy or hardened nginx) | Medium |
 | RAG Service | No cache, no reranking | **Add Redis cache + reranker** | Low |
 
-### Stop Everything
+### Stop / Clean
 
 ```bash
-make stop                   # Stop via Makefile
-# or
-make clean                  # Stop and remove everything
-# or
-docker compose down -v      # If using docker-compose
-```
-
-### View Logs
-
-```bash
-make logs-request-manager   # Request manager
-make logs-agent-service     # Agent service
-make logs-rag-api           # RAG API
+make stop          # Stop containers (preserves data, fast restart)
+make clean         # Stop + remove containers and network (full reset)
 ```
 
 ### Kubernetes Deployment
@@ -951,6 +971,6 @@ See [helm/README.md](helm/README.md) for Helm chart deployment to Kubernetes/Ope
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/setup.sh` | Full setup: build images, start containers, run migrations, ingest data |
-| `scripts/build_containers.sh` | Build all four container images |
-| `scripts/test.sh` | End-to-end tests covering all four pillars |
+| `scripts/setup.sh` | Full setup: build, start, migrate, ingest, verify. Called by `make setup`. |
+| `scripts/build_containers.sh` | Build all four container images. Called by `make build`. |
+| `scripts/test.sh` | 24 E2E tests covering auth, authorization, RAG, and workflows. Called by `make test`. |

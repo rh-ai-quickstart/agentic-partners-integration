@@ -8,8 +8,8 @@ help:
 	@echo "Partner Agent Integration - Available Targets"
 	@echo ""
 	@echo "Setup & Deploy:"
-	@echo "  setup                    - Build containers, start services, initialize data"
-	@echo "  build                    - Build all container images"
+	@echo "  setup                    - Build, start services, initialize data (full stack)"
+	@echo "  build                    - Build all container images (no start)"
 	@echo "  stop                     - Stop all running containers"
 	@echo "  clean                    - Stop and remove all containers, volumes, and network"
 	@echo ""
@@ -49,8 +49,8 @@ help:
 # ============================================================
 
 .PHONY: setup
-setup:
-	@bash scripts/setup.sh
+setup: build
+	@SKIP_BUILD=true bash scripts/setup.sh
 
 .PHONY: build
 build:

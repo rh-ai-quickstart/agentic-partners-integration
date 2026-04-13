@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          cd shared-models && uv sync --quiet
+          cd ../agent-service && uv sync --quiet
+          cd ../request-manager && uv sync --quiet
+
+      - name: Run shared-models tests
+        run: cd shared-models && uv run python -m pytest tests/ --cov=shared_models --cov-report=term-missing -q
+
+      - name: Run agent-service tests
+        run: cd agent-service && uv run python -m pytest tests/ --cov=agent_service --cov-report=term-missing -q
+
+      - name: Run request-manager tests
+        run: cd request-manager && uv run python -m pytest tests/ --cov=request_manager --cov-report=term-missing -q
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          cd shared-models && uv sync --quiet
+          cd ../agent-service && uv sync --quiet
+          cd ../request-manager && uv sync --quiet
+
+      - name: Check formatting (isort)
+        run: |
+          cd shared-models && uv run --with isort isort --check-only --diff .
+          cd ../agent-service && uv run --with isort isort --check-only --diff .
+          cd ../request-manager && uv run --with isort isort --check-only --diff .
+
+      - name: Type check (mypy)
+        run: |
+          cd shared-models && uv run --with mypy mypy --strict . || true
+          cd ../agent-service && uv run --with mypy mypy --strict . || true
+          cd ../request-manager && uv run --with mypy mypy --strict . || true
+
+  lockfiles:
+    name: Check Lockfiles
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify lockfiles are up-to-date
+        run: |
+          cd shared-models && uv lock --check
+          cd ../agent-service && uv lock --check
+          cd ../request-manager && uv lock --check
+
+  opa-tests:
+    name: OPA Policy Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OPA
+        run: |
+          curl -L -o /usr/local/bin/opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
+          chmod +x /usr/local/bin/opa
+
+      - name: Run OPA policy tests
+        run: opa test policies/ -v
