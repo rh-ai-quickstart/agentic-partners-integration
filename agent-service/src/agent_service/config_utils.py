@@ -20,7 +20,7 @@ def resolve_agent_service_path(relative_path: str) -> Path:
     where the agent-service directory structure may be different from development.
 
     Args:
-        relative_path: Path relative to agent-service root (e.g., "config", "config/lg-prompts/routing.yaml")
+        relative_path: Path relative to agent-service root (e.g., "config")
 
     Returns:
         Path: Resolved absolute path to the requested file/directory

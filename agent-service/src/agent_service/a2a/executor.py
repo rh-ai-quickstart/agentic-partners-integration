@@ -121,9 +121,9 @@ class SpecialistAgentExecutor(AgentExecutor):
 
     async def _invoke_specialist(self, user_message: str) -> str:
         """Run the full specialist flow: RAG lookup then LLM generation."""
-        from agent_service.langgraph import ResponsesAgentManager
+        from agent_service.agents import AgentManager
 
-        agent_manager = ResponsesAgentManager()
+        agent_manager = AgentManager()
         agent = agent_manager.get_agent(self._agent_name)
 
         rag_answer, rag_sources = await self._query_rag(user_message)

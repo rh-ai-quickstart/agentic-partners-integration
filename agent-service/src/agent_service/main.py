@@ -2,436 +2,31 @@
 
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, status
 from shared_models import (
-    BaseSessionManager,
     configure_logging,
     create_shared_lifespan,
-    get_database_manager,
     get_db_session_dependency,
     simple_health_check,
 )
-from shared_models.models import (
-    AgentResponse,
-    NormalizedRequest,
-    SessionStatus,
-)
 from sqlalchemy.ext.asyncio import AsyncSession
 from . import __version__
+from .agents import AgentManager
 from .schemas import AgentInvokeRequest, AgentInvokeResponse
-from .session_manager import ResponsesSessionManager
 
 # Configure structured logging
 SERVICE_NAME = "agent-service"
 logger = configure_logging(SERVICE_NAME)
 
 
-class AgentConfig:
-    """Configuration for agent service."""
-
-    def __init__(self) -> None:
-        pass
-
-
-class AgentService:
-    """Service for handling agent interactions."""
-
-    def __init__(self, config: AgentConfig) -> None:
-        self.config = config
-
-    def _is_reset_command(self, content: str) -> bool:
-        """Check if the content is a reset command."""
-        if not content:
-            return False
-
-        content_lower = content.strip().lower()
-        reset_commands = ["reset", "clear", "restart", "new session"]
-        return content_lower in reset_commands
-
-    def _is_tokens_command(self, content: str) -> bool:
-        """Check if the content is a tokens command."""
-        if not content:
-            return False
-
-        content_lower = content.strip().lower()
-        tokens_commands = ["**tokens**", "tokens", "token stats", "usage stats"]
-        return content_lower in tokens_commands
-
-    async def _handle_reset_command(self, request: NormalizedRequest) -> AgentResponse:
-        """Handle reset command by clearing the session."""
-        try:
-            db_manager = get_database_manager()
-
-            async with db_manager.get_session() as db:
-                session_manager = BaseSessionManager(db)
-
-                # Clear the session by setting it to INACTIVE
-                await session_manager.update_session(
-                    request.session_id,
-                    status=SessionStatus.INACTIVE,
-                    agent_id=None,
-                    conversation_thread_id=None,
-                )
-
-                logger.info(
-                    "Session reset completed",
-                    session_id=request.session_id,
-                    user_id=request.user_id,
-                    integration_type=request.integration_type,
-                )
-
-                # Return a simple reset confirmation
-                return self._create_system_response(
-                    request=request,
-                    content="Session cleared. Starting fresh!",
-                )
-
-        except Exception as e:
-            logger.error(
-                "Failed to reset session", error=str(e), session_id=request.session_id
-            )
-            return self._create_error_response(
-                request=request,
-                content="Failed to reset session. Please try again.",
-            )
-
-    async def _handle_tokens_command(self, request: NormalizedRequest) -> AgentResponse:
-        """Handle tokens command by fetching token statistics from database."""
-        try:
-            from shared_models.database import get_db_session
-            from shared_models.session_token_service import SessionTokenService
-
-            # Debug logging
-            logger.debug(
-                "Retrieving token stats from database",
-                session_id=request.session_id,
-            )
-
-            # Query database for token counts
-            async with get_db_session() as db:
-                token_counts = await SessionTokenService.get_token_counts(
-                    db, request.session_id
-                )
-
-            if token_counts:
-                # Format the response with all token metrics including max values
-                token_summary = f"TOKEN_SUMMARY:INPUT:{token_counts['total_input_tokens']}:OUTPUT:{token_counts['total_output_tokens']}:TOTAL:{token_counts['total_tokens']}:CALLS:{token_counts['llm_call_count']}:MAX_SINGLE_INPUT:{token_counts['max_input_tokens']}:MAX_SINGLE_OUTPUT:{token_counts['max_output_tokens']}:MAX_SINGLE_TOTAL:{token_counts['max_total_tokens']}"
-
-                logger.info(
-                    "Token statistics retrieved from database",
-                    request_id=request.request_id,
-                    session_id=request.session_id,
-                    total_tokens=token_counts["total_tokens"],
-                    call_count=token_counts["llm_call_count"],
-                )
-
-                return self._create_agent_response(
-                    request=request,
-                    content=token_summary,
-                    agent_id="system",
-                    response_type="tokens",
-                    metadata={
-                        "total_input_tokens": token_counts["total_input_tokens"],
-                        "total_output_tokens": token_counts["total_output_tokens"],
-                        "total_tokens": token_counts["total_tokens"],
-                        "call_count": token_counts["llm_call_count"],
-                        "max_input_tokens": token_counts["max_input_tokens"],
-                        "max_output_tokens": token_counts["max_output_tokens"],
-                        "max_total_tokens": token_counts["max_total_tokens"],
-                    },
-                    processing_time_ms=0,
-                )
-            else:
-                # Session not found or no token counts yet
-                return self._create_agent_response(
-                    request=request,
-                    content="TOKEN_SUMMARY:INPUT:0:OUTPUT:0:TOTAL:0:CALLS:0:MAX_SINGLE_INPUT:0:MAX_SINGLE_OUTPUT:0:MAX_SINGLE_TOTAL:0",
-                    agent_id="system",
-                    response_type="tokens",
-                    metadata={
-                        "total_input_tokens": 0,
-                        "total_output_tokens": 0,
-                        "total_tokens": 0,
-                        "call_count": 0,
-                        "max_input_tokens": 0,
-                        "max_output_tokens": 0,
-                        "max_total_tokens": 0,
-                    },
-                    processing_time_ms=0,
-                )
-
-        except Exception as e:
-            logger.error(
-                "Failed to get token statistics",
-                error=str(e),
-                request_id=request.request_id,
-            )
-            return self._create_error_response(
-                request=request,
-                content="Failed to retrieve token statistics. Please try again.",
-            )
-
-    async def process_request(self, request: NormalizedRequest) -> AgentResponse:
-        """Process a normalized request and return agent response."""
-        return await self._process_request_core(request)
-
-    async def _process_request_core(self, request: NormalizedRequest) -> AgentResponse:
-        """Core request processing logic."""
-        start_time = datetime.now(timezone.utc)
-
-        try:
-            # Check for reset command first
-            if self._is_reset_command(request.content):
-                return await self._handle_reset_command(request)
-
-            # Check for tokens command
-            if self._is_tokens_command(request.content):
-                return await self._handle_tokens_command(request)
-
-            return await self._handle_responses_mode_request(request, start_time)
-
-        except Exception as e:
-            logger.error(
-                "Failed to process request", error=str(e), request_id=request.request_id
-            )
-
-            # Return error response
-            return self._create_error_response(
-                request=request,
-                content=f"I apologize, but I encountered an error processing your request: {str(e)}",
-                agent_id="unknown",
-            )
-
-    def _create_agent_response(
-        self,
-        request: NormalizedRequest,
-        content: str,
-        agent_id: str,
-        response_type: str = "message",
-        metadata: Optional[Dict[str, Any]] = None,
-        processing_time_ms: Optional[int] = None,
-        start_time: Optional[datetime] = None,
-        requires_followup: bool = False,
-        followup_actions: Optional[List[str]] = None,
-    ) -> AgentResponse:
-        """Create an AgentResponse with consistent defaults.
-
-        Args:
-            request: The normalized request
-            content: Response content
-            agent_id: Agent identifier (required)
-            response_type: Type of response (default: "message")
-            metadata: Optional metadata dictionary
-            processing_time_ms: Processing time in milliseconds (if None and start_time provided, will calculate)
-            start_time: Start time for processing (used to calculate processing_time_ms if not provided)
-            requires_followup: Whether response requires followup
-            followup_actions: List of followup actions
-        """
-        # Calculate processing time if start_time provided and processing_time_ms not specified
-        if processing_time_ms is None and start_time is not None:
-            processing_time_ms = int(
-                (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
-            )
-
-        # Use provided metadata or empty dict
-        response_metadata = dict(metadata) if metadata else {}
-
-        response = AgentResponse(
-            request_id=request.request_id,
-            session_id=request.session_id,
-            user_id=request.user_id,
-            agent_id=agent_id,
-            content=content,
-            response_type=response_type,
-            metadata=response_metadata,
-            processing_time_ms=processing_time_ms,
-            requires_followup=requires_followup,
-            followup_actions=followup_actions or [],
-            created_at=datetime.now(timezone.utc),
-        )
-        return response
-
-    def _create_error_response(
-        self,
-        request: NormalizedRequest,
-        content: str,
-        agent_id: str = "system",
-        start_time: Optional[datetime] = None,
-    ) -> AgentResponse:
-        """Create an error response with common defaults."""
-        return self._create_agent_response(
-            request=request,
-            content=content,
-            agent_id=agent_id,
-            response_type="error",
-            processing_time_ms=0,
-            start_time=start_time,
-        )
-
-    def _create_system_response(
-        self,
-        request: NormalizedRequest,
-        content: str,
-        start_time: Optional[datetime] = None,
-    ) -> AgentResponse:
-        """Create a system response with common defaults."""
-        return self._create_agent_response(
-            request=request,
-            content=content,
-            agent_id="system",
-            processing_time_ms=0,
-            start_time=start_time,
-        )
-
-    async def _handle_responses_mode_request(
-        self, request: NormalizedRequest, start_time: datetime
-    ) -> AgentResponse:
-        """Handle responses mode requests using LangGraph session manager."""
-        try:
-            # Handle session management (increment request count) for responses mode
-            await self._handle_session_management(
-                request.session_id, request.request_id
-            )
-
-            # Get database session for responses session manager
-            db_manager = get_database_manager()
-
-            async with db_manager.get_session() as db:
-                # Create responses session manager
-                session_manager = ResponsesSessionManager(
-                    db_session=db,
-                    user_id=request.user_id,
-                )
-
-                # Process the message using responses mode with session-specific context
-                response_content = await session_manager.handle_responses_message(
-                    text=request.content,
-                    request_manager_session_id=request.session_id,
-                )
-
-                # Create response with automatic timing calculation
-                if session_manager.current_agent_name is None:
-                    logger.warning(
-                        "No agent assigned after processing message - retrying with routing session",
-                        request_id=request.request_id,
-                        session_id=request.session_id,
-                    )
-                    # Retry processing the message - this should create a routing session
-                    # if one doesn't exist (handle_responses_message handles session creation)
-                    try:
-                        response_content = (
-                            await session_manager.handle_responses_message(
-                                text=request.content,
-                                request_manager_session_id=request.session_id,
-                            )
-                        )
-                        # Check again after retry
-                        if session_manager.current_agent_name is None:
-                            logger.error(
-                                "No agent assigned after retry - cannot process request",
-                                request_id=request.request_id,
-                                session_id=request.session_id,
-                            )
-                            return self._create_error_response(
-                                request=request,
-                                content="Error: No agent assigned to handle this request",
-                            )
-                    except Exception as e:
-                        logger.error(
-                            "Exception while retrying message processing",
-                            request_id=request.request_id,
-                            session_id=request.session_id,
-                            error=str(e),
-                        )
-                        return self._create_error_response(
-                            request=request,
-                            content="Error: No agent assigned to handle this request",
-                        )
-
-                return self._create_agent_response(
-                    request=request,
-                    content=response_content,
-                    agent_id=session_manager.current_agent_name,
-                    start_time=start_time,
-                )
-
-        except Exception as e:
-            logger.error(
-                "Failed to handle responses mode request",
-                error=str(e),
-                request_id=request.request_id,
-                session_id=request.session_id,
-            )
-            return self._create_error_response(
-                request=request,
-                content=f"Failed to process responses mode request: {str(e)}",
-            )
-
-    async def close(self) -> None:
-        """Cleanup resources."""
-        pass
-
-    async def _handle_session_management(
-        self, session_id: str, request_id: str
-    ) -> None:
-        """Handle session management including request count increment.
-
-        This method ensures consistent session management across all requests.
-        """
-        try:
-            # Get database session for session management
-            db_manager = get_database_manager()
-            async with db_manager.get_session() as db:
-                session_manager = BaseSessionManager(db)
-                await session_manager.increment_request_count(session_id, request_id)
-
-                logger.debug(
-                    "Session management completed",
-                    session_id=session_id,
-                    request_id=request_id,
-                )
-        except Exception as e:
-            logger.warning(
-                "Failed to handle session management",
-                session_id=session_id,
-                request_id=request_id,
-                error=str(e),
-            )
-            # Don't raise exception - session management failure shouldn't stop request processing
-
-
-# Global agent service instance
-_agent_service: Optional[AgentService] = None
-
-
-async def _agent_service_startup() -> None:
-    """Custom startup logic for Agent Service."""
-    global _agent_service
-
-    config = AgentConfig()
-    _agent_service = AgentService(config)
-    logger.info("Agent Service initialized")
-
-
-async def _agent_service_shutdown() -> None:
-    """Custom shutdown logic for Agent Service."""
-    global _agent_service
-
-    if _agent_service:
-        await _agent_service.close()
-        _agent_service = None
-
-
-# Create lifespan using shared utility with custom startup/shutdown
+# Create lifespan using shared utility
 def lifespan(app: FastAPI) -> Any:
     return create_shared_lifespan(
         service_name="agent-service",
         version=__version__,
-        custom_startup=_agent_service_startup,
-        custom_shutdown=_agent_service_shutdown,
     )
 
 
@@ -523,9 +118,9 @@ async def invoke_agent(
                 session_id=request.session_id,
             )
 
-            from .langgraph import ResponsesAgentManager
+            from .agents import AgentManager
 
-            agent_manager = ResponsesAgentManager()
+            agent_manager = AgentManager()
             agent = agent_manager.get_agent(agent_name)
 
             # Extract user's departments from transfer_context for routing decisions.
@@ -654,9 +249,9 @@ IMPORTANT: Only use the ROUTE: prefix when you are confident the message needs a
             # 1. Query RAG API for relevant knowledge
             # 2. Include RAG context in the LLM prompt
             # 3. FAIL if RAG is unavailable (no silent degradation)
-            from .langgraph import ResponsesAgentManager
+            from .agents import AgentManager
 
-            agent_manager = ResponsesAgentManager()
+            agent_manager = AgentManager()
 
             try:
                 agent = agent_manager.get_agent(agent_name)

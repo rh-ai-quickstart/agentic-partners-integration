@@ -2,10 +2,8 @@
 
 import os
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Optional
+from typing import Any, AsyncGenerator
 
-import psycopg
-import psycopg_pool
 import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -35,11 +33,6 @@ class DatabaseConfig:
         self.max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "10"))
         self.pool_timeout = int(os.getenv("DB_POOL_TIMEOUT", "30"))
         self.pool_recycle = int(os.getenv("DB_POOL_RECYCLE", "3600"))
-
-        # Psycopg connection pool settings (for LangGraph AsyncPostgresSaver)
-        self.psycopg_pool_min_size = int(os.getenv("DB_SYNC_POOL_MIN_SIZE", "1"))
-        self.psycopg_pool_max_size = int(os.getenv("DB_SYNC_POOL_MAX_SIZE", "5"))
-        self.psycopg_pool_timeout = int(os.getenv("DB_SYNC_POOL_TIMEOUT", "30"))
 
         # Debug settings
         self.echo_sql = os.getenv("SQL_DEBUG", "false").lower() == "true"
@@ -129,9 +122,6 @@ class DatabaseManager:
             expire_on_commit=False,
         )
 
-        # Create async connection pool for AsyncPostgresSaver
-        self._async_pool: Optional[psycopg_pool.AsyncConnectionPool] = None
-
     async def log_database_config(self) -> None:
         """Log database configuration and test connection at startup."""
         try:
@@ -168,61 +158,9 @@ class DatabaseManager:
             )
             raise
 
-    def _get_async_pool(self) -> psycopg_pool.AsyncConnectionPool:
-        """Get or create the async connection pool for AsyncPostgresSaver."""
-        if self._async_pool is None:
-            # Build connection string for async pool
-            conn_string = f"postgresql://{self.config.user}:{self.config.password}@{self.config.host}:{self.config.port}/{self.config.database}"
-
-            self._async_pool = psycopg_pool.AsyncConnectionPool(
-                conn_string,
-                min_size=self.config.psycopg_pool_min_size,
-                max_size=self.config.psycopg_pool_max_size,
-                kwargs={
-                    "row_factory": psycopg.rows.dict_row,
-                    "autocommit": True,
-                },
-                timeout=self.config.psycopg_pool_timeout,
-            )
-            logger.debug(
-                "Created async connection pool for AsyncPostgresSaver",
-                min_size=self.config.psycopg_pool_min_size,
-                max_size=self.config.psycopg_pool_max_size,
-                timeout=self.config.psycopg_pool_timeout,
-            )
-
-        return self._async_pool
-
-    async def get_async_connection(self) -> Any:
-        """Get an asynchronous connection for LangGraph AsyncPostgresSaver.
-
-        Uses connection pooling for better performance and resource management.
-        """
-        pool = self._get_async_pool()
-
-        if self.config.echo_sql:
-            logger.debug(
-                "Getting async connection from pool",
-                host=self.config.host,
-                database=self.config.database,
-            )
-
-        return await pool.getconn()
-
-    async def put_async_connection(self, conn: Any) -> None:
-        """Return an async connection to the pool."""
-        if self._async_pool is not None:
-            await self._async_pool.putconn(conn)
-
     async def close(self) -> None:
         """Close database connections."""
         await self.engine.dispose()
-
-        if self._async_pool is not None:
-            await self._async_pool.close()
-            self._async_pool = None
-            logger.debug("Async connection pool closed")
-
         logger.info("Database connections closed")
 
     @asynccontextmanager

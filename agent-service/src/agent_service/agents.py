@@ -1,3 +1,9 @@
+"""Agent configuration and LLM integration.
+
+Loads agent definitions from YAML config files and provides
+LLM-backed response generation with retry logic.
+"""
+
 import asyncio
 import os
 from typing import Any, Dict, Optional
@@ -6,7 +12,7 @@ import yaml
 from agent_service.llm import LLMClientFactory, LLMMessage
 from shared_models import configure_logging
 
-from .util import load_config_from_path, resolve_agent_service_path
+from .config_utils import load_config_from_path, resolve_agent_service_path
 
 logger = configure_logging("agent-service")
 
@@ -44,55 +50,11 @@ class Agent:
         self.default_response_config = self._get_response_config()
         self.system_message = system_message or self._get_default_system_message()
 
-        # Defer tools initialization to first use
-        self.tools: list[Any] | None = None
-
-        # Load shield configuration for input/output moderation
-        # Check if SAFETY environment variables are configured
-        safety_model = os.getenv("SAFETY")
-        safety_url = os.getenv("SAFETY_URL")
-        shields_available = bool(safety_model and safety_url)
-
-        if shields_available:
-            self.input_shields = self.config.get("input_shields", [])
-            self.output_shields = self.config.get("output_shields", [])
-        else:
-            # Disable shields if SAFETY environment not configured
-            self.input_shields = []
-            self.output_shields = []
-            if self.config.get("input_shields") or self.config.get("output_shields"):
-                logger.warning(
-                    "Shields configured in agent but SAFETY/SAFETY_URL environment variables not set. Shields will be disabled.",
-                    agent_name=agent_name,
-                )
-
-        # Load categories to ignore (for handling false positives)
-        self.ignored_input_categories = set(
-            self.config.get("ignored_input_shield_categories", [])
-        )
-        self.ignored_output_categories = set(
-            self.config.get("ignored_output_shield_categories", [])
-        )
-
         logger.info(
             "Initialized Agent",
             agent_name=agent_name,
             model="deferred" if self.model is None else self.model,
-            tool_count="deferred" if self.tools is None else len(self.tools),
         )
-        if self.input_shields:
-            logger.info("Input shields configured", shields=self.input_shields)
-            if self.ignored_input_categories:
-                logger.info(
-                    "Ignored input categories", categories=self.ignored_input_categories
-                )
-        if self.output_shields:
-            logger.info("Output shields configured", shields=self.output_shields)
-            if self.ignored_output_categories:
-                logger.info(
-                    "Ignored output categories",
-                    categories=self.ignored_output_categories,
-                )
 
     def _get_response_config(self) -> dict[str, Any]:
         """Get response configuration from agent config with defaults."""
@@ -118,50 +80,11 @@ class Agent:
 
         return ""
 
-    async def _run_moderation_shields(
-        self,
-        content: Any,
-        shield_models: list[str],
-        check_type: str = "input",
-    ) -> tuple[bool, Optional[str]]:
-        """
-        Run moderation checks using safety shields.
-
-        NOTE: Shields are currently disabled.
-        Content moderation can be added later if needed.
-
-        Args:
-            content: Either a string (for output) or list of message dicts (for input)
-            shield_models: List of moderation model names (deprecated)
-            check_type: "input" or "output" for logging purposes
-
-        Returns:
-            Tuple of (is_safe, error_message)
-            - is_safe: Always True (shields disabled)
-            - error_message: Always None
-        """
-        if not shield_models or len(shield_models) == 0:
-            return True, None
-
-        # Content moderation shields not yet implemented
-        logger.debug(
-            "Shields requested but currently disabled",
-            check_type=check_type,
-            shield_models=shield_models,
-        )
-        return True, None  # Pass all content for now
-
     async def create_response_with_retry(
         self,
         messages: list[Any],
         max_retries: int = 3,
         temperature: float | None = None,
-        additional_system_messages: list[str] | None = None,
-        authoritative_user_id: str | None = None,
-        allowed_tools: list[str] | None = None,
-        skip_all_tools: bool = False,
-        skip_mcp_servers_only: bool = False,
-        current_state_name: str | None = None,
         token_context: str | None = None,
     ) -> tuple[str, bool]:
         """Create a response with retry logic for empty responses and errors."""
@@ -177,12 +100,6 @@ class Agent:
                 response = await self.create_response(
                     messages,
                     temperature=temperature,
-                    additional_system_messages=additional_system_messages,
-                    authoritative_user_id=authoritative_user_id,
-                    allowed_tools=allowed_tools,
-                    skip_all_tools=skip_all_tools,
-                    skip_mcp_servers_only=skip_mcp_servers_only,
-                    current_state_name=current_state_name,
                     token_context=token_context,
                 )
 
@@ -243,12 +160,6 @@ class Agent:
         self,
         messages: list[Any],
         temperature: float | None = None,
-        additional_system_messages: list[str] | None = None,
-        authoritative_user_id: str | None = None,
-        allowed_tools: list[str] | None = None,
-        skip_all_tools: bool = False,
-        skip_mcp_servers_only: bool = False,
-        current_state_name: str | None = None,
         token_context: str | None = None,
     ) -> str:
         """Create a response using LLM client (OpenAI, Gemini, or Ollama).
@@ -256,34 +167,12 @@ class Agent:
         Args:
             messages: List of user/assistant messages
             temperature: Optional temperature override
-            additional_system_messages: Optional list of additional system messages
-            authoritative_user_id: Deprecated (for MCP servers)
-            allowed_tools: Deprecated (for MCP servers)
-            skip_all_tools: Deprecated (for MCP servers)
-            skip_mcp_servers_only: Deprecated (for MCP servers)
-            current_state_name: Optional state name for logging
             token_context: Optional context for token counting
 
         Returns:
             Generated response text
         """
         try:
-            # INPUT SHIELD: Check user input before processing (currently no-op)
-            if self.input_shields and messages and len(messages) > 0:
-                is_safe, error_message = await self._run_moderation_shields(
-                    messages, self.input_shields, "input"
-                )
-                if not is_safe:
-                    logger.info(
-                        "Input blocked by shield",
-                        agent_name=self.agent_name,
-                        messages=repr(messages),
-                    )
-                    return (
-                        error_message
-                        or "I apologize, but I cannot process that request due to safety concerns."
-                    )
-
             # Build message list: system message(s) + conversation
             llm_messages = []
 
@@ -292,11 +181,6 @@ class Agent:
                 llm_messages.append(
                     LLMMessage(role="system", content=self.system_message)
                 )
-
-            # Add any additional system messages
-            if additional_system_messages:
-                for sys_msg in additional_system_messages:
-                    llm_messages.append(LLMMessage(role="system", content=sys_msg))
 
             # Add the conversation messages
             for msg in messages:
@@ -363,22 +247,6 @@ class Agent:
                 total_tokens=response.total_tokens,
             )
 
-            # OUTPUT SHIELD: Check agent response before returning (currently no-op)
-            if self.output_shields and response_text:
-                is_safe, error_message = await self._run_moderation_shields(
-                    response_text, self.output_shields, "output"
-                )
-                if not is_safe:
-                    logger.info(
-                        "Output blocked by shield",
-                        agent_name=self.agent_name,
-                        response_text=repr(response_text),
-                    )
-                    return (
-                        error_message
-                        or "I apologize, but I cannot provide that response due to safety concerns."
-                    )
-
             return response_text
 
         except Exception as e:
@@ -392,21 +260,21 @@ class Agent:
             return f"Error: Unable to get response from LLM: {e}"
 
 
-class ResponsesAgentManager:
+class AgentManager:
     """Manages multiple agent instances for the application."""
 
     def __init__(self) -> None:
-        self.agents_dict = {}
+        self.agents_dict: dict[str, Agent] = {}
 
         # Load the configuration using centralized path resolution
         try:
             config_path = resolve_agent_service_path("config")
             logger.info(
-                "ResponsesAgentManager found config", config_path=str(config_path)
+                "AgentManager found config", config_path=str(config_path)
             )
         except FileNotFoundError as e:
             logger.error(
-                "ResponsesAgentManager config not found",
+                "AgentManager config not found",
                 error=str(e),
                 error_type=type(e).__name__,
             )
@@ -426,12 +294,11 @@ class ResponsesAgentManager:
         for agent_config in agents_list:
             agent_name = agent_config.get("name")
             if agent_name:
-                # Create the agent with the loaded configuration and global config
                 self.agents_dict[agent_name] = Agent(
                     agent_name, agent_config, global_config
                 )
 
-    def get_agent(self, agent_id: str) -> Any:
+    def get_agent(self, agent_id: str) -> Agent:
         """Get an agent by ID, returning default if not found."""
         if agent_id in self.agents_dict:
             return self.agents_dict[agent_id]

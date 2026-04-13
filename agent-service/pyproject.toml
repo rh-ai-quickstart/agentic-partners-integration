@@ -18,14 +18,7 @@ dependencies = [
     "google-genai>=0.3.0",  # Google Gemini models
     # httpx already included above for Ollama support
     "partner-agent-shared-models",
-    # LangGraph dependencies
-    "langchain>=1.2.7",
-    "langchain-core~=1.2.7",
-    "langgraph~=1.0.7",
-    "langgraph-checkpoint-postgres>=2.0.0",
-    "psycopg[binary]>=3.1.0",
     "pyyaml>=6.0.0",
-    "langfuse>=3.0.0",
     "a2a-sdk[http-server]",
 ]
 

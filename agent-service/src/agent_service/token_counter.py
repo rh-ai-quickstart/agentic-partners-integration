@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Token Counter Utility for Agent Service
 
@@ -105,4 +104,3 @@ class TokenCounter:
                 if context not in self._context_stats:
                     self._context_stats[context] = TokenStats()
                 self._context_stats[context].add_usage(usage)
-

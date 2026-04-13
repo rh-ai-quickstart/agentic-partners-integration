@@ -5,11 +5,8 @@ import asyncio
 import logging
 import os
 import sys
-import threading
 from pathlib import Path
-from typing import Optional
 
-import psycopg
 from alembic import command
 from alembic.config import Config
 
@@ -105,118 +102,7 @@ def run_migrations() -> None:
         os.chdir(script_dir)
         logger.debug("Changed working directory", script_dir=str(script_dir))
 
-        # Setup LangGraph PostgreSQL checkpoint tables FIRST
-        # This ensures checkpoint infrastructure is ready before application migrations
-        print("Setting up LangGraph PostgreSQL checkpoint tables...")
-        logger.info("Setting up LangGraph PostgreSQL checkpoint tables...")
-        try:
-            from langgraph.checkpoint.postgres import PostgresSaver
-
-            # Create a connection for PostgresSaver setup
-            conn = psycopg.connect(
-                db_config.sync_connection_string.replace(
-                    "postgresql+psycopg://", "postgresql://"
-                ),
-                row_factory=psycopg.rows.dict_row,
-                autocommit=True,
-                connect_timeout=60,  # 60 second timeout for migration job
-            )
-
-            try:
-                # Setup PostgresSaver with timeout to prevent hangs
-                # PostgresSaver.setup() is idempotent and handles existing tables gracefully
-                print("Running PostgresSaver.setup()...")
-                logger.info("Running PostgresSaver.setup()...")
-                postgres_saver = PostgresSaver(conn)
-
-                # Add timeout to prevent hanging (60 seconds)
-                setup_complete = threading.Event()
-                setup_error: list[Optional[Exception]] = [None]
-
-                def run_setup() -> None:
-                    try:
-                        postgres_saver.setup()
-                        setup_complete.set()
-                    except Exception as e:
-                        setup_error[0] = e
-                        setup_complete.set()
-
-                setup_thread = threading.Thread(target=run_setup, daemon=True)
-                setup_thread.start()
-                setup_thread.join(timeout=60)
-
-                if not setup_complete.is_set():
-                    logger.error("PostgresSaver.setup() exceeded 60 second timeout")
-                    raise TimeoutError(
-                        "PostgresSaver.setup() exceeded 60 second timeout"
-                    )
-
-                if setup_error[0]:
-                    raise setup_error[0]
-
-                print(
-                    "✅ LangGraph PostgreSQL checkpoint tables setup completed successfully"
-                )
-                logger.info(
-                    "✅ LangGraph PostgreSQL checkpoint tables setup completed successfully"
-                )
-            except TimeoutError as timeout_err:
-                # Timeout errors indicate a hang - fail the job so it can retry
-                logger.error(
-                    "PostgresSaver.setup() timed out - this may indicate a database issue. Job will fail and retry.",
-                    error=str(timeout_err),
-                    error_type=type(timeout_err).__name__,
-                )
-                # Re-raise to fail the job and trigger retry
-                raise
-            except psycopg.Error as db_error:
-                logger.error(
-                    "Database error during PostgresSaver setup",
-                    error=str(db_error),
-                    error_code=getattr(db_error, "pgcode", "unknown"),
-                )
-                raise
-            except Exception as setup_error:
-                logger.error(
-                    "Unexpected error during PostgresSaver setup",
-                    error=str(setup_error),
-                    error_type=type(setup_error).__name__,
-                )
-                raise
-            finally:
-                try:
-                    conn.close()
-                    logger.debug("PostgresSaver connection closed successfully")
-                except Exception as close_error:
-                    logger.warning(
-                        "Error closing PostgresSaver connection",
-                        error=str(close_error),
-                        error_type=type(close_error).__name__,
-                    )
-
-        except TimeoutError as timeout_err:
-            # Timeout errors indicate a hang - fail the job so it can retry
-            logger.error(
-                "PostgresSaver.setup() timed out - this may indicate a database issue. Job will fail and retry.",
-                error=str(timeout_err),
-                error_type=type(timeout_err).__name__,
-            )
-            logger.exception("Full PostgresSaver setup timeout traceback:")
-            # Re-raise to fail the job and trigger retry
-            raise
-        except Exception as e:
-            # Checkpointing is REQUIRED for agent service functionality
-            # If setup fails, the app cannot create ConversationSession instances
-            logger.error(
-                "Failed to setup LangGraph checkpoint tables - this is required for agent service functionality",
-                error=str(e),
-                error_type=type(e).__name__,
-            )
-            logger.exception("Full PostgresSaver setup error traceback:")
-            # Fail the job so it can retry - checkpointing is required
-            raise
-
-        # Now run Alembic migrations after checkpoint tables are ready
+        # Run Alembic migrations
         logger.info("Starting Alembic upgrade to head...")
         command.upgrade(alembic_cfg, "head")
         logger.info("Database migrations completed successfully")

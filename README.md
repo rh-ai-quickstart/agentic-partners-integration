@@ -552,7 +552,7 @@ Available agents:
 │   ├── config/agents/          # Agent YAML configs (routing, software, network)
 │   └── src/agent_service/
 │       ├── main.py             # FastAPI app, /invoke endpoint, routing + RAG logic
-│       ├── langgraph/          # Agent manager, LLM integration, token counting
+│       ├── agents.py           # Agent manager, LLM integration, config loading
 │       ├── llm/                # Pluggable LLM clients (Gemini, OpenAI, Ollama)
 │       └── schemas.py          # Request/response models for /invoke
 │
@@ -625,7 +625,7 @@ PostgreSQL 16 with pgvector extension. Schema managed by Alembic (current versio
 | `user_integration_configs` | Per-user integration configuration (WEB type) |
 | `user_integration_mappings` | Maps users to external integration identifiers |
 
-LangGraph checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, `checkpoint_migrations`) are created during setup for agent conversation state.
+Agent conversation state is managed in-memory per request (stateless A2A calls).
 
 ---
 
@@ -816,6 +816,114 @@ There are two ways to run the stack locally:
 | Docker Compose | `docker compose up` | PG:5432, Chroma:8100, RAG:8080 | Development, quick iteration |
 
 Both methods expose the Web UI on port 3000, Request Manager on 8000, and Agent Service on 8001.
+
+---
+
+## Production Recommendations
+
+The stack uses lightweight, easy-to-run components for local development. Below are the recommended production-grade alternatives for each service.
+
+### Vector Database: ChromaDB → pgvector
+
+ChromaDB is single-node only with no built-in authentication, replication, or backup tooling. Since the stack already runs PostgreSQL with the pgvector extension, consolidate vector storage into PostgreSQL to eliminate an entire service.
+
+| | PoC (current) | Production |
+|---|---|---|
+| **Service** | ChromaDB (separate container) | pgvector (existing PostgreSQL) |
+| **Why change** | No auth, no clustering, no backup/restore, limited query performance at 100K+ vectors | ACID transactions, RBAC, backups, replication — all inherited from PostgreSQL. One fewer service to operate |
+| **Index type** | Default (brute-force) | HNSW index (`CREATE INDEX ON ... USING hnsw (embedding vector_cosine_ops)`) for sub-10ms queries |
+| **Scale ceiling** | ~100K vectors | ~10M vectors with HNSW tuning; beyond that, evaluate Weaviate, Qdrant, or Pinecone |
+| **Migration path** | — | Move `ingest_knowledge.py` to write embeddings into a `support_tickets_embeddings` table; update RAG service to query PostgreSQL instead of ChromaDB |
+
+### PostgreSQL: Harden for Production
+
+The current setup uses default credentials, no TLS, and a single instance with no replication.
+
+| | PoC (current) | Production |
+|---|---|---|
+| **Image** | `pgvector/pgvector:pg16` | CrunchyData PGO operator (Kubernetes) or managed PostgreSQL (RDS, Cloud SQL, Azure Database) |
+| **Credentials** | Hardcoded `user`/`pass` | Rotated secrets via Vault, Kubernetes Secrets, or cloud IAM |
+| **TLS** | Disabled | Required — enable `sslmode=require` in connection strings |
+| **High availability** | Single instance | Patroni-based HA (CrunchyData PGO) or Multi-AZ (cloud managed) |
+| **Backups** | None | pgBackRest (CrunchyData) or automated cloud snapshots with point-in-time recovery |
+| **Connection pooling** | Direct connections | PgBouncer sidecar or built-in cloud pooling |
+| **Monitoring** | None | pg_stat_statements, Prometheus postgres_exporter |
+
+### Keycloak: Production Mode
+
+Keycloak runs in `start-dev` mode with an embedded H2 database that loses state on restart.
+
+| | PoC (current) | Production |
+|---|---|---|
+| **Mode** | `start-dev` (H2 in-memory, no TLS, debug logging) | `start` (production mode) |
+| **Database** | Embedded H2 (volatile) | External PostgreSQL (can share the existing cluster in a separate database) |
+| **TLS** | Disabled | TLS termination at ingress or Keycloak's built-in TLS (`KC_HTTPS_*`) |
+| **Clustering** | Single instance | 2+ replicas with Infinispan distributed cache |
+| **Admin credentials** | `admin`/`admin123` | Strong password via secrets management; disable admin console in production |
+| **Realm management** | `--import-realm` from JSON | Keycloak Admin API or Terraform keycloak provider for GitOps |
+
+### OPA: Bundle Server + Decision Logging
+
+OPA runs with locally mounted policy files and no audit trail.
+
+| | PoC (current) | Production |
+|---|---|---|
+| **Policy delivery** | Volume-mounted `.rego` files | OPA bundle server (S3 bucket, HTTP server, or Styra DAS) for versioned policy distribution |
+| **Decision logging** | None | Enable OPA decision logs to a central store (Elasticsearch, CloudWatch) for audit compliance |
+| **Deployment** | Shared singleton container | Sidecar per service (eliminates network hop and single point of failure) |
+| **Policy testing** | `delegation_test.rego` | CI pipeline with `opa test` and `conftest` for policy-as-code validation |
+| **Management** | Manual | Styra DAS (commercial) for policy impact analysis, testing, and rollback |
+
+### LLM Backend: Gateway + Failover
+
+The system calls Google Gemini directly with no retry logic, rate limiting, or provider failover.
+
+| | PoC (current) | Production |
+|---|---|---|
+| **Provider** | Google Gemini (gemini-2.5-flash) direct API | LiteLLM proxy or cloud-managed endpoint (Vertex AI, AWS Bedrock) |
+| **Failover** | None — Gemini outage = system down | LiteLLM provides automatic failover across providers (Gemini → OpenAI → Anthropic) |
+| **Rate limiting** | None | LiteLLM or API gateway (Kong, Envoy) with per-user token budgets |
+| **Cost tracking** | None | LiteLLM tracks cost per request; or cloud provider billing dashboards |
+| **Data residency** | Data sent to Google AI API | Vertex AI (keeps data in GCP project), or self-hosted via vLLM with open-weight models (Llama, Mistral) |
+| **Retry/circuit breaker** | None | Add tenacity retries with exponential backoff; circuit breaker for sustained failures |
+
+> **Note:** The existing `LLM_BACKEND` env var already supports Gemini, OpenAI, and Ollama. A LiteLLM proxy unifies these behind a single OpenAI-compatible endpoint with automatic fallback.
+
+### Web UI: TLS + Security Headers
+
+The nginx container serves static files over plain HTTP with no security headers.
+
+| | PoC (current) | Production |
+|---|---|---|
+| **TLS** | Plain HTTP | TLS termination at ingress controller (Kubernetes) or Caddy (automatic Let's Encrypt) |
+| **Security headers** | None | `Content-Security-Policy`, `X-Content-Type-Options`, `X-Frame-Options`, `Strict-Transport-Security` |
+| **Compression** | Disabled | Enable gzip/brotli in nginx for static assets |
+| **Caching** | No cache headers | `Cache-Control` with content hashing for CSS/JS |
+| **Build pipeline** | Raw HTML + inline JS | Consider React + `@patternfly/react-core` for a production UI with proper bundling, minification, and CSP compliance |
+
+### RAG Service: Caching + Reranking
+
+The RAG service has no caching, no reranking, and uses a one-time ingestion script.
+
+| | PoC (current) | Production |
+|---|---|---|
+| **Response caching** | None — every query re-embeds and re-searches | Redis or in-memory LRU cache for repeated queries |
+| **Reranking** | None — raw cosine similarity | Cross-encoder reranker (Cohere Rerank, or a local `cross-encoder/ms-marco-MiniLM-L-6-v2`) to improve retrieval precision |
+| **Ingestion** | One-time `ingest_knowledge.py` script | Incremental pipeline: watch for new documents, embed delta, update vectors |
+| **Document management** | Static JSON files | Document versioning with metadata (source, timestamp, category) for traceability |
+| **Evaluation** | None | Retrieval metrics (MRR, NDCG) and answer quality evaluation (RAGAS, or LLM-as-judge) |
+
+### Summary
+
+| Service | PoC | Production | Priority |
+|---------|-----|------------|----------|
+| ChromaDB | Standalone container | **Consolidate into pgvector** | High |
+| PostgreSQL | Single instance, no TLS | **CrunchyData PGO or managed DB** (TLS, HA, backups) | High |
+| Keycloak | `start-dev`, H2, no TLS | **Production mode** (external PG, TLS, clustering) | High |
+| OPA | Mounted files, no logging | **Bundle server + decision logs** | Medium |
+| LLM (Gemini) | Direct API, no failover | **LiteLLM proxy** (failover, rate limiting, cost tracking) | Medium |
+| Web UI (nginx) | Plain HTTP, no headers | **TLS + security headers** (Caddy or hardened nginx) | Medium |
+| RAG Service | No cache, no reranking | **Add Redis cache + reranker** | Low |
 
 ### Stop Everything
 
