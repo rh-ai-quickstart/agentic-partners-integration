@@ -250,42 +250,55 @@ class DatabaseManager:
     async def wait_for_migration(
         self, expected_version: str | None = None, timeout: int = 300
     ) -> bool:
-        """Wait for database migration to complete to a specific version."""
+        """Wait for database migration to complete.
+
+        If expected_version is provided (or set via EXPECTED_MIGRATION_VERSION env var),
+        waits for that specific version. Otherwise, waits for any migration to be present
+        in the alembic_version table and verifies core tables exist.
+        """
         import asyncio
         from time import time
 
-        # Determine expected version from parameter, environment, or default
+        # Allow pinning to a specific version via env var, but don't require it
         if expected_version is None:
-            expected_version = os.getenv("EXPECTED_MIGRATION_VERSION", "007")
+            expected_version = os.getenv("EXPECTED_MIGRATION_VERSION")
 
         start_time = time()
         logger.info(
             "Waiting for database migration to complete",
-            expected_version=expected_version,
+            expected_version=expected_version or "any",
         )
 
         while (time() - start_time) < timeout:
             try:
                 async with self.get_session() as session:
-                    # Check if alembic_version table exists and has the expected version
-                    result = await session.execute(
-                        text(
-                            "SELECT version_num FROM alembic_version WHERE version_num = :version"
-                        ),
-                        {"version": expected_version},
-                    )
+                    if expected_version:
+                        # Check for a specific version
+                        result = await session.execute(
+                            text(
+                                "SELECT version_num FROM alembic_version WHERE version_num = :version"
+                            ),
+                            {"version": expected_version},
+                        )
+                    else:
+                        # Check that any migration has run
+                        result = await session.execute(
+                            text("SELECT version_num FROM alembic_version LIMIT 1")
+                        )
+
                     version_row = result.fetchone()
 
                     if not version_row:
                         logger.debug(
-                            "Migration version not ready",
-                            expected=expected_version,
-                            current="not found or different",
+                            "Migration not ready",
+                            expected=expected_version or "any",
                         )
                         await asyncio.sleep(5)
                         continue
 
-                    # Verify that key tables from this migration exist and are accessible
+                    current_version = version_row[0]
+
+                    # Verify that core tables exist and are accessible
                     await session.execute(
                         text("SELECT 1 FROM request_sessions LIMIT 1")
                     )
@@ -296,7 +309,7 @@ class DatabaseManager:
 
                     logger.info(
                         "Database migration completed successfully",
-                        version=expected_version,
+                        version=current_version,
                         elapsed_seconds=int(time() - start_time),
                     )
                     return True
@@ -304,14 +317,14 @@ class DatabaseManager:
             except Exception as e:
                 logger.debug(
                     "Migration not ready yet",
-                    expected_version=expected_version,
+                    expected_version=expected_version or "any",
                     error=str(e),
                 )
                 await asyncio.sleep(5)
 
         logger.error(
             "Timeout waiting for database migration",
-            expected_version=expected_version,
+            expected_version=expected_version or "any",
             timeout=timeout,
         )
         return False

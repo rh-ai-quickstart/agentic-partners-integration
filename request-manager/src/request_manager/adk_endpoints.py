@@ -5,7 +5,7 @@ Provides Google Agent Development Kit (ADK) compatible endpoints for web UI inte
 """
 
 from typing import Optional, List, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, Header, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +13,7 @@ import structlog
 
 from shared_models.database import get_db
 from .aaa_middleware import AAAMiddleware
+from .auth_endpoints import decode_token
 from .communication_strategy import get_communication_strategy, UnifiedRequestProcessor
 from shared_models.aaa_service import AAAService
 from .schemas import WebRequest
@@ -52,6 +53,7 @@ class ADKChatResponse(BaseModel):
 @router.post("/chat", response_model=ADKChatResponse)
 async def adk_chat(
     request: ADKChatRequest,
+    http_request: Request,
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -59,9 +61,18 @@ async def adk_chat(
 
     This endpoint provides an ADK-compatible interface for chat interactions
     with automatic routing to appropriate agents based on user permissions.
+    User identity is extracted from the JWT Authorization header.
     """
     try:
-        user_email = request.user.email
+        # Extract user email from JWT (authoritative source)
+        auth_header = http_request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authorization header required"
+            )
+        payload = decode_token(auth_header)
+        user_email = payload["email"]
 
         logger.info(
             "ADK chat request",
@@ -70,14 +81,14 @@ async def adk_chat(
             session_id=request.session_id
         )
 
-        # Get user context and allowed agents
+        # Get user context with departments for OPA authorization
         user_context = await AAAMiddleware.get_user_context(db, user_email)
-        allowed_agents = user_context.get("allowed_agents", [])
+        departments = user_context.get("departments", [])
 
         logger.info(
-            "User allowed agents",
+            "User departments",
             user=user_email,
-            allowed_agents=allowed_agents
+            departments=departments
         )
 
         # Route ALL messages to routing-agent first
@@ -185,7 +196,7 @@ class ADKAuditResponse(BaseModel):
 
 @router.get("/audit", response_model=ADKAuditResponse)
 async def adk_audit_log(
-    user_email: Optional[str] = Header(None, alias="X-User-Email"),
+    request: Request,
     limit: int = 50,
     db: AsyncSession = Depends(get_db)
 ):
@@ -193,15 +204,18 @@ async def adk_audit_log(
     Get audit log of request history for the authenticated user.
 
     Admin users see all users' logs. Regular users see only their own.
-    Returns request content, which agent handled it, response preview,
-    and processing time.
+    User identity is extracted from the JWT Authorization header.
     """
     try:
-        if not user_email:
+        # Extract user email from JWT
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="X-User-Email header required"
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authorization header required"
             )
+        payload = decode_token(auth_header)
+        user_email = payload["email"]
 
         from shared_models.models import RequestLog, RequestSession, User
         from sqlalchemy import select

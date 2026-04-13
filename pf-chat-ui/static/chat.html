@@ -887,7 +887,12 @@
                 if (!r.ok) throw new Error('expired');
                 const u = await r.json();
                 updateUserInfo(u);
-                loadAgents(u.allowed_agents, u.role);
+                // Compute accessible agents from user departments
+                const depts = u.departments || [];
+                const accessible = [];
+                if (depts.includes('software')) accessible.push('software-support');
+                if (depts.includes('network')) accessible.push('network-support');
+                loadAgents(accessible, u.role);
                 startTokenRefresh();
             } catch (e) {
                 localStorage.clear();
@@ -979,7 +984,7 @@
                 catch { throw new Error('Invalid session token — please log in again'); }
                 const r = await fetch(`${API_ENDPOINT}/adk/chat`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-User-Email': td.email },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                     body: JSON.stringify({ message: msg, session_id: sessionId, user: { email: td.email } })
                 });
 

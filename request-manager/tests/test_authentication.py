@@ -1,9 +1,8 @@
-"""Tests for authentication functionality.
+"""Tests for request-manager application.
 
-Note: Tests for removed endpoints (web, generic, CLI) and removed auth
-functions (verify_web_api_key, validate_jwt_token, get_current_user) have been
-removed as part of dead code cleanup. Auth endpoints (login, refresh, me) are
-tested via auth_endpoints or integration tests.
+Note: JWT/password auth endpoints have been replaced by SPIFFE identity +
+OPA authorization. See policies/ for Rego rules and shared_models.identity
+for the SPIFFE identity module.
 """
 
 from fastapi.testclient import TestClient

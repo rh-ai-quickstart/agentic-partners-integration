@@ -1,7 +1,7 @@
 """
 AAA Middleware for Request Manager.
 
-Enforces authentication, authorization, and access control for partner agents.
+Builds user context with department-based access control for OPA authorization.
 """
 
 from typing import Dict, Any
@@ -14,7 +14,7 @@ logger = structlog.get_logger()
 
 
 class AAAMiddleware:
-    """Middleware for enforcing AAA policies."""
+    """Middleware for building user authorization context."""
 
     @staticmethod
     async def get_user_context(
@@ -22,14 +22,14 @@ class AAAMiddleware:
         user_email: str
     ) -> Dict[str, Any]:
         """
-        Get user context for agent processing.
+        Get user context with departments for OPA-based authorization.
 
         Args:
             db: Database session
             user_email: User email
 
         Returns:
-            User context dictionary
+            User context dictionary with departments
         """
         try:
             user = await AAAService.get_user_by_email(db, user_email)
@@ -39,8 +39,11 @@ class AAAMiddleware:
                     "email": user_email,
                     "role": "user",
                     "status": "unknown",
-                    "allowed_agents": []
+                    "departments": []
                 }
+
+            # Get departments from DB or OPA fallback
+            departments = await AAAService.get_user_departments(db, user_email)
 
             return {
                 "user_id": str(user.user_id),
@@ -49,7 +52,8 @@ class AAAMiddleware:
                 "status": user.status,
                 "organization": user.organization,
                 "department": user.department,
-                "allowed_agents": await AAAService.get_user_allowed_agents(db, user_email),
+                "departments": departments,
+                "spiffe_id": user.spiffe_id,
                 "privileges": user.privileges or {}
             }
 
@@ -63,5 +67,5 @@ class AAAMiddleware:
                 "email": user_email,
                 "role": "user",
                 "status": "error",
-                "allowed_agents": []
+                "departments": []
             }

@@ -29,20 +29,20 @@ This builds containers, starts all services, runs migrations, creates users, ing
 
 ### Test Users
 
-| User | Password | Access |
-|------|----------|--------|
-| carlos@example.com | carlos123 | Software support only |
-| luis@example.com | luis123 | Network support only |
-| sharon@example.com | sharon123 | All agents (admin) |
-| josh@example.com | josh123 | No agents (restricted) |
+| User | Departments | Access |
+|------|-------------|--------|
+| carlos@example.com | engineering, software | Software support only |
+| luis@example.com | engineering, network | Network support only |
+| sharon@example.com | engineering, software, network, admin | All agents |
+| josh@example.com | _(none)_ | No agents (restricted) |
 
 ### Try It
 
 1. Open http://localhost:3000
-2. Sign in as `carlos@example.com` / `carlos123`
+2. Click **Carlos** (or enter `carlos@example.com` / `carlos123`) and sign in
 3. Type: "My app crashes with error 500" -- Routes to software-support agent with RAG context
-4. Type: "VPN not connecting" -- Denied (Carlos lacks network-support access)
-5. Sign in as `sharon@example.com` -- Both queries work (admin access)
+4. Type: "VPN not connecting" -- Denied (Carlos lacks the `network` department)
+5. Log out, sign in as `sharon@example.com` / `sharon123` -- Both queries work (has all departments)
 
 ### Run Tests
 
@@ -56,52 +56,120 @@ make test   # E2E tests covering all four pillars
 
 ### 1. AAA -- Authentication, Authorization, and Accounting
 
-The system implements a complete AAA framework. Every user is authenticated, every agent access is authorized, and every request is fully accounted for.
+The system implements a Zero Trust AAA framework using **SPIFFE workload identity** for authentication, **OPA (Open Policy Agent)** for authorization, and PostgreSQL-backed accounting for every request.
 
-#### Authentication
+#### Authentication -- SPIFFE Workload Identity
 
-Users authenticate via email + password. The request-manager issues JWT tokens with configurable expiry.
+Instead of passwords and JWT tokens, services authenticate using **SPIFFE IDs** (Secure Production Identity Framework for Everyone). Each service and user is identified by a URI like `spiffe://partner.example.com/user/carlos`.
 
 ```
-User → POST /auth/login {email, password}
-     ← {token: "eyJ...", expires_in: 300}
-     → POST /adk/chat + Authorization: Bearer eyJ...
+                    Mock Mode (local dev)           Real Mode (production)
+                    ─────────────────────           ──────────────────────
+Identity source:    X-SPIFFE-ID header              mTLS peer certificate SAN
+Transport:          Plain HTTP                      Mutual TLS (mTLS)
+Identity type:      Same SPIFFE ID format           Same SPIFFE ID format
+Business logic:     Identical                       Identical
 ```
 
-1. User submits credentials on the PatternFly login page
-2. Request Manager validates against bcrypt-hashed passwords in PostgreSQL
-3. Returns a signed JWT token (default: 5-minute expiry)
-4. Frontend stores the token and sends it with every request
-5. All `/adk/*` and `/auth/*` endpoints validate the JWT and resolve the user record from the database
+**How it works:**
 
-Auth endpoints (`auth_endpoints.py`, prefix `/auth`):
+1. A single environment variable `MOCK_SPIFFE=true` (default) switches between mock and real mode
+2. In **mock mode**, the `X-SPIFFE-ID` header carries identity -- no certificates needed for local dev
+3. In **real mode**, SPIFFE IDs are extracted from mTLS peer certificate Subject Alternative Names
+4. The `IdentityMiddleware` (FastAPI middleware) extracts identity and sets `request.state.identity`
+5. All downstream code uses the same `WorkloadIdentity` dataclass regardless of mode
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/auth/login` | POST | Authenticate with email + password, receive JWT token |
-| `/auth/me` | GET | Return current user profile and permissions (requires JWT) |
-| `/auth/refresh` | POST | Refresh an expiring JWT token (requires valid JWT) |
+The mock pattern has only 4 switching points (all in `shared-models/src/shared_models/identity.py`):
+- **Inbound identity extraction**: header vs. peer certificate
+- **Outbound identity headers**: X-SPIFFE-ID header vs. mTLS client cert
+- **Server mode**: plain HTTP vs. TLS
+- **Client mode**: plain HTTP vs. mTLS
 
-Rate limiting: Login attempts are limited per IP address via an in-memory sliding-window rate limiter.
+This design is modeled after the Go implementation in `zero-trust-agent-demo/pkg/spiffe/workload.go`.
 
-#### Authorization
+#### User Authentication -- Keycloak OIDC
 
-Each user has an `allowed_agents` list that controls which specialist agents they can reach. Enforcement happens at three layers:
+User authentication is handled by **Keycloak** (OIDC Identity Provider). A pre-configured Keycloak container starts with `docker compose up`, with the realm `partner-agent`, the 4 test users, and department roles ready to go. Only users configured in Keycloak can log in.
+
+**Auth flow:**
+
+1. UI sends `POST /auth/login` with `{email, password}` to request-manager
+2. Request-manager performs a **Resource Owner Password Grant** against Keycloak's token endpoint
+3. Keycloak validates credentials and returns a signed JWT (RS256)
+4. Request-manager validates the JWT via Keycloak's **JWKS endpoint** and returns `{token, user: {email, role, departments}}`
+5. UI stores the JWT and sends it as `Authorization: Bearer` header on subsequent requests
+
+**Auth endpoints** (served by request-manager):
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/auth/login` | POST | `{email, password}` -> `{token, user: {email, role, departments}}` |
+| `/auth/me` | GET | Validate Keycloak JWT, return user info |
+| `/auth/refresh` | POST | Re-validate JWT |
+| `/auth/config` | GET | Return `{keycloak_url, keycloak_realm, client_id}` |
+
+**Pre-configured users** (in `keycloak/realm-partner.json`):
+
+| User | Password | Keycloak Roles (departments) |
+|------|----------|------------------------------|
+| carlos@example.com | carlos123 | engineering, software |
+| luis@example.com | luis123 | engineering, network |
+| sharon@example.com | sharon123 | engineering, software, network, admin |
+| josh@example.com | josh123 | _(none)_ |
+
+Departments are extracted from Keycloak's `realm_access.roles` claim in the JWT. The Keycloak realm export is at `keycloak/realm-partner.json`.
+
+#### Authorization -- OPA + Permission Intersection
+
+Authorization is enforced by **OPA (Open Policy Agent)** using Rego policies. The core model is **permission intersection**:
+
+```
+Effective Access = User Departments ∩ Agent Capabilities
+```
+
+When a user delegates access to an agent, the agent can only operate within departments that **both** the user and the agent have access to.
+
+**OPA policies** (in `policies/`):
+
+| File | Purpose |
+|------|---------|
+| `user_permissions.rego` | Maps users to departments (fallback for local dev) |
+| `agent_permissions.rego` | Maps agents to department capabilities |
+| `delegation.rego` | Main authorization rules + permission intersection logic |
+
+**Agent capabilities** (from `agent_permissions.rego`):
+
+| Agent | Capabilities |
+|-------|-------------|
+| routing-agent | software, network, admin |
+| software-support | software |
+| network-support | network |
+
+**User departments** (from DB or `user_permissions.rego` fallback):
+
+| User | Departments | Can Access |
+|------|-------------|------------|
+| carlos@example.com | engineering, software | software-support |
+| luis@example.com | engineering, network | network-support |
+| sharon@example.com | engineering, software, network, admin | all agents |
+| josh@example.com | _(none)_ | no agents |
+
+**Example intersection**: Carlos (departments: `[engineering, software]`) + software-support (capabilities: `[software]`) = effective: `[software]` -- access granted. Carlos + network-support (capabilities: `[network]`) = effective: `[]` -- access denied.
+
+**Authorization enforcement** happens at three layers:
 
 | Layer | Where | How |
 |-------|-------|-----|
-| LLM prompt | Agent Service | Routing-agent's system prompt lists only the user's permitted agents; LLM won't route to others |
-| Hard gate | Request Manager | `communication_strategy.py` checks `allowed_agents` before every specialist A2A call; blocks unauthorized routing regardless of LLM output |
-| UI filtering | Chat UI | The UI fetches user permissions via `GET /auth/me` and displays only accessible agents |
+| OPA hard gate | Request Manager | `communication_strategy.py` queries OPA before every specialist A2A call; blocks unauthorized routing regardless of LLM output |
+| LLM prompt | Agent Service | Routing-agent's system prompt lists only agents matching the user's departments; LLM won't route to others |
+| UI filtering | Chat UI | The UI filters available agents based on user departments |
 
-User permissions in the database:
+**OPA policy rules** (from `delegation.rego`):
 
-| User | `allowed_agents` | Effect |
-|------|-------------------|--------|
-| carlos@example.com | `["software-support"]` | Software support only |
-| luis@example.com | `["network-support"]` | Network support only |
-| sharon@example.com | `["*"]` | Admin -- all agents |
-| josh@example.com | `[]` | No agents -- all routing denied |
+1. **Service-to-service**: Always allowed (infrastructure calls)
+2. **Delegated agent access**: Compute intersection, allow if non-empty
+3. **Autonomous agent access**: Always denied (agents require user delegation context)
+4. **Unknown agent**: Denied (agent not in capabilities map)
 
 #### Accounting
 
@@ -109,28 +177,20 @@ Every request is logged in the `request_logs` table with a complete audit trail:
 
 ```
 request_logs table:
-  request_id         — unique request identifier
-  session_id         — conversation session (FK to request_sessions)
-  request_type       — "message"
-  request_content    — the user's message text
-  agent_id           — which agent handled the request (e.g., "software-support")
-  response_content   — the agent's full response text
-  response_metadata  — routing decisions, metadata from the agent
-  processing_time_ms — end-to-end processing time in milliseconds
-  completed_at       — when the response was received
-  pod_name           — which pod/container handled the request
-  created_at         — when the request was received
+  request_id         -- unique request identifier
+  session_id         -- conversation session (FK to request_sessions)
+  request_type       -- "message"
+  request_content    -- the user's message text
+  agent_id           -- which agent handled the request (e.g., "software-support")
+  response_content   -- the agent's full response text
+  response_metadata  -- routing decisions, OPA decision, metadata from the agent
+  processing_time_ms -- end-to-end processing time in milliseconds
+  completed_at       -- when the response was received
+  pod_name           -- which pod/container handled the request
+  created_at         -- when the request was received
 ```
 
-The accounting write-back happens in `communication_strategy.py` after each A2A call completes. The `_complete_request_log()` method updates the `RequestLog` row with the response data, agent identity, and timing. Example from a live test run:
-
-```
-agent_id         | processing_time_ms | completed_at
------------------+--------------------+-------------------------------
-software-support |              11050 | 2026-03-06 12:14:58.515425+00
-network-support  |              17569 | 2026-03-06 12:19:22.847123+00
-routing-agent    |               1218 | 2026-03-06 12:18:42.339221+00
-```
+The accounting write-back happens in `communication_strategy.py` after each A2A call completes. The `_complete_request_log()` method updates the `RequestLog` row with the response data, agent identity, and timing.
 
 Session-level accounting is stored in `request_sessions.conversation_context`, which records every message and response in the conversation as a JSON array.
 
@@ -200,7 +260,7 @@ Request Manager                          Agent Service
       │  POST /api/v1/agents/routing-agent/invoke
       │  {session_id, user_id, message,       │
       │   transfer_context: {                 │
-      │     allowed_agents: ["software-support"],
+      │     departments: ["software"],        │
       │     conversation_history: [...]       │
       │   }}                                  │
       │──────────────────────────────────────▶│
@@ -209,10 +269,13 @@ Request Manager                          Agent Service
       │   routing_decision: "software-support"}│
       │◀──────────────────────────────────────│
       │                                       │
+      │  [OPA query: check_agent_authorization│
+      │   (user depts ∩ agent caps)]          │
+      │                                       │
       │  POST /api/v1/agents/software-support/invoke
       │  {session_id, user_id, message,       │
       │   transfer_context: {                 │
-      │     allowed_agents: ["software-support"],
+      │     departments: ["software"],        │
       │     conversation_history: [...],      │
       │     previous_agent: "routing-agent"   │
       │   }}                                  │
@@ -226,9 +289,9 @@ Request Manager                          Agent Service
 
 1. **`DirectHTTPStrategy`** in `communication_strategy.py` handles all A2A communication.
 2. **`EnhancedAgentClient`** (`agent_client_enhanced.py`) sends `POST /api/v1/agents/{agent_name}/invoke` to the agent-service.
-3. **`transfer_context`** carries the user's `allowed_agents`, `conversation_history`, and `previous_agent` across each A2A call, so the receiving agent has full context.
-4. **Two-hop routing:** The request-manager first invokes the routing-agent. If the response contains a `routing_decision`, the request-manager makes a second A2A call to the specialist agent. The user never calls specialist agents directly.
-5. **Permission enforcement at every hop:** The request-manager checks `allowed_agents` before each specialist invocation. The routing-agent's prompt also restricts which agents it can route to based on `allowed_agents`.
+3. **`transfer_context`** carries the user's `departments`, `conversation_history`, and `previous_agent` across each A2A call, so the receiving agent has full context.
+4. **Two-hop routing:** The request-manager first invokes the routing-agent. If the response contains a `routing_decision`, the request-manager queries OPA for authorization, then makes a second A2A call to the specialist agent.
+5. **OPA enforcement at every hop:** The request-manager queries OPA (`check_agent_authorization()`) before each specialist invocation using the permission intersection model. The routing-agent's prompt also restricts which agents it can route to based on `departments`.
 6. **Accounting at every hop:** After each A2A call completes, `_complete_request_log()` records the responding agent, full response, and processing time in `request_logs`.
 
 #### A2A endpoint contract
@@ -240,10 +303,10 @@ Request:
   session_id: str       — conversation session
   user_id: str          — user email
   message: str          — user message text
-  transfer_context: {   — optional context
-    allowed_agents: []  — user's permitted agents
-    conversation_history: []  — prior messages
-    previous_agent: str — which agent handled the last turn
+  transfer_context: {   -- optional context
+    departments: []     -- user's department tags (for OPA authorization)
+    conversation_history: []  -- prior messages
+    previous_agent: str -- which agent handled the last turn
   }
 
 Response:
@@ -263,14 +326,14 @@ Response:
 
 ### 4. PatternFly Web UI
 
-The system uses a custom PatternFly-based chat UI instead of Google's ADK web UI. The ADK web UI does not support JWT authentication, token refresh, or role-based agent filtering -- all of which are required for the AAA framework.
+The system uses a custom PatternFly-based chat UI for the chat interface.
 
 #### Pages
 
 | Page | File | Purpose |
 |------|------|---------|
-| Login | `login.html` | Email + password form with quick-login buttons for test users. Calls `POST /auth/login`, stores JWT in localStorage. |
-| Chat | `chat.html` | PatternFly 6 chat interface. Sends `POST /adk/chat` with JWT. Displays agent responses with markdown. Handles token expiry with redirect to login. |
+| Login | `login.html` | Email form with quick-login buttons for test users. Sets user identity for chat session. |
+| Chat | `chat.html` | PatternFly 6 chat interface. Sends `POST /adk/chat` with user email. Displays agent responses with markdown. |
 | Audit | `audit.html` | Request audit log. Calls `GET /adk/audit` and displays all request logs in a table with agent, timing, and response data. |
 | Index | `index.html` | Landing page that redirects to login or chat based on auth state. |
 
@@ -283,19 +346,14 @@ Browser                    nginx (port 3000)              Request Manager (port 
    │───────────────────────────▶│ serves static files            │
    │◀───────────────────────────│                                │
    │                            │                                │
-   │  POST /auth/login          │  proxy_pass /auth/ → :8080     │
-   │───────────────────────────▶│───────────────────────────────▶│
-   │◀───────────────────────────│◀───────────────────────────────│
-   │  {token: "eyJ..."}        │                                │
-   │                            │                                │
    │  POST /adk/chat            │  proxy_pass /adk/ → :8080      │
-   │  + Bearer token            │                                │
+   │  + X-SPIFFE-ID header      │                                │
    │───────────────────────────▶│───────────────────────────────▶│
    │◀───────────────────────────│◀───────────────────────────────│
    │  {response, agent, ...}   │                                │
 ```
 
-The nginx container serves the static HTML/JS files and reverse-proxies `/adk/`, `/auth/`, and `/api/` requests to the request-manager. No build step, no Node.js runtime -- just static files served by nginx.
+The nginx container serves the static HTML/JS files and reverse-proxies `/adk/` and `/api/` requests to the request-manager. No build step, no Node.js runtime -- just static files served by nginx.
 
 ---
 
@@ -311,21 +369,20 @@ The nginx container serves the static HTML/JS files and reverse-proxies `/adk/`,
 └────────────────────────────┬────────────────────────────────────────┘
                              │
                              │ POST /adk/chat
-                             │ POST /auth/login
-                             │ GET  /auth/me
+                             │ GET  /adk/audit
                              ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                    Request Manager (port 8000)                      │
 │                                                                     │
 │  ┌──────────────┐  ┌──────────────────┐  ┌───────────────────────┐ │
-│  │ Auth (JWT)   │  │ adk_endpoints.py │  │ communication_        │ │
-│  │              │  │                  │  │ strategy.py           │ │
-│  │ • /auth/login│  │ • /adk/chat      │  │                       │ │
-│  │ • /auth/me   │  │ • /adk/audit     │  │ • invoke routing      │ │
-│  │ • /auth/     │  │                  │  │ • detect ROUTE:       │ │
-│  │   refresh    │  │                  │  │ • invoke specialist   │ │
-│  └──────────────┘  └──────────────────┘  │ • check permissions   │ │
-│                                           │ • write accounting    │ │
+│  │ Identity     │  │ adk_endpoints.py │  │ communication_        │ │
+│  │ Middleware   │  │                  │  │ strategy.py           │ │
+│  │              │  │ • /adk/chat      │  │                       │ │
+│  │ • SPIFFE ID  │  │ • /adk/audit     │  │ • invoke routing      │ │
+│  │   extraction │  │                  │  │ • detect ROUTE:       │ │
+│  │ • X-SPIFFE-ID│  │                  │  │ • query OPA           │ │
+│  │   (mock)     │  │                  │  │ • invoke specialist   │ │
+│  └──────────────┘  └──────────────────┘  │ • write accounting    │ │
 │                                           └───────────┬───────────┘ │
 │                                                       │             │
 └───────────────────────────────────────────────────────┼─────────────┘
@@ -339,7 +396,7 @@ The nginx container serves the static HTML/JS files and reverse-proxies `/adk/`,
 │  │                    /invoke endpoint (main.py)                   ││
 │  │                                                                 ││
 │  │  if agent_name == "routing-agent":                              ││
-│  │    • Build system prompt with user's allowed_agents             ││
+│  │    • Build system prompt with user's departments                ││
 │  │    • Include conversation history                               ││
 │  │    • LLM classifies intent → ROUTE:<agent> or conversation     ││
 │  │                                                                 ││
@@ -382,10 +439,10 @@ The nginx container serves the static HTML/JS files and reverse-proxies `/adk/`,
 │  │    users     │ │  request_    │ │  request_    │ │  alembic_  ││
 │  │              │ │  sessions    │ │  logs        │ │  version   ││
 │  │ • email      │ │              │ │              │ │            ││
-│  │ • password   │ │ • session_id │ │ • request_id │ │ • 006      ││
+│  │ • spiffe_id  │ │ • session_id │ │ • request_id │ │ • 008      ││
 │  │ • role       │ │ • user_id    │ │ • agent_id   │ │            ││
-│  │ • allowed_   │ │ • conversa-  │ │ • response   │ └────────────┘│
-│  │   agents[]   │ │   tion_      │ │ • timing_ms  │              │
+│  │ • depart-    │ │ • conversa-  │ │ • response   │ └────────────┘│
+│  │   ments[]    │ │   tion_      │ │ • timing_ms  │              │
 │  │ • status     │ │   context{}  │ │ • completed  │              │
 │  └──────────────┘ └──────────────┘ └──────────────┘              │
 └─────────────────────────────────────────────────────────────────────┘
@@ -400,17 +457,19 @@ The nginx container serves the static HTML/JS files and reverse-proxies `/adk/`,
 | RAG API | 8003 | Semantic search over support tickets |
 | Agent Service | 8001 | LLM-based routing and specialist agents |
 | Request Manager | 8000 | AAA enforcement, A2A orchestration, chat API |
+| OPA | 8181 | Policy engine for authorization (Rego policies) |
+| Keycloak | 8090 | OIDC identity provider (user authentication) |
 | Web UI (nginx) | 3000 | PatternFly chat interface |
 
 > **Note:** Ports above are for `make setup` (uses `scripts/setup.sh`). The `docker-compose.yaml` uses different host port mappings: PostgreSQL on 5432, ChromaDB on 8100, RAG API on 8080. Internal container ports remain the same.
 
 ### Request Flow
 
-1. **User sends message** -- Web UI sends `POST /adk/chat` with JWT token and message text.
-2. **Authentication** -- Request Manager validates JWT, resolves user from PostgreSQL, loads `allowed_agents`.
-3. **A2A call: routing-agent** -- Request Manager invokes `POST /api/v1/agents/routing-agent/invoke` via A2A, passing `transfer_context` with `allowed_agents` and `conversation_history`.
+1. **User sends message** -- Web UI sends `POST /adk/chat` with user email and message text.
+2. **Identity extraction** -- `IdentityMiddleware` extracts SPIFFE identity (from `X-SPIFFE-ID` header in mock mode). Request Manager resolves user from PostgreSQL, loads departments.
+3. **A2A call: routing-agent** -- Request Manager invokes `POST /api/v1/agents/routing-agent/invoke` via A2A, passing `transfer_context` with `departments` and `conversation_history`.
 4. **Routing decision** -- Routing-agent's LLM classifies intent. Returns `ROUTE:software-support` or a conversational response.
-5. **Authorization check** -- If routing to a specialist, Request Manager checks `allowed_agents`. Blocked if unauthorized.
+5. **OPA authorization** -- If routing to a specialist, Request Manager queries OPA with `Delegation(user_spiffe_id, agent_spiffe_id, user_departments)`. OPA computes `User Departments ∩ Agent Capabilities`. Blocked if intersection is empty.
 6. **A2A call: specialist agent** -- Request Manager invokes the specialist via A2A. Specialist queries RAG API, gets matching tickets, builds LLM prompt with RAG context, returns grounded response.
 7. **Accounting** -- `_complete_request_log()` updates `request_logs` with `agent_id`, `response_content`, `processing_time_ms`, `completed_at`.
 8. **Response** -- Request Manager stores conversation turn in `request_sessions.conversation_context`, returns response to the UI.
@@ -419,7 +478,7 @@ The nginx container serves the static HTML/JS files and reverse-proxies `/adk/`,
 
 - **Single-turn routing:** The routing-agent classifies intent in one LLM call (no multi-turn state machine). Returns `ROUTE:<agent>` or a conversational response.
 - **Mandatory RAG:** Specialist agents always query the RAG API. If RAG is unavailable, the request fails (no silent degradation).
-- **Three-layer authorization:** LLM prompt + hard gate + UI filtering. The LLM can't bypass the hard gate.
+- **OPA + permission intersection:** Authorization uses `User Departments ∩ Agent Capabilities` evaluated by OPA. The LLM can't bypass the OPA hard gate.
 - **Full accounting:** Every A2A call records which agent handled the request, the response, and processing time.
 - **A2A exclusively:** No message brokers. Agents communicate via synchronous HTTP calls.
 - **Pluggable LLM:** Backend configured via `LLM_BACKEND` env var. Supports Gemini (default in setup), OpenAI, and Ollama.
@@ -499,10 +558,9 @@ Available agents:
 │
 ├── request-manager/            # AAA enforcement, A2A orchestration
 │   └── src/request_manager/
-│       ├── main.py             # FastAPI app, middleware, session cleanup
-│       ├── auth_endpoints.py   # /auth/login, /auth/me, /auth/refresh (JWT auth)
+│       ├── main.py             # FastAPI app, IdentityMiddleware, session cleanup
 │       ├── adk_endpoints.py    # /adk/chat, /adk/audit (chat + audit API)
-│       ├── communication_strategy.py  # A2A invocation, routing loop, accounting
+│       ├── communication_strategy.py  # A2A invocation, OPA hard gate, accounting
 │       ├── agent_client_enhanced.py   # HTTP client for A2A calls
 │       └── credential_service.py      # Request-scoped credential management
 │
@@ -518,7 +576,13 @@ Available agents:
 │   │   └── audit.html          # Request audit log viewer
 │   └── nginx.conf              # Reverse proxy to request-manager
 │
-├── shared-models/              # Shared library: DB models, migrations, auth, health, events
+├── shared-models/              # Shared library: DB models, migrations, identity, OPA client
+├── keycloak/                   # Keycloak realm config (OIDC, --profile oidc)
+├── policies/                   # OPA Rego policies (authorization rules)
+│   ├── user_permissions.rego   # User-to-department mappings
+│   ├── agent_permissions.rego  # Agent capability mappings
+│   ├── delegation.rego         # Permission intersection logic
+│   └── delegation_test.rego    # Policy tests
 ├── data/                       # Synthetic support tickets (JSON)
 ├── scripts/                    # Setup, build, test, and user management scripts
 ├── helm/                       # Helm chart for Kubernetes/OpenShift deployment
@@ -543,13 +607,13 @@ Agent service and request manager use a multi-stage build: `registry.access.redh
 
 ## Database
 
-PostgreSQL 16 with pgvector extension. Schema managed by Alembic (current version: 006).
+PostgreSQL 16 with pgvector extension. Schema managed by Alembic (current version: 008).
 
 ### Core tables
 
 | Table | Purpose |
 |-------|---------|
-| `users` | Authentication credentials, roles, `allowed_agents` (authorization) |
+| `users` | SPIFFE identity, roles, `departments` (OPA authorization) |
 | `request_sessions` | Session state, `conversation_context` (JSON message history) |
 | `request_logs` | Full accounting: request content, response content, agent_id, processing time, timestamps |
 | `alembic_version` | Migration tracking |
@@ -596,11 +660,16 @@ LangGraph checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writ
 | `AGENT_TIMEOUT` | `120` | Timeout in seconds for A2A calls |
 | `STRUCTURED_CONTEXT_ENABLED` | `true` | Send structured `transfer_context` in A2A calls |
 
-#### Authentication
+#### Identity & Authorization
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `JWT_EXPIRATION_MINUTES` | `5` | JWT token lifetime in minutes |
+| `MOCK_SPIFFE` | `true` | Use mock SPIFFE mode (X-SPIFFE-ID header) instead of real mTLS |
+| `SPIFFE_TRUST_DOMAIN` | `partner.example.com` | SPIFFE trust domain for identity URIs |
+| `OPA_URL` | `http://localhost:8181` | OPA policy engine URL for authorization queries |
+| `KEYCLOAK_URL` | `http://keycloak:8080` | Keycloak server URL for OIDC authentication |
+| `KEYCLOAK_REALM` | `partner-agent` | Keycloak realm name |
+| `KEYCLOAK_CLIENT_ID` | `partner-agent-ui` | Keycloak OIDC client ID |
 
 #### RAG Service
 
@@ -631,27 +700,15 @@ LangGraph checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writ
 
 ## API Endpoints
 
-### Authentication (`/auth`)
-
-```bash
-# Login and get JWT token
-TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"carlos@example.com","password":"carlos123"}' | jq -r '.token')
-
-# Check current user info and permissions
-curl http://localhost:8000/auth/me \
-  -H "Authorization: Bearer $TOKEN"
-
-# Refresh an expiring token
-curl -X POST http://localhost:8000/auth/refresh \
-  -H "Authorization: Bearer $TOKEN"
-```
-
 ### Chat (`/adk`)
 
 ```bash
-# Send a message (requires JWT)
+# Login to get a JWT token
+TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email": "carlos@example.com", "password": "carlos123"}' | jq -r '.token')
+
+# Send a message (requires JWT from /auth/login)
 curl -X POST http://localhost:8000/adk/chat \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $TOKEN" \
@@ -660,6 +717,26 @@ curl -X POST http://localhost:8000/adk/chat \
 # View audit log
 curl http://localhost:8000/adk/audit \
   -H "Authorization: Bearer $TOKEN"
+```
+
+### OPA Policy Query
+
+```bash
+# Test OPA authorization directly
+curl -X POST http://localhost:8181/v1/data/partner/authorization/decision \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "input": {
+      "caller_spiffe_id": "spiffe://partner.example.com/service/request-manager",
+      "agent_name": "software-support",
+      "delegation": {
+        "user_spiffe_id": "spiffe://partner.example.com/user/carlos",
+        "agent_spiffe_id": "spiffe://partner.example.com/agent/software-support",
+        "user_departments": ["engineering", "software"]
+      }
+    }
+  }'
+# Response: {"result":{"allow":true,"effective_departments":["software"],...}}
 ```
 
 ### A2A Agent Invocation (Internal)
@@ -766,9 +843,6 @@ See [helm/README.md](helm/README.md) for Helm chart deployment to Kubernetes/Ope
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/setup.sh` | Full setup: build images, start containers, run migrations, create users, ingest data |
+| `scripts/setup.sh` | Full setup: build images, start containers, run migrations, ingest data |
 | `scripts/build_containers.sh` | Build all four container images |
 | `scripts/test.sh` | End-to-end tests covering all four pillars |
-| `scripts/setup_aaa_users.py` | Create test users with roles and permissions |
-| `scripts/setup_production_users.py` | Create production users (used in Kubernetes) |
-| `scripts/entrypoint_with_init.sh` | Kubernetes entrypoint: runs migrations + starts service |

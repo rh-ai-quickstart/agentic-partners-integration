@@ -284,19 +284,19 @@
                 <h4>Test Users (Development Only)</h4>
                 <button onclick="fillCredentials('carlos@example.com', 'carlos123')">
                     <span id="iconCarlos"></span>
-                    <div><strong>Carlos</strong> &mdash; Software Support Only</div>
+                    <div><strong>Carlos</strong> &mdash; Engineering, Software depts</div>
                 </button>
                 <button onclick="fillCredentials('luis@example.com', 'luis123')">
                     <span id="iconLuis"></span>
-                    <div><strong>Luis</strong> &mdash; Network Support Only</div>
+                    <div><strong>Luis</strong> &mdash; Engineering, Network depts</div>
                 </button>
                 <button onclick="fillCredentials('sharon@example.com', 'sharon123')">
                     <span id="iconSharon"></span>
-                    <div><strong>Sharon</strong> &mdash; Admin (All Agents)</div>
+                    <div><strong>Sharon</strong> &mdash; Admin (All departments)</div>
                 </button>
                 <button onclick="fillCredentials('josh@example.com', 'josh123')">
                     <span id="iconJosh"></span>
-                    <div><strong>Josh</strong> &mdash; No Agent Access</div>
+                    <div><strong>Josh</strong> &mdash; No department access</div>
                 </button>
             </div>
 
@@ -394,7 +394,7 @@
                 localStorage.setItem('jwt_token', d.token);
                 localStorage.setItem('user_email', d.user.email);
                 localStorage.setItem('user_role', d.user.role);
-                localStorage.setItem('allowed_agents', JSON.stringify(d.user.allowed_agents));
+                localStorage.setItem('departments', JSON.stringify(d.user.departments));
 
                 showSuccess('Welcome ' + d.user.email + '! Redirecting...');
                 setTimeout(() => { window.location.href = '/chat.html'; }, 1000);

@@ -12,9 +12,12 @@ bash scripts/setup.sh
 
 **What it does:**
 - Builds all container images
-- Starts PostgreSQL, ChromaDB
+- Starts PostgreSQL, ChromaDB, Keycloak, OPA
+- Runs database migrations
 - Starts agent-service, request-manager, rag-api, pf-chat-ui
-- **Auto-initializes all data** (users, passwords, RAG knowledge)
+- Ingests RAG knowledge base
+
+Users are managed in Keycloak and auto-created in the DB on first login.
 
 ---
 
@@ -26,27 +29,17 @@ bash scripts/test.sh
 ```
 
 **What it tests:**
-- Health checks (all services)
+- Health checks (all services including Keycloak, OPA)
+- Keycloak authentication (login, token validation, invalid password rejection)
+- OPA authorization (department-based agent access)
 - RAG queries
-- Authentication
-- Agent routing
-- E2E flow
+- End-to-end workflow (login -> chat -> response)
+- Database state
 
 ---
 
-## Supporting Scripts
-
 ### `build_containers.sh`
 Builds all container images (used by setup.sh)
-
-### `setup_aaa_users.py`
-Creates test users with passwords (used by setup.sh)
-
-### `setup_production_users.py`
-Creates production users with specific permissions (Carlos, Luis, Sharon, Josh)
-
-### `entrypoint_with_init.sh`
-Production entrypoint for K8s deployments (auto-initializes data)
 
 ---
 

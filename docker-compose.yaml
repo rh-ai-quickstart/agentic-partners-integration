@@ -87,6 +87,47 @@ services:
         condition: service_healthy
     restart: "no"
 
+  # Keycloak (OIDC Identity Provider)
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.5
+    container_name: partner-keycloak
+    command: ["start-dev", "--import-realm"]
+    environment:
+      - KC_BOOTSTRAP_ADMIN_USERNAME=admin
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=admin123
+      - KC_HTTP_ENABLED=true
+      - KC_HEALTH_ENABLED=true
+    volumes:
+      - ./keycloak/realm-partner.json:/opt/keycloak/data/import/realm-partner.json:ro
+    ports:
+      - "8090:8080"
+      - "9090:9000"
+    networks:
+      - partner-agent-network
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && cat <&3 | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  # OPA (Open Policy Agent) for authorization
+  opa:
+    image: openpolicyagent/opa:latest
+    container_name: partner-opa
+    command: ["run", "--server", "--addr", ":8181", "/policies"]
+    volumes:
+      - ./policies:/policies:ro
+    ports:
+      - "8181:8181"
+    networks:
+      - partner-agent-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8181/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   # Agent Service
   agent-service:
     build:
@@ -100,6 +141,9 @@ services:
       - GEMINI_MODEL=gemini-2.5-flash
       - LOG_LEVEL=INFO
       - RAG_API_ENDPOINT=http://rag-api:8080/answer
+      - MOCK_SPIFFE=true
+      - SPIFFE_TRUST_DOMAIN=partner.example.com
+      - OPA_URL=http://opa:8181
     ports:
       - "8001:8080"
     networks:
@@ -108,6 +152,8 @@ services:
       postgres:
         condition: service_healthy
       rag-api:
+        condition: service_healthy
+      opa:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -130,6 +176,12 @@ services:
       - AGENT_TIMEOUT=120
       - LOG_LEVEL=INFO
       - STRUCTURED_CONTEXT_ENABLED=true
+      - MOCK_SPIFFE=true
+      - SPIFFE_TRUST_DOMAIN=partner.example.com
+      - OPA_URL=http://opa:8181
+      - KEYCLOAK_URL=http://keycloak:8080
+      - KEYCLOAK_REALM=partner-agent
+      - KEYCLOAK_CLIENT_ID=partner-agent-ui
     ports:
       - "8000:8080"
     networks:
@@ -141,20 +193,22 @@ services:
         condition: service_healthy
       agent-service:
         condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      opa:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # AAA Setup (Database migrations + User creation)
-  aaa-setup:
+  # Database migrations (one-time)
+  db-migrate:
     build:
       context: .
       dockerfile: request-manager/Containerfile
-    container_name: partner-aaa-setup
-    volumes:
-      - ./scripts:/app/scripts:ro
+    container_name: partner-db-migrate
     environment:
       - DATABASE_URL=postgresql+asyncpg://user:pass@postgres:5432/partner_agent
     working_dir: /app
@@ -163,37 +217,12 @@ services:
       echo 'Running database migrations...' &&
       cd /app/shared-models &&
       python3 -m alembic upgrade head &&
-      echo 'Creating users...' &&
-      python3 /app/scripts/setup_aaa_users.py &&
-      echo 'Fixing user permissions...' &&
-      python3 -c \"
-      import asyncio, sys
-      sys.path.insert(0, '/app/shared-models/src')
-      from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-      from sqlalchemy.orm import sessionmaker
-      from shared_models.aaa_service import AAAService
-      from shared_models.auth_service import AuthService
-      from shared_models.models import UserRole
-      async def fix():
-          import os
-          engine = create_async_engine(os.environ['DATABASE_URL'], echo=False)
-          async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-          async with async_session() as db:
-              await AAAService.update_user_permissions(db, user_email='carlos@example.com', allowed_agents=['software-support'])
-              await AAAService.get_or_create_user(db, email='josh@example.com', role=UserRole.USER, organization='Customer', department='Intern')
-              await AAAService.update_user_permissions(db, user_email='josh@example.com', allowed_agents=[])
-              await AuthService.set_user_password(db, 'josh@example.com', 'josh123')
-          await engine.dispose()
-      asyncio.run(fix())
-      \" &&
-      echo 'AAA setup complete!'
+      echo 'Migrations complete!'
       "
     networks:
       - partner-agent-network
     depends_on:
       postgres:
-        condition: service_healthy
-      request-manager:
         condition: service_healthy
     restart: "no"
 

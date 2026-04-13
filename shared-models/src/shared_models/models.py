@@ -79,8 +79,8 @@ class User(Base, TimestampMixin):  # type: ignore[misc]
         String(255), nullable=True, unique=True, index=True
     )  # For display/search - unique to prevent duplicates
 
-    # Authentication
-    password_hash = Column(String(255), nullable=True)  # Bcrypt hash
+    # Identity
+    spiffe_id = Column(String(255), nullable=True, unique=True)  # SPIFFE workload identity
     last_login = Column(TIMESTAMP(timezone=True), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False, index=True)
 
@@ -90,7 +90,7 @@ class User(Base, TimestampMixin):  # type: ignore[misc]
         default=UserRole.USER.value, nullable=False, index=True
     )
     privileges = Column(JSON, default=dict, nullable=False)  # Fine-grained permissions
-    allowed_agents = Column(JSON, default=list, nullable=False)  # Agent access control
+    departments = Column(JSON, default=list, nullable=False)  # Department tags for OPA authorization
     status = Column(String(20), default="active", nullable=False, index=True)
 
     # Organization structure

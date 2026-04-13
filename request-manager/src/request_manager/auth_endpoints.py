@@ -1,258 +1,242 @@
-"""Authentication endpoints for user login and token management."""
+"""
+Authentication endpoints via Keycloak OIDC.
 
-import time
-from collections import defaultdict
+All user authentication goes through Keycloak using the Resource Owner
+Password Grant. Only users configured in the Keycloak realm can log in.
+JWTs are validated via Keycloak's JWKS endpoint (RS256).
+"""
+
+import os
 from typing import Optional
 
+import jwt
+import httpx
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Header
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared_models.auth_service import AuthService
 from shared_models.database import get_db
+from shared_models.aaa_service import AAAService
 
 logger = structlog.get_logger()
-router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-security = HTTPBearer()
+# ── Configuration ────────────────────────────────────────────────────────────
 
+KEYCLOAK_URL: str = os.getenv("KEYCLOAK_URL", "http://keycloak:8080")
+KEYCLOAK_REALM: str = os.getenv("KEYCLOAK_REALM", "partner-agent")
+KEYCLOAK_CLIENT_ID: str = os.getenv("KEYCLOAK_CLIENT_ID", "partner-agent-ui")
 
-# ---------------------------------------------------------------------------
-# In-memory sliding-window rate limiter
-# ---------------------------------------------------------------------------
-class _RateLimiter:
-    """Per-IP sliding-window rate limiter stored in process memory."""
-
-    def __init__(self, max_requests: int, window_seconds: int) -> None:
-        self.max_requests = max_requests
-        self.window_seconds = window_seconds
-        self._hits: dict[str, list[float]] = defaultdict(list)
-
-    def check(self, key: str) -> bool:
-        """Return True if the request is allowed, False if rate-limited."""
-        now = time.monotonic()
-        window_start = now - self.window_seconds
-        timestamps = self._hits[key]
-        self._hits[key] = [t for t in timestamps if t > window_start]
-        if len(self._hits[key]) >= self.max_requests:
-            return False
-        self._hits[key].append(now)
-        return True
+# Cached JWKS client (created lazily)
+_jwks_client: Optional[jwt.PyJWKClient] = None
 
 
-_login_limiter = _RateLimiter(max_requests=10, window_seconds=60)
-_refresh_limiter = _RateLimiter(max_requests=30, window_seconds=60)
+def _get_jwks_client() -> jwt.PyJWKClient:
+    global _jwks_client
+    if _jwks_client is None:
+        jwks_url = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/certs"
+        _jwks_client = jwt.PyJWKClient(jwks_url)
+    return _jwks_client
 
 
-def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+# ── JWT Helpers ──────────────────────────────────────────────────────────────
 
-
-# Request/Response Models
-class LoginRequest(BaseModel):
-    """Login request with email and password."""
-    email: str = Field(..., description="User email address")
-    password: str = Field(..., description="User password")
-
-
-class LoginResponse(BaseModel):
-    """Login response with JWT token and user info."""
-    token: str = Field(..., description="JWT access token")
-    token_type: str = Field(default="bearer", description="Token type")
-    user: dict = Field(..., description="User information")
-
-
-class UserResponse(BaseModel):
-    """User information response."""
-    user_id: str
-    email: str
-    role: str
-    allowed_agents: list
-    organization: Optional[str] = None
-    department: Optional[str] = None
-
-
-# Dependency to extract and validate JWT token
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: AsyncSession = Depends(get_db)
-) -> dict:
-    """Extract and validate JWT token, return user payload."""
-    token = credentials.credentials
-
-    # Verify token
-    payload = AuthService.verify_token(token)
-    if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    # Verify user still exists and is active
-    user = await AuthService.get_user_by_email(db, payload["email"])
-    if not user or not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found or inactive",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    return payload
-
-
-# Endpoints
-@router.post("/login", response_model=LoginResponse)
-async def login(
-    request: LoginRequest,
-    raw_request: Request,
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Authenticate user and return JWT token.
-
-    This endpoint validates user credentials and returns a JWT token
-    that can be used for subsequent authenticated requests.
-    Rate-limited to 10 attempts per minute per IP.
-    """
-    ip = _client_ip(raw_request)
-    if not _login_limiter.check(ip):
-        logger.warning("Login rate limited", ip=ip, email=request.email)
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many login attempts. Please try again later.",
-        )
-
-    try:
-        user = await AuthService.authenticate_user(db, request.email, request.password)
-
-        if not user:
-            logger.warning("Login failed", email=request.email)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid email or password",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-        # Generate JWT token
-        token = AuthService.generate_token(
-            user_id=user.user_id,
-            email=user.primary_email,
-            role=user.role,
-            allowed_agents=user.allowed_agents
-        )
-
-        logger.info("User logged in successfully", email=user.primary_email)
-
-        return LoginResponse(
-            token=token,
-            token_type="bearer",
-            user={
-                "user_id": user.user_id,
-                "email": user.primary_email,
-                "role": user.role,
-                "allowed_agents": user.allowed_agents,
-                "organization": user.organization,
-                "department": user.department
-            }
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Login error", email=request.email, error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Login failed"
-        )
-
-
-@router.get("/me", response_model=UserResponse)
-async def get_current_user_info(
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Get current authenticated user information.
-
-    Returns user details from the JWT token payload.
-    """
-    return UserResponse(
-        user_id=current_user["user_id"],
-        email=current_user["email"],
-        role=current_user["role"],
-        allowed_agents=current_user["allowed_agents"],
-        organization=current_user.get("organization"),
-        department=current_user.get("department")
+def _decode_keycloak_jwt(token: str) -> dict:
+    """Decode a Keycloak-issued JWT using JWKS. Raises on failure."""
+    client = _get_jwks_client()
+    signing_key = client.get_signing_key_from_jwt(token)
+    return jwt.decode(
+        token,
+        signing_key.key,
+        algorithms=["RS256"],
+        audience=KEYCLOAK_CLIENT_ID,
+        options={"verify_aud": True},
     )
 
 
-@router.post("/refresh", response_model=LoginResponse)
-async def refresh_token(
-    raw_request: Request,
-    current_user: dict = Depends(get_current_user),
+def decode_token(authorization: str) -> dict:
+    """Decode a JWT from an Authorization header value.
+
+    Returns the decoded payload dict. Raises HTTPException 401 on failure.
+    Used by adk_endpoints to extract user identity.
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+
+    token = authorization[7:]
+    try:
+        return _decode_keycloak_jwt(token)
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.PyJWTError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
+
+
+def _extract_departments(payload: dict) -> list[str]:
+    """Extract departments from Keycloak token claims.
+
+    Keycloak stores realm roles in realm_access.roles.
+    We filter to only our department roles (engineering, software, network, admin).
+    """
+    known_departments = {"engineering", "software", "network", "admin"}
+    realm_access = payload.get("realm_access", {})
+    roles = realm_access.get("roles", [])
+    return [r for r in roles if r in known_departments]
+
+
+# ── Request/Response Models ──────────────────────────────────────────────────
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class LoginUser(BaseModel):
+    email: str
+    role: str
+    departments: list[str]
+
+
+class LoginResponse(BaseModel):
+    token: str
+    user: LoginUser
+
+
+class MeResponse(BaseModel):
+    email: str
+    role: str
+    departments: list[str]
+
+
+class RefreshResponse(BaseModel):
+    token: str
+
+
+class ConfigResponse(BaseModel):
+    keycloak_url: str
+    keycloak_realm: str
+    client_id: str
+
+
+# ── Router ───────────────────────────────────────────────────────────────────
+
+router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+@router.post("/login", response_model=LoginResponse)
+async def login(
+    request: LoginRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Refresh JWT token before expiration.
+    """Authenticate user via Keycloak Resource Owner Password Grant."""
+    token_url = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token"
 
-    Tokens expire in 5 minutes for security. Web UI should call this endpoint
-    every 4 minutes to get a fresh token before the current one expires.
-    Rate-limited to 30 requests per minute per IP.
-    """
-    ip = _client_ip(raw_request)
-    if not _refresh_limiter.check(ip):
-        logger.warning("Token refresh rate limited", ip=ip, email=current_user.get("email"))
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many refresh attempts. Please try again later.",
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            token_url,
+            data={
+                "grant_type": "password",
+                "client_id": KEYCLOAK_CLIENT_ID,
+                "username": request.email,
+                "password": request.password,
+            },
         )
+
+    if resp.status_code != 200:
+        detail = "Invalid credentials"
+        try:
+            err = resp.json()
+            detail = err.get("error_description", detail)
+        except Exception:
+            pass
+        raise HTTPException(status_code=401, detail=detail)
+
+    token_data = resp.json()
+    access_token = token_data["access_token"]
+
+    # Decode the Keycloak token to extract claims
+    try:
+        payload = _decode_keycloak_jwt(access_token)
+    except jwt.PyJWTError as e:
+        raise HTTPException(status_code=401, detail=f"Failed to validate Keycloak token: {e}")
+
+    email = payload.get("email", request.email)
+    departments = _extract_departments(payload)
+
+    # Ensure user exists in DB (auto-create if needed)
+    user = await AAAService.get_or_create_user(
+        db, email=email, departments=departments,
+    )
+    role = user.role.value if user.role else "user"
+
+    logger.info("Login successful", user=email, departments=departments)
+
+    return LoginResponse(
+        token=access_token,
+        user=LoginUser(email=email, role=role, departments=departments),
+    )
+
+
+@router.get("/me", response_model=MeResponse)
+async def me(
+    authorization: Optional[str] = Header(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return current user info from Keycloak JWT claims."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authorization header required")
+
+    token = authorization[7:]
 
     try:
-        # Get fresh user data from database
-        user = await AuthService.get_user_by_email(db, current_user["email"])
+        payload = _decode_keycloak_jwt(token)
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.PyJWTError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
 
-        if not user or not user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found or inactive",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+    email = payload.get("email", payload.get("preferred_username", ""))
+    departments = _extract_departments(payload)
 
-        # Generate new JWT token with fresh expiration
-        new_token = AuthService.generate_token(
-            user_id=user.user_id,
-            email=user.primary_email,
-            role=user.role,
-            allowed_agents=user.allowed_agents
-        )
+    # Get role from DB
+    user = await AAAService.get_user_by_email(db, email)
+    role = user.role.value if user and user.role else "user"
 
-        logger.info("Token refreshed", email=user.primary_email)
+    return MeResponse(email=email, role=role, departments=departments)
 
-        return LoginResponse(
-            token=new_token,
-            token_type="bearer",
-            user={
-                "user_id": user.user_id,
-                "email": user.primary_email,
-                "role": user.role,
-                "allowed_agents": user.allowed_agents,
-                "organization": user.organization,
-                "department": user.department
-            }
-        )
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Token refresh error", email=current_user.get("email"), error=str(e))
+@router.post("/refresh", response_model=RefreshResponse)
+async def refresh(
+    authorization: Optional[str] = Header(None),
+):
+    """Validate an existing JWT. If still valid, return it.
+
+    Full refresh_token flow (using Keycloak's refresh_token grant) can be
+    added when needed. For now, the UI refreshes by re-validating the
+    current access token.
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authorization header required")
+
+    token = authorization[7:]
+
+    try:
+        _decode_keycloak_jwt(token)
+        return RefreshResponse(token=token)
+    except jwt.ExpiredSignatureError:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Token refresh failed"
+            status_code=401,
+            detail="Token expired. Please login again.",
         )
+    except jwt.PyJWTError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
 
 
+@router.get("/config", response_model=ConfigResponse)
+async def auth_config():
+    """Return Keycloak configuration for the UI."""
+    return ConfigResponse(
+        keycloak_url=KEYCLOAK_URL,
+        keycloak_realm=KEYCLOAK_REALM,
+        client_id=KEYCLOAK_CLIENT_ID,
+    )

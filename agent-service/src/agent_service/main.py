@@ -443,6 +443,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Mount standard A2A protocol endpoints for each specialist agent.
+# These serve agent cards at /.well-known/agent.json and accept
+# JSON-RPC messages at / under each mount prefix.
+from .a2a.server import get_network_support_a2a_app, get_software_support_a2a_app
+
+app.mount("/a2a/software-support", get_software_support_a2a_app())
+app.mount("/a2a/network-support", get_network_support_a2a_app())
+
 
 @app.get("/health")
 async def health_check() -> Dict[str, Any]:
@@ -520,23 +528,28 @@ async def invoke_agent(
             agent_manager = ResponsesAgentManager()
             agent = agent_manager.get_agent(agent_name)
 
-            # Extract user's allowed agents from transfer_context
+            # Extract user's departments from transfer_context for routing decisions.
+            # Authorization enforcement happens in request-manager via OPA;
+            # here we use departments for LLM prompt steering (soft gate).
             transfer_ctx = request.transfer_context or {}
-            user_allowed_agents = transfer_ctx.get("allowed_agents", [])
-            has_wildcard = "*" in user_allowed_agents
+            user_departments = transfer_ctx.get("departments", [])
 
-            # Build the list of agents this user can access
-            all_specialists = ["software-support", "network-support"]
-            if has_wildcard:
-                accessible_agents = all_specialists
-            else:
-                accessible_agents = [a for a in user_allowed_agents if a in all_specialists]
-
-            # Build agent descriptions for the prompt
+            # Map departments to accessible specialist agents.
+            # Agent capabilities mirror the OPA agent_permissions.rego policy.
+            agent_dept_map = {
+                "software-support": ["software"],
+                "network-support": ["network"],
+            }
             agent_descriptions = {
                 "software-support": "Handles software issues, bugs, errors, crashes, application problems, error codes",
                 "network-support": "Handles network issues, connectivity, VPN, firewall, DNS, router problems",
             }
+
+            all_specialists = list(agent_dept_map.keys())
+            accessible_agents = [
+                agent for agent, required_depts in agent_dept_map.items()
+                if any(d in user_departments for d in required_depts)
+            ]
 
             if accessible_agents:
                 agents_section = "\n".join(

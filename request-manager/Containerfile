@@ -62,9 +62,6 @@ ARG MODULE_NAME
 COPY ${SERVICE_NAME}/src/ ./src/
 COPY ${SERVICE_NAME}/pyproject.toml ./
 
-# Copy initialization scripts
-COPY scripts/setup_aaa_users.py ./scripts/
-
 # Set environment variables
 ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="/usr/bin:${VIRTUAL_ENV}/bin:$PATH"

@@ -488,8 +488,7 @@
             try {
                 const resp = await fetch(`${API_BASE}/adk/audit?limit=${limit}`, {
                     headers: {
-                        'Authorization': `Bearer ${auth.token}`,
-                        'X-User-Email': auth.email
+                        'Authorization': `Bearer ${auth.token}`
                     }
                 });
 

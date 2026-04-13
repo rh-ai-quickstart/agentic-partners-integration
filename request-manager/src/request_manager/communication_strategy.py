@@ -402,16 +402,18 @@ class DirectHTTPStrategy(CommunicationStrategy):
         transfer_context: Dict[str, Any] = {}
         max_routing_hops = 5  # Prevent infinite routing loops
 
-        # Extract allowed_agents for authorization enforcement
-        # allowed_agents is nested: user_context -> user_context -> allowed_agents
+        # Extract departments for OPA-based authorization enforcement
+        # departments is nested: user_context -> user_context -> departments
         # because adk_endpoints passes user_context inside request.metadata
         # which gets merged into normalized_request.user_context by the normalizer
         inner_ctx = normalized_request.user_context.get("user_context", {})
-        allowed_agents = inner_ctx.get("allowed_agents", [])
+        departments = inner_ctx.get("departments", [])
+        user_spiffe_id = inner_ctx.get("spiffe_id") or ""
+        user_email = inner_ctx.get("email", normalized_request.user_id)
         logger.info(
-            "User allowed agents for routing authorization",
+            "User departments for OPA authorization",
             user_id=normalized_request.user_id,
-            allowed_agents=allowed_agents,
+            departments=departments,
         )
         # Get conversation history for context extraction
         conversation_history = await self._get_conversation_history(
@@ -422,9 +424,9 @@ class DirectHTTPStrategy(CommunicationStrategy):
         # Track previous agent for context optimization
         previous_agent: Optional[str] = None
 
-        # Include allowed_agents in transfer_context so routing-agent
+        # Include departments in transfer_context so routing-agent
         # can make permission-aware routing decisions
-        transfer_context["allowed_agents"] = allowed_agents
+        transfer_context["departments"] = departments
 
         for hop in range(max_routing_hops):
             logger.info(
@@ -451,29 +453,43 @@ class DirectHTTPStrategy(CommunicationStrategy):
             routing_decision = response.get("routing_decision")
 
             if routing_decision:
-                # AUTHORIZATION ENFORCEMENT: Block routing to agents
+                # AUTHORIZATION ENFORCEMENT via OPA: Block routing to agents
                 # the user does not have access to. This is the hard gate
                 # that prevents unauthorized access regardless of LLM output.
-                user_has_wildcard = "*" in allowed_agents
-                if not user_has_wildcard and routing_decision not in allowed_agents:
+                # Uses permission intersection: Effective = User Departments ∩ Agent Capabilities
+                from shared_models.identity import make_spiffe_id
+                from shared_models.opa_client import Delegation, check_agent_authorization
+
+                caller_id = make_spiffe_id("service", "request-manager")
+                delegation = Delegation(
+                    user_spiffe_id=user_spiffe_id or make_spiffe_id("user", user_email),
+                    agent_spiffe_id=make_spiffe_id("agent", routing_decision),
+                    user_departments=departments,
+                )
+
+                opa_decision = await check_agent_authorization(
+                    caller_spiffe_id=caller_id,
+                    agent_name=routing_decision,
+                    delegation=delegation,
+                )
+
+                if not opa_decision.allow:
                     logger.warning(
-                        "AUTHORIZATION BLOCKED: Routing to unauthorized agent",
+                        "AUTHORIZATION BLOCKED: OPA denied routing to agent",
                         user_id=normalized_request.user_id,
                         requested_agent=routing_decision,
-                        allowed_agents=allowed_agents,
+                        departments=departments,
+                        reason=opa_decision.reason,
                         session_id=normalized_request.session_id,
                     )
-                    # Return an access denied response instead of routing
                     agent_display = routing_decision.replace("-", " ").title()
-                    allowed_display = ", ".join(
-                        a.replace("-", " ").title() for a in allowed_agents
-                    ) if allowed_agents else "none"
+                    dept_display = ", ".join(departments) if departments else "none"
                     return {
                         "content": (
                             f"I understand your question relates to {agent_display}, "
                             f"but your account does not have access to that agent. "
-                            f"Your current permissions allow access to: **{allowed_display}**. "
-                            f"Please contact your administrator if you need access to additional agents."
+                            f"Your current department access: **{dept_display}**. "
+                            f"Please contact your administrator if you need access to additional departments."
                         ),
                         "agent_id": "routing-agent",
                         "session_id": normalized_request.session_id,
@@ -482,20 +498,22 @@ class DirectHTTPStrategy(CommunicationStrategy):
                             "handling_agent": "routing-agent",
                             "routing_reason": "Access denied - unauthorized agent",
                             "blocked_agent": routing_decision,
-                            "allowed_agents": allowed_agents,
+                            "departments": departments,
+                            "opa_reason": opa_decision.reason,
                         },
                     }
 
                 logger.info(
-                    "Routing decision received (authorized)",
+                    "Routing decision received (OPA authorized)",
                     from_agent=current_agent,
                     to_agent=routing_decision,
+                    effective_departments=opa_decision.effective_departments,
                     session_id=normalized_request.session_id,
                 )
 
                 # Update transfer context
                 transfer_context = response.get("metadata") or {}
-                transfer_context["allowed_agents"] = allowed_agents
+                transfer_context["departments"] = departments
 
                 # Track previous agent for context optimization
                 previous_agent = current_agent

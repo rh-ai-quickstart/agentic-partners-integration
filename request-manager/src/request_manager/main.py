@@ -130,7 +130,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include authentication endpoints
+# Add SPIFFE identity middleware
+from shared_models.identity_middleware import IdentityMiddleware
+app.add_middleware(IdentityMiddleware)
+
+# Include auth endpoints (mock OIDC / real Keycloak)
 from .auth_endpoints import router as auth_router
 app.include_router(auth_router)
 
