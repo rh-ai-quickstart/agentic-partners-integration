@@ -163,6 +163,8 @@ async def adk_chat(
             }
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(
             "ADK chat error",

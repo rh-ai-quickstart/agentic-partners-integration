@@ -49,6 +49,9 @@ target-version = ['py312']
 profile = "black"
 line_length = 88
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
 [tool.mypy]
 python_version = "3.12"
 

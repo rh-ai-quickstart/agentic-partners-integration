@@ -23,11 +23,13 @@ default decision := {
 	"effective_departments": [],
 }
 
-# Rule 1: Service-to-service calls are always allowed.
+# Rule 1: Service-to-service calls WITHOUT delegation are always allowed.
 # Infrastructure services (request-manager, etc.) call each other freely.
+# When a delegation context is present, Rules 3/4 handle the permission check.
 decision := result if {
 	caller_type := parse_spiffe_type(input.caller_spiffe_id)
 	caller_type == "service"
+	not input.delegation
 	result := {
 		"allow": true,
 		"reason": "Service-to-service call allowed",

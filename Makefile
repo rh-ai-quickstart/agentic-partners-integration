@@ -19,6 +19,7 @@ help:
 	@echo "  test-shared-models       - Run shared-models unit tests"
 	@echo "  test-request-manager     - Run request-manager unit tests"
 	@echo "  test-agent-service       - Run agent-service unit tests"
+	@echo "  test-coverage            - Run all unit tests with coverage report"
 	@echo ""
 	@echo "Development:"
 	@echo "  install                  - Install all package dependencies locally"
@@ -84,7 +85,7 @@ test-unit: test-shared-models test-request-manager test-agent-service
 .PHONY: test-shared-models
 test-shared-models:
 	@echo "Running shared-models tests..."
-	@cd shared-models && uv run python -m pytest || echo "No tests found"
+	@cd shared-models && uv run python -m pytest tests/
 
 .PHONY: test-request-manager
 test-request-manager:
@@ -94,7 +95,22 @@ test-request-manager:
 .PHONY: test-agent-service
 test-agent-service:
 	@echo "Running agent-service tests..."
-	@cd agent-service && uv run python -m pytest tests/ || echo "No tests found"
+	@cd agent-service && uv run python -m pytest tests/
+
+.PHONY: test-coverage
+test-coverage:
+	@echo "Running all unit tests with coverage..."
+	@echo ""
+	@echo "=== shared-models ==="
+	@cd shared-models && uv run python -m pytest tests/ --cov=shared_models --cov-report=term-missing -q
+	@echo ""
+	@echo "=== agent-service ==="
+	@cd agent-service && uv run python -m pytest tests/ --cov=agent_service --cov-report=term-missing -q
+	@echo ""
+	@echo "=== request-manager ==="
+	@cd request-manager && uv run python -m pytest tests/ --cov=request_manager --cov-report=term-missing -q
+	@echo ""
+	@echo "Coverage report complete."
 
 # ============================================================
 # Development - Install Dependencies
