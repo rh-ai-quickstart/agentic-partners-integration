@@ -322,7 +322,7 @@ Response:
 
 ### 4. PatternFly Web UI
 
-The system uses a custom PatternFly-based chat UI for the chat interface.
+The system uses a custom PatternFly-based chat UI for the chat interface. It loads **PatternFly 6** CSS (`@patternfly/patternfly@6`) and the **PatternFly Chatbot** extension (`@patternfly/chatbot@6`) from CDN. The UI is plain HTML/CSS/JS served by nginx -- it does not use React or `@patternfly/react-core`.
 
 #### Pages
 

@@ -10,6 +10,7 @@ RUN pip3 install --no-cache-dir \
     fastapi \
     uvicorn[standard] \
     chromadb \
+    pysqlite3-binary \
     google-genai \
     structlog
 

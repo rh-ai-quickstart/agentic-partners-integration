@@ -9,8 +9,13 @@ This service provides RAG-based question answering using:
 """
 
 import os
+import sys
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, List, Optional
+
+# Swap in pysqlite3 for sqlite3 (UBI9 ships sqlite3 < 3.35.0, required by chromadb)
+__import__("pysqlite3")
+sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
 
 import chromadb
 import numpy as np
