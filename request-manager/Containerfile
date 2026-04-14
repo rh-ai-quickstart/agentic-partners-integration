@@ -71,6 +71,7 @@ ENV PYTHONUNBUFFERED=1
 ENV MODULE_NAME=${MODULE_NAME}
 
 # Ensure arbitrary UID in group 0 can access all files (OpenShift compatibility)
+USER 0
 RUN chgrp -R 0 /app && chmod -R g=u /app
 
 # Run as non-root (OpenShift will override with an arbitrary UID in group 0)
