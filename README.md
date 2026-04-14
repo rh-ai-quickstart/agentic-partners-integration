@@ -9,7 +9,7 @@ Users sign in, describe their issue, and the system routes them to the right spe
 ## TL;DR
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/rh-ai-quickstart/agentic-partners-integration
 cd agentic-partners-integration
 export GOOGLE_API_KEY=your-key-here   # or add to .env
 make setup                            # builds, starts, and configures everything
@@ -102,8 +102,6 @@ The mock pattern has only 4 switching points (all in `shared-models/src/shared_m
 - **Outbound identity headers**: X-SPIFFE-ID header vs. mTLS client cert
 - **Server mode**: plain HTTP vs. TLS
 - **Client mode**: plain HTTP vs. mTLS
-
-This design is modeled after the Go implementation in `zero-trust-agent-demo/pkg/spiffe/workload.go`.
 
 #### User Authentication -- Keycloak OIDC
 
@@ -222,21 +220,15 @@ Specialist agents don't hallucinate answers -- they query a knowledge base of hi
 
 #### Data flow
 
-```
-data/software_support_tickets.json  ─┐
-data/network_support_tickets.json   ─┤
-                                     │  ingest_knowledge.py
-                                     │  (embeds via Gemini, stores in ChromaDB)
-                                     ▼
-                              ChromaDB collections
-                              ├── software_support
-                              └── network_support
-                                     │
-                                     │  /answer endpoint
-                                     │  (query embedding → similarity search → LLM summary)
-                                     ▼
-                              RAG API response:
-                              {response, sources: [{id, content, similarity}]}
+```mermaid
+flowchart TD
+    A["data/software_support_tickets.json"] --> C["ingest_knowledge.py\n(embeds via Gemini, stores in ChromaDB)"]
+    B["data/network_support_tickets.json"] --> C
+    C --> D["ChromaDB collections"]
+    D --> D1["software_support"]
+    D --> D2["network_support"]
+    D1 & D2 --> E["/answer endpoint\n(query embedding → similarity search → LLM summary)"]
+    E --> F["RAG API response:\n{response, sources: [{id, content, similarity}]}"]
 ```
 
 #### How it works
@@ -271,36 +263,22 @@ All inter-agent communication uses exclusively HTTP-based A2A (Agent-to-Agent) c
 
 #### Communication pattern
 
-```
-Request Manager                          Agent Service
-(orchestrator)                           (agents)
-      │                                       │
-      │  POST /api/v1/agents/routing-agent/invoke
-      │  {session_id, user_id, message,       │
-      │   transfer_context: {                 │
-      │     departments: ["software"],        │
-      │     conversation_history: [...]       │
-      │   }}                                  │
-      │──────────────────────────────────────▶│
-      │                                       │  routing-agent classifies intent
-      │  {content: "...",                     │  via LLM
-      │   routing_decision: "software-support"}│
-      │◀──────────────────────────────────────│
-      │                                       │
-      │  [OPA query: check_agent_authorization│
-      │   (user depts ∩ agent caps)]          │
-      │                                       │
-      │  POST /api/v1/agents/software-support/invoke
-      │  {session_id, user_id, message,       │
-      │   transfer_context: {                 │
-      │     departments: ["software"],        │
-      │     conversation_history: [...],      │
-      │     previous_agent: "routing-agent"   │
-      │   }}                                  │
-      │──────────────────────────────────────▶│
-      │                                       │  specialist queries RAG,
-      │  {content: "Based on similar cases..."}│  generates grounded response
-      │◀──────────────────────────────────────│
+```mermaid
+sequenceDiagram
+    participant RM as Request Manager<br/>(orchestrator)
+    participant OPA as OPA
+    participant AS as Agent Service<br/>(agents)
+
+    RM->>AS: POST /api/v1/agents/routing-agent/invoke<br/>{session_id, user_id, message,<br/>transfer_context: {departments, history}}
+    Note right of AS: routing-agent classifies<br/>intent via LLM
+    AS-->>RM: {content, routing_decision: "software-support"}
+
+    RM->>OPA: check_agent_authorization<br/>(user depts ∩ agent caps)
+    OPA-->>RM: allow: true
+
+    RM->>AS: POST /api/v1/agents/software-support/invoke<br/>{session_id, user_id, message,<br/>transfer_context: {departments, history,<br/>previous_agent: "routing-agent"}}
+    Note right of AS: specialist queries RAG,<br/>generates grounded response
+    AS-->>RM: {content: "Based on similar cases..."}
 ```
 
 #### How it works
@@ -357,18 +335,19 @@ The system uses a custom PatternFly-based chat UI for the chat interface.
 
 #### Architecture
 
-```
-Browser                    nginx (port 3000)              Request Manager (port 8000)
-   │                            │                                │
-   │  GET /login.html           │                                │
-   │───────────────────────────▶│ serves static files            │
-   │◀───────────────────────────│                                │
-   │                            │                                │
-   │  POST /adk/chat            │  proxy_pass /adk/ → :8080      │
-   │  + X-SPIFFE-ID header      │                                │
-   │───────────────────────────▶│───────────────────────────────▶│
-   │◀───────────────────────────│◀───────────────────────────────│
-   │  {response, agent, ...}   │                                │
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant N as nginx (port 3000)
+    participant RM as Request Manager<br/>(port 8000)
+
+    B->>N: GET /login.html
+    N-->>B: serves static files
+
+    B->>N: POST /adk/chat + X-SPIFFE-ID header
+    N->>RM: proxy_pass /adk/ → :8080
+    RM-->>N: {response, agent, ...}
+    N-->>B: {response, agent, ...}
 ```
 
 The nginx container serves the static HTML/JS files and reverse-proxies `/adk/` and `/api/` requests to the request-manager. No build step, no Node.js runtime -- just static files served by nginx.
@@ -379,91 +358,52 @@ The nginx container serves the static HTML/JS files and reverse-proxies `/adk/` 
 
 ### System Diagram
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Web UI (port 3000)                          │
-│                     PatternFly chat interface                       │
-│                    nginx reverse proxy → :8080                      │
-└────────────────────────────┬────────────────────────────────────────┘
-                             │
-                             │ POST /adk/chat
-                             │ GET  /adk/audit
-                             ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                    Request Manager (port 8000)                      │
-│                                                                     │
-│  ┌──────────────┐  ┌──────────────────┐  ┌───────────────────────┐ │
-│  │ Identity     │  │ adk_endpoints.py │  │ communication_        │ │
-│  │ Middleware   │  │                  │  │ strategy.py           │ │
-│  │              │  │ • /adk/chat      │  │                       │ │
-│  │ • SPIFFE ID  │  │ • /adk/audit     │  │ • invoke routing      │ │
-│  │   extraction │  │                  │  │ • detect ROUTE:       │ │
-│  │ • X-SPIFFE-ID│  │                  │  │ • query OPA           │ │
-│  │   (mock)     │  │                  │  │ • invoke specialist   │ │
-│  └──────────────┘  └──────────────────┘  │ • write accounting    │ │
-│                                           └───────────┬───────────┘ │
-│                                                       │             │
-└───────────────────────────────────────────────────────┼─────────────┘
-                                                        │
-                          POST /api/v1/agents/{name}/invoke  (A2A)
-                                                        │
-┌───────────────────────────────────────────────────────┼─────────────┐
-│                    Agent Service (port 8001)           │             │
-│                                                       ▼             │
-│  ┌─────────────────────────────────────────────────────────────────┐│
-│  │                    /invoke endpoint (main.py)                   ││
-│  │                                                                 ││
-│  │  if agent_name == "routing-agent":                              ││
-│  │    • Build system prompt with user's departments                ││
-│  │    • Include conversation history                               ││
-│  │    • LLM classifies intent → ROUTE:<agent> or conversation     ││
-│  │                                                                 ││
-│  │  else (specialist agent):                                       ││
-│  │    • Query RAG API with user's message                          ││
-│  │    • Build prompt: system_message + history + RAG context       ││
-│  │    • LLM generates grounded response                           ││
-│  └────────────────────────────┬────────────────────────────────────┘│
-│                               │                                     │
-│  ┌────────────────────────────▼────────────────────────────────────┐│
-│  │              LLM Client Factory                                 ││
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          ││
-│  │  │ GeminiClient │  │ OpenAIClient │  │ OllamaClient │          ││
-│  │  │ (default)    │  │              │  │ (local)      │          ││
-│  │  └──────────────┘  └──────────────┘  └──────────────┘          ││
-│  └─────────────────────────────────────────────────────────────────┘│
-└─────────────────────────────────────────────────────────────────────┘
-         │                                           │
-         │ LLM API calls                             │ POST /answer
-         ▼                                           ▼
-┌──────────────────┐                    ┌──────────────────────────┐
-│  Google Gemini   │                    │   RAG API (port 8003)    │
-│  API             │                    │                          │
-│  gemini-2.5-flash│                    │  • Embed query           │
-└──────────────────┘                    │  • Search ChromaDB       │
-                                        │  • Return top matches    │
-                                        └────────────┬─────────────┘
-                                                     │
-                                        ┌────────────▼─────────────┐
-                                        │   ChromaDB (port 8002)   │
-                                        │                          │
-                                        │  Vector database with    │
-                                        │  embedded support tickets│
-                                        └──────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph ui["Web UI · port 3000"]
+        nginx["PatternFly Chat Interface\nnginx reverse proxy → :8080"]
+    end
 
-┌─────────────────────────────────────────────────────────────────────┐
-│                    PostgreSQL + pgvector (port 5433)                 │
-│                                                                     │
-│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌────────────┐│
-│  │    users     │ │  request_    │ │  request_    │ │  alembic_  ││
-│  │              │ │  sessions    │ │  logs        │ │  version   ││
-│  │ • email      │ │              │ │              │ │            ││
-│  │ • spiffe_id  │ │ • session_id │ │ • request_id │ │ • 008      ││
-│  │ • role       │ │ • user_id    │ │ • agent_id   │ │            ││
-│  │ • depart-    │ │ • conversa-  │ │ • response   │ └────────────┘│
-│  │   ments[]    │ │   tion_      │ │ • timing_ms  │              │
-│  │ • status     │ │   context{}  │ │ • completed  │              │
-│  └──────────────┘ └──────────────┘ └──────────────┘              │
-└─────────────────────────────────────────────────────────────────────┘
+    subgraph rm["Request Manager · port 8000"]
+        identity["Identity Middleware\nSPIFFE ID extraction (X-SPIFFE-ID mock)"]
+        adk["adk_endpoints.py\n/adk/chat · /adk/audit"]
+        strategy["communication_strategy.py\ninvoke routing · detect ROUTE:\nquery OPA · invoke specialist · write accounting"]
+        identity --> adk --> strategy
+    end
+
+    subgraph as["Agent Service · port 8001"]
+        invoke["/invoke endpoint (main.py)"]
+        routing["routing-agent\nBuild system prompt with departments\nLLM classifies intent → ROUTE:agent"]
+        specialist["specialist agent\nQuery RAG API · build prompt with RAG context\nLLM generates grounded response"]
+        llm["LLM Client Factory\nGeminiClient (default) · OpenAIClient · OllamaClient"]
+        invoke --> routing & specialist
+        routing --> llm
+        specialist --> llm
+    end
+
+    subgraph rag["RAG API · port 8003"]
+        ragapi["Embed query → Search ChromaDB → Return top matches"]
+    end
+
+    subgraph db["PostgreSQL + pgvector · port 5433"]
+        users["users\nemail · spiffe_id · role · departments[]"]
+        sessions["request_sessions\nsession_id · conversation_context{}"]
+        logs["request_logs\nrequest_id · agent_id · response · timing_ms"]
+    end
+
+    gemini["Google Gemini API\ngemini-2.5-flash"]
+    chroma["ChromaDB · port 8002\nVector database with embedded support tickets"]
+    opa["OPA · port 8181"]
+    keycloak["Keycloak · port 8090"]
+
+    nginx -->|"POST /adk/chat\nGET /adk/audit"| adk
+    strategy -->|"A2A: POST /api/v1/agents/{name}/invoke"| invoke
+    strategy -->|"authorization query"| opa
+    llm -->|"LLM API calls"| gemini
+    specialist -->|"POST /answer"| ragapi
+    ragapi --> chroma
+    rm --> db
+    keycloak -.->|"JWT validation"| identity
 ```
 
 ### Services
@@ -616,10 +556,10 @@ Available agents:
 |-------|--------------|------------|----------|
 | `partner-agent-service:latest` | `agent-service/Containerfile` | UBI9 Python 3.12 | Agent service + shared-models |
 | `partner-request-manager:latest` | `request-manager/Containerfile` | UBI9 Python 3.12 | Request manager + shared-models |
-| `partner-rag-api:latest` | `rag-service/Containerfile` | Python 3.11 slim | RAG API (ChromaDB client + Gemini embeddings) |
-| `partner-pf-chat-ui:latest` | `pf-chat-ui/Containerfile` | nginx Alpine | Static PatternFly UI + nginx reverse proxy |
+| `partner-rag-api:latest` | `rag-service/Containerfile` | UBI9 Python 3.12 | RAG API (ChromaDB client + Gemini embeddings) |
+| `partner-pf-chat-ui:latest` | `pf-chat-ui/Containerfile` | UBI9 nginx 1.24 | Static PatternFly UI + nginx reverse proxy |
 
-Agent service and request manager use a multi-stage build: `registry.access.redhat.com/ubi9/python-312` (builder) / `ubi9/python-312-minimal` (runtime).
+All custom images use Red Hat UBI9 base images. Agent service and request manager use a multi-stage build: `registry.access.redhat.com/ubi9/python-312` (builder) / `ubi9/python-312-minimal` (runtime). RAG API uses `ubi9/python-312`. Chat UI uses `ubi9/nginx-124`.
 
 ---
 

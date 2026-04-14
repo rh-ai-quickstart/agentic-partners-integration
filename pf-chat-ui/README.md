@@ -57,12 +57,11 @@ The UI is served by nginx as a static site:
 
 ```yaml
 pf-chat-ui:
-  image: nginx:alpine
-  volumes:
-    - ./pf-chat-ui/static:/usr/share/nginx/html:ro
-    - ./pf-chat-ui/nginx.conf:/etc/nginx/nginx.conf:ro
+  build:
+    context: ./pf-chat-ui
+    dockerfile: Containerfile    # UBI9 nginx
   ports:
-    - "3000:80"
+    - "3000:8080"
 ```
 
 ## API Endpoints Used

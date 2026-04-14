@@ -1,9 +1,12 @@
-FROM python:3.11-slim
+FROM registry.access.redhat.com/ubi9/python-312:latest
+
+# Switch to root for package installation
+USER 0
 
 WORKDIR /app
 
 # Install dependencies
-RUN pip install --no-cache-dir \
+RUN pip3 install --no-cache-dir \
     fastapi \
     uvicorn[standard] \
     chromadb \
@@ -17,8 +20,14 @@ COPY rag-service/ingest_knowledge.py /app/
 # Copy sample data
 COPY data /app/data
 
+# Ensure arbitrary UID in group 0 can access all files (OpenShift compatibility)
+RUN chgrp -R 0 /app && chmod -R g=u /app
+
+# Run as non-root (OpenShift will override with an arbitrary UID in group 0)
+USER 1001
+
 # Expose port
 EXPOSE 8080
 
 # Run the RAG service
-CMD ["python", "rag_service.py"]
+CMD ["python3", "rag_service.py"]

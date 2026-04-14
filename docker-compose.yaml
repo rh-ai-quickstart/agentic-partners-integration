@@ -64,7 +64,7 @@ services:
 
   # Data Ingestion (One-time)
   ingest-data:
-    image: python:3.11-slim
+    image: registry.access.redhat.com/ubi9/python-312:latest
     container_name: partner-ingest-data-adk
     volumes:
       - ./data:/app/data:ro
@@ -77,7 +77,7 @@ services:
     working_dir: /app
     command: >
       bash -c "
-      pip install -q chromadb google-genai numpy &&
+      pip3 install --user -q chromadb google-genai numpy &&
       python3 rag-service/ingest_knowledge.py
       "
     networks:
@@ -228,19 +228,18 @@ services:
 
   # PF Chat UI
   pf-chat-ui:
-    image: nginx:alpine
+    build:
+      context: ./pf-chat-ui
+      dockerfile: Containerfile
     container_name: partner-pf-chat-ui
-    volumes:
-      - ./pf-chat-ui/static:/usr/share/nginx/html:ro
-      - ./pf-chat-ui/nginx.conf:/etc/nginx/nginx.conf:ro
     ports:
-      - "3000:80"
+      - "3000:8080"
     networks:
       - partner-agent-network
     depends_on:
       - request-manager
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost"]
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/8080'"]
       interval: 10s
       timeout: 5s
       retries: 3

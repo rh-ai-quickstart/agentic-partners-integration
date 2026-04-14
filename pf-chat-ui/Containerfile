@@ -1,17 +1,25 @@
-FROM nginx:1.27-alpine
+FROM registry.access.redhat.com/ubi9/nginx-124:latest
 
-COPY static/ /usr/share/nginx/html/
+# Switch to root for setup
+USER 0
+
+# Copy static content to UBI9 nginx document root
+COPY static/ /opt/app-root/src/
+
+# Copy and adapt nginx configuration for UBI9
 COPY nginx.conf /etc/nginx/nginx.conf
-
 RUN sed -i 's/listen 80;/listen 8080;/' /etc/nginx/nginx.conf && \
-    sed -i '/^user /d' /etc/nginx/nginx.conf && \
+    sed -i 's|/usr/share/nginx/html|/opt/app-root/src|g' /etc/nginx/nginx.conf && \
     { echo 'pid /tmp/nginx.pid;'; cat /etc/nginx/nginx.conf; } > /tmp/nginx.conf && \
-    mv /tmp/nginx.conf /etc/nginx/nginx.conf && \
-    chown -R nginx:nginx /usr/share/nginx/html /var/cache/nginx /var/log/nginx && \
-    chmod -R 755 /usr/share/nginx/html
+    mv /tmp/nginx.conf /etc/nginx/nginx.conf
+
+# Ensure arbitrary UID in group 0 can access all files (OpenShift compatibility)
+RUN chgrp -R 0 /opt/app-root/src /etc/nginx/nginx.conf && \
+    chmod -R g=u /opt/app-root/src /etc/nginx/nginx.conf
+
+# Run as non-root (OpenShift will override with an arbitrary UID in group 0)
+USER 1001
 
 EXPOSE 8080
-
-USER nginx
 
 CMD ["nginx", "-g", "daemon off;"]
