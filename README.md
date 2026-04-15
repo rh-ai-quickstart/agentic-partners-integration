@@ -2,9 +2,9 @@
 
 > **Based on** the [IT Self-Service Agent Quickstart](https://github.com/rh-ai-quickstart/it-self-service-agent) by Red Hat AI — a production-ready framework for deploying agent-based IT processes on OpenShift with Knative Eventing, evaluations, and multi-channel integrations. This repository adapts that architecture into a standalone POC focused on partner support with Google Gemini, PatternFly UI, and simplified A2A HTTP communication.
 
-**AI-powered support routing system built on four pillars: AAA (Authentication, Authorization, Accounting), RAG-backed specialist agents, A2A (Agent-to-Agent) communication, and a PatternFly chat UI.**
+**AI-powered support routing system built on four pillars: A2A (Agent-to-Agent) communication and the ADK framework, RAG-backed specialist agents, a PatternFly chat UI, and AAA (Authentication, Authorization, Audit).**
 
-Users sign in, describe their issue, and the system routes them to the right specialist agent (software support or network support) based on their permissions. Agents query a knowledge base of historical support tickets via RAG to provide grounded, context-aware responses. Every request is logged with full accounting.
+Users sign in, describe their issue, and the system routes them to the right specialist agent (software support or network support) based on their permissions. Agents query a knowledge base of historical support tickets via RAG to provide grounded, context-aware responses. Every request is logged with full audit.
 
 ## TL;DR
 
