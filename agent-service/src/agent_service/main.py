@@ -310,13 +310,12 @@ IMPORTANT: Only use the ROUTE: prefix when you are confident the message needs a
                         )
 
                     rag_data = rag_response.json()
-                    rag_answer = rag_data.get("response", "")
+                    rag_answer = rag_data.get("response", "") or ""  # Handle None response
                     rag_sources = rag_data.get("sources", [])
 
                     logger.info(
                         "RAG API response received",
                         agent_name=agent_name,
-                        answer_length=len(rag_answer),
                         source_count=len(rag_sources),
                     )
 
