@@ -344,13 +344,10 @@ IMPORTANT: Only use the ROUTE: prefix when you are confident the message needs a
 
 The following information was retrieved from the support knowledge base for the user's query:
 
-### RAG Answer:
-{rag_answer}
-
-### Sources:
+### Relevant Support Tickets:
 {chr(10).join(source_refs) if source_refs else "No matching sources found."}
 
-### Source Details:
+### Ticket Details:
 """
             for src in rag_sources[:3]:
                 rag_context += f"\n**{src.get('id', 'unknown')}:**\n{src.get('content', '')[:500]}\n"

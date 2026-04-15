@@ -8,7 +8,9 @@ This service provides RAG-based question answering using:
 - Support ticket knowledge base
 """
 
+import asyncio
 import os
+import time
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, List, Optional
 
@@ -71,9 +73,23 @@ engine = None
 async_session_maker = None
 
 
-def generate_embedding(text: str) -> np.ndarray:
+def _generate_embedding_sync(text: str) -> np.ndarray:
     """
-    Generate embedding for a single text using Google Gemini.
+    Synchronous helper for generating embeddings.
+    Use generate_embedding() from async contexts.
+    """
+    response = genai_client.models.embed_content(
+        model=EMBEDDING_MODEL,
+        contents=text
+    )
+    if not response.embeddings or not response.embeddings[0].values:
+        raise ValueError(f"Empty embedding response for text: {text[:50]}...")
+    return np.array(response.embeddings[0].values)
+
+
+async def generate_embedding(text: str) -> np.ndarray:
+    """
+    Generate embedding for a single text using Google Gemini (async).
 
     Args:
         text: Text to embed
@@ -82,13 +98,12 @@ def generate_embedding(text: str) -> np.ndarray:
         Embedding vector as numpy array
     """
     try:
-        response = genai_client.models.embed_content(
-            model=EMBEDDING_MODEL,
-            contents=text
-        )
-        if not response.embeddings or not response.embeddings[0].values:
-            raise ValueError(f"Empty embedding response for text: {text[:50]}...")
-        return np.array(response.embeddings[0].values)
+        start_time = time.time()
+        # Run synchronous API call in thread pool to avoid blocking event loop
+        embedding = await asyncio.to_thread(_generate_embedding_sync, text)
+        elapsed = time.time() - start_time
+        logger.info("Generated embedding", duration_ms=int(elapsed * 1000), text_preview=text[:50])
+        return embedding
     except Exception as e:
         logger.error("Error generating embedding", error=str(e), text_preview=text[:50])
         raise
@@ -116,7 +131,7 @@ async def search_knowledge_base(
     """
     try:
         # Generate query embedding
-        query_embedding = generate_embedding(query)
+        query_embedding = await generate_embedding(query)
 
         # Perform vector similarity search using cosine distance
         # pgvector's <=> operator computes cosine distance (0 = identical, 2 = opposite)
@@ -155,35 +170,28 @@ async def search_knowledge_base(
         return []
 
 
-def generate_answer(query: str, context_docs: List[Dict[str, Any]]) -> str:
+def _generate_answer_sync(query: str, context_docs: List[Dict[str, Any]]) -> str:
     """
-    Generate an answer using LLM with retrieved context.
-
-    Args:
-        query: User's question
-        context_docs: Retrieved documents from knowledge base
-
-    Returns:
-        Generated answer
+    Synchronous helper for generating answers.
+    Use generate_answer() from async contexts.
     """
-    try:
-        # Build context from retrieved documents
-        context_parts = []
-        for i, doc in enumerate(context_docs):
-            metadata = doc.get('metadata', {})
-            similarity = doc.get('similarity', 0)
+    # Build context from retrieved documents
+    context_parts = []
+    for i, doc in enumerate(context_docs):
+        metadata = doc.get('metadata', {})
+        similarity = doc.get('similarity', 0)
 
-            context_parts.append(
-                f"[Document {i+1}] (Relevance: {similarity:.2f})\n"
-                f"Ticket ID: {metadata.get('ticket_id', 'N/A')}\n"
-                f"Category: {metadata.get('category', 'N/A')}\n"
-                f"Content: {doc['content']}\n"
-            )
+        context_parts.append(
+            f"[Document {i+1}] (Relevance: {similarity:.2f})\n"
+            f"Ticket ID: {metadata.get('ticket_id', 'N/A')}\n"
+            f"Category: {metadata.get('category', 'N/A')}\n"
+            f"Content: {doc['content']}\n"
+        )
 
-        context = "\n---\n".join(context_parts)
+    context = "\n---\n".join(context_parts)
 
-        # Create prompt for LLM
-        prompt = f"""You are a helpful IT support specialist. Answer the user's question based on the following support ticket history and documentation.
+    # Create prompt for LLM
+    prompt = f"""You are a helpful IT support specialist. Answer the user's question based on the following support ticket history and documentation.
 
 Retrieved Context:
 {context}
@@ -199,15 +207,32 @@ Instructions:
 
 Answer:"""
 
-        # Generate response using new Google GenAI SDK
-        response = genai_client.models.generate_content(
-            model=LLM_MODEL,
-            contents=prompt
-        )
+    # Generate response using new Google GenAI SDK
+    response = genai_client.models.generate_content(
+        model=LLM_MODEL,
+        contents=prompt
+    )
 
-        answer = response.text.strip()
-        logger.info("Generated answer", query_preview=query[:50])
+    return response.text.strip()
 
+
+async def generate_answer(query: str, context_docs: List[Dict[str, Any]]) -> str:
+    """
+    Generate an answer using LLM with retrieved context (async).
+
+    Args:
+        query: User's question
+        context_docs: Retrieved documents from knowledge base
+
+    Returns:
+        Generated answer
+    """
+    try:
+        start_time = time.time()
+        # Run synchronous API call in thread pool to avoid blocking event loop
+        answer = await asyncio.to_thread(_generate_answer_sync, query, context_docs)
+        elapsed = time.time() - start_time
+        logger.info("Generated answer", duration_ms=int(elapsed * 1000), query_preview=query[:50])
         return answer
 
     except Exception as e:
@@ -376,6 +401,7 @@ async def answer(request: Request):
         only_high_similarity = body.get("only_high_similarity_nodes", False)
         collection_name = body.get("collection", "support_tickets")
         min_similarity = body.get("min_similarity", 0.7 if only_high_similarity else 0.0)
+        generate_llm_answer = body.get("generate_answer", False)  # Default: only return sources
 
         if not user_query:
             return JSONResponse(
@@ -384,6 +410,7 @@ async def answer(request: Request):
             )
 
         # Search knowledge base
+        search_start = time.time()
         async with async_session_maker() as session:
             documents = await search_knowledge_base(
                 query=user_query,
@@ -392,15 +419,21 @@ async def answer(request: Request):
                 num_results=num_sources,
                 min_similarity=min_similarity
             )
+        search_elapsed = time.time() - search_start
+        logger.info("Search complete", duration_ms=int(search_elapsed * 1000), doc_count=len(documents))
 
-        # Generate answer
-        if documents:
-            answer_text = generate_answer(user_query, documents)
+        # Generate answer only if requested (optional, as agent service has its own LLM)
+        if generate_llm_answer:
+            if documents:
+                answer_text = await generate_answer(user_query, documents)
+            else:
+                answer_text = (
+                    "I couldn't find relevant information in the knowledge base to answer your question. "
+                    "Please provide more details or contact support directly."
+                )
         else:
-            answer_text = (
-                "I couldn't find relevant information in the knowledge base to answer your question. "
-                "Please provide more details or contact support directly."
-            )
+            # Skip LLM answer generation - just return sources for agent to process
+            answer_text = None
 
         # Format response
         response_data = {
