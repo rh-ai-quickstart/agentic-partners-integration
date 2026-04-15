@@ -42,14 +42,12 @@ spec:
               name: {{ $fullName }}-llm-credentials
               key: google-api-key
               optional: true
-        - name: CHROMA_HOST
-          value: "{{ $fullName }}-chromadb"
-        - name: CHROMA_PORT
-          value: "8000"
+        - name: DATABASE_URL
+          value: "postgresql+asyncpg://{{ .Values.postgresql.auth.username }}:{{ .Values.postgresql.auth.password }}@{{ $fullName }}-postgresql:5432/{{ .Values.postgresql.auth.database }}"
         - name: EMBEDDING_MODEL
-          value: {{ .Values.ragApi.embeddingModel | default "text-embedding-004" | quote }}
+          value: {{ .Values.ragApi.embeddingModel | default "models/gemini-embedding-001" | quote }}
         - name: LLM_MODEL
-          value: {{ .Values.ragApi.llmModel | default "gemini-2.0-flash-exp" | quote }}
+          value: {{ .Values.ragApi.llmModel | default "gemini-2.5-flash" | quote }}
         - name: PORT
           value: "8080"
         {{- if .Values.ragApi.resources }}

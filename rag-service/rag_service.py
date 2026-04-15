@@ -3,134 +3,111 @@
 Real RAG API Service for Partner Agents.
 
 This service provides RAG-based question answering using:
-- ChromaDB for vector storage
+- PostgreSQL with pgvector for vector storage
 - Google Gemini for embeddings and LLM
 - Support ticket knowledge base
 """
 
 import os
-import sys
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, List, Optional
 
-# Swap in pysqlite3 for sqlite3 (UBI9 ships sqlite3 < 3.35.0, required by chromadb)
-__import__("pysqlite3")
-sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
-
-import chromadb
 import numpy as np
 import structlog
 import uvicorn
-from chromadb.config import Settings
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from google import genai
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import Column, DateTime, Integer, String, Text, select, func
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import declarative_base
 
 logger = structlog.get_logger()
 
 # Configuration from environment
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-CHROMA_HOST = os.getenv("CHROMA_HOST", "localhost")
-CHROMA_PORT = int(os.getenv("CHROMA_PORT", "8000"))
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-004")
-LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.0-flash-exp")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:pass@postgres:5432/partner_agent")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "models/gemini-embedding-001")
+LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.5-flash")
+EMBEDDING_DIM = 3072  # Google Gemini embedding-001 dimension (updated from 768)
 
 if not GOOGLE_API_KEY:
+    logger.error("GOOGLE_API_KEY is not set - cannot initialize RAG service")
     raise RuntimeError(
         "GOOGLE_API_KEY environment variable is required. "
         "Set it before starting the RAG service."
     )
+
+logger.info(
+    "Initializing RAG service with Google GenAI",
+    model=LLM_MODEL,
+    api_key_prefix=GOOGLE_API_KEY[:10] if GOOGLE_API_KEY else "NOT_SET"
+)
 genai_client = genai.Client(api_key=GOOGLE_API_KEY)
-logger.info("Google GenAI configured", model=LLM_MODEL)
+logger.info("Google GenAI client initialized successfully")
+
+# Database setup
+Base = declarative_base()
 
 
-# Custom embedding function using new Google GenAI SDK
-class GoogleGenAIEmbeddingFunction:
-    """Custom embedding function using new google-genai package."""
+class KnowledgeDocument(Base):
+    """Model for knowledge documents stored in PostgreSQL."""
+    __tablename__ = "knowledge_documents"
 
-    def __init__(self, client: genai.Client, model_name: str):
-        self.client = client
-        self.model_name = model_name
-
-    def name(self) -> str:
-        """Return the name of the embedding function."""
-        return f"GoogleGenAI-{self.model_name}"
-
-    def __call__(self, input: List[str]) -> List[np.ndarray]:
-        """Generate embeddings for input texts (used when adding documents)."""
-        embeddings = []
-        for text in input:
-            response = self.client.models.embed_content(
-                model=self.model_name,
-                contents=text
-            )
-            if not response.embeddings or not response.embeddings[0].values:
-                raise ValueError(f"Empty embedding response for text: {text[:50]}...")
-            embeddings.append(np.array(response.embeddings[0].values))
-        return embeddings
-
-    def embed_query(self, input: List[str]) -> List[np.ndarray]:
-        """Generate embeddings for query texts (used when searching)."""
-        return self.__call__(input)
-
-# ChromaDB client
-chroma_client: Optional[chromadb.HttpClient] = None
-embedding_function: Optional[GoogleGenAIEmbeddingFunction] = None
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    knowledge_base = Column(String(255), nullable=False, index=True)
+    document_id = Column(String(255), nullable=False, index=True)
+    content = Column(Text, nullable=False)
+    metadata_ = Column("metadata", JSONB, nullable=True)
+    embedding = Column(Vector(EMBEDDING_DIM), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
-def initialize_chromadb() -> None:
-    """Initialize ChromaDB client and embedding function."""
-    global chroma_client, embedding_function
+# Database engine and session
+engine = None
+async_session_maker = None
 
+
+def generate_embedding(text: str) -> np.ndarray:
+    """
+    Generate embedding for a single text using Google Gemini.
+
+    Args:
+        text: Text to embed
+
+    Returns:
+        Embedding vector as numpy array
+    """
     try:
-        chroma_client = chromadb.HttpClient(
-            host=CHROMA_HOST,
-            port=CHROMA_PORT,
-            settings=Settings(anonymized_telemetry=False)
+        response = genai_client.models.embed_content(
+            model=EMBEDDING_MODEL,
+            contents=text
         )
-
-        embedding_function = GoogleGenAIEmbeddingFunction(
-            client=genai_client,
-            model_name=EMBEDDING_MODEL
-        )
-
-        logger.info("ChromaDB client initialized", host=CHROMA_HOST, port=CHROMA_PORT)
-        logger.info("Embedding model configured", model=EMBEDDING_MODEL)
-
-        collections = chroma_client.list_collections()
-        logger.info("Available collections", names=[c.name for c in collections])
-
+        if not response.embeddings or not response.embeddings[0].values:
+            raise ValueError(f"Empty embedding response for text: {text[:50]}...")
+        return np.array(response.embeddings[0].values)
     except Exception as e:
-        logger.error("Failed to initialize ChromaDB", error=str(e))
+        logger.error("Error generating embedding", error=str(e), text_preview=text[:50])
         raise
 
 
-def get_collection(collection_name: str) -> Optional[chromadb.Collection]:
-    """Get or create a ChromaDB collection by name."""
-    try:
-        collection = chroma_client.get_or_create_collection(
-            name=collection_name,
-            embedding_function=embedding_function,
-            metadata={"hnsw:space": "cosine"}
-        )
-        return collection
-    except Exception as e:
-        logger.error("Failed to get collection", collection=collection_name, error=str(e))
-        return None
-
-
-def search_knowledge_base(
+async def search_knowledge_base(
     query: str,
+    session: AsyncSession,
     collection_name: str = "support_tickets",
     num_results: int = 3,
     min_similarity: float = 0.0
 ) -> List[Dict[str, Any]]:
     """
-    Search the knowledge base for relevant documents.
+    Search the knowledge base for relevant documents using pgvector similarity search.
 
     Args:
         query: User's search query
-        collection_name: ChromaDB collection to search
+        session: Database session
+        collection_name: Knowledge base name to search
         num_results: Number of results to return
         min_similarity: Minimum similarity threshold (0-1)
 
@@ -138,36 +115,37 @@ def search_knowledge_base(
         List of relevant documents with metadata
     """
     try:
-        collection = get_collection(collection_name)
-        if not collection:
-            logger.error("Collection not found", collection=collection_name)
-            return []
+        # Generate query embedding
+        query_embedding = generate_embedding(query)
 
-        # Query the collection
-        results = collection.query(
-            query_texts=[query],
-            n_results=num_results,
-            include=["documents", "metadatas", "distances"]
+        # Perform vector similarity search using cosine distance
+        # pgvector's <=> operator computes cosine distance (0 = identical, 2 = opposite)
+        stmt = (
+            select(
+                KnowledgeDocument,
+                (1 - KnowledgeDocument.embedding.cosine_distance(query_embedding)).label("similarity")
+            )
+            .where(KnowledgeDocument.knowledge_base == collection_name)
+            .where(KnowledgeDocument.embedding.isnot(None))
+            .order_by(KnowledgeDocument.embedding.cosine_distance(query_embedding))
+            .limit(num_results)
         )
+
+        result = await session.execute(stmt)
+        rows = result.all()
 
         # Format results
         documents = []
-        if results and results['ids'] and len(results['ids'][0]) > 0:
-            for i in range(len(results['ids'][0])):
-                # ChromaDB returns distances (lower is better)
-                # Convert to similarity score (higher is better)
-                distance = results['distances'][0][i]
-                similarity = 1 - (distance / 2)  # Cosine distance to similarity
-
-                # Filter by minimum similarity
-                if similarity >= min_similarity:
-                    documents.append({
-                        "id": results['ids'][0][i],
-                        "content": results['documents'][0][i],
-                        "metadata": results['metadatas'][0][i],
-                        "similarity": similarity,
-                        "distance": distance
-                    })
+        for doc, similarity in rows:
+            # Filter by minimum similarity
+            if similarity >= min_similarity:
+                documents.append({
+                    "id": doc.document_id,
+                    "content": doc.content,
+                    "metadata": doc.metadata_ or {},
+                    "similarity": float(similarity),
+                    "distance": float(1 - similarity)
+                })
 
         logger.info("Knowledge base search complete", result_count=len(documents), query_preview=query[:50])
         return documents
@@ -240,13 +218,43 @@ Answer:"""
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan: initialize services on startup."""
+    global engine, async_session_maker
+
     logger.info("Starting RAG API Service...")
-    initialize_chromadb()
+
+    # Initialize database engine
+    engine = create_async_engine(
+        DATABASE_URL,
+        echo=False,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=10
+    )
+
+    async_session_maker = async_sessionmaker(
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False
+    )
+
+    logger.info("Database connection initialized", database_url=DATABASE_URL.split('@')[-1])
     logger.info("RAG API Service ready")
+
     yield
+
+    # Cleanup
+    if engine:
+        await engine.dispose()
+        logger.info("Database connection closed")
 
 
 app = FastAPI(title="RAG API Service", version="1.0.0", lifespan=lifespan)
+
+
+async def get_session() -> AsyncSession:
+    """Get database session."""
+    async with async_session_maker() as session:
+        return session
 
 
 @app.get("/")
@@ -255,12 +263,11 @@ async def root():
     return {
         "service": "RAG API Service",
         "version": "1.0.0",
-        "description": "Real RAG-based question answering for partner agents",
+        "description": "Real RAG-based question answering for partner agents using PostgreSQL/pgvector",
         "endpoints": {
             "/answer": "POST - Query the RAG knowledge base",
             "/health": "GET - Health check",
-            "/collections": "GET - List available collections",
-            "/stats": "GET - Collection statistics"
+            "/stats": "GET - Knowledge base statistics"
         }
     }
 
@@ -269,17 +276,18 @@ async def root():
 async def health():
     """Health check endpoint."""
     try:
-        # Check ChromaDB connection
-        collections = chroma_client.list_collections()
+        # Check database connection
+        async with async_session_maker() as session:
+            result = await session.execute(select(func.count()).select_from(KnowledgeDocument))
+            total_docs = result.scalar()
 
         return {
             "status": "healthy",
             "service": "rag-api",
             "version": "1.0.0",
-            "chromadb": {
-                "host": CHROMA_HOST,
-                "port": CHROMA_PORT,
-                "collections": len(collections)
+            "database": {
+                "type": "postgresql+pgvector",
+                "total_documents": total_docs
             },
             "llm_model": LLM_MODEL,
             "embedding_model": EMBEDDING_MODEL
@@ -295,63 +303,35 @@ async def health():
         )
 
 
-@app.get("/collections")
-async def list_collections():
-    """List available ChromaDB collections."""
+@app.get("/stats")
+async def stats():
+    """Get knowledge base statistics."""
     try:
-        collections = chroma_client.list_collections()
+        async with async_session_maker() as session:
+            # Get total documents
+            result = await session.execute(select(func.count()).select_from(KnowledgeDocument))
+            total_docs = result.scalar()
 
-        collection_info = []
-        for coll in collections:
-            try:
-                count = coll.count()
-                collection_info.append({
-                    "name": coll.name,
-                    "count": count,
-                    "metadata": coll.metadata
-                })
-            except Exception as e:
-                logger.error("Error getting collection info", collection=coll.name, error=str(e))
-
-        return {
-            "collections": collection_info,
-            "total": len(collection_info)
-        }
-    except Exception as e:
-        logger.error("Error listing collections", error=str(e))
-        return JSONResponse(
-            status_code=500,
-            content={"error": "Failed to list collections"}
-        )
-
-
-@app.get("/stats/{collection_name}")
-async def collection_stats(collection_name: str):
-    """Get statistics for a specific collection."""
-    try:
-        collection = get_collection(collection_name)
-        if not collection:
-            return JSONResponse(
-                status_code=404,
-                content={"error": f"Collection {collection_name} not found"}
+            # Get documents per knowledge base
+            stmt = (
+                select(
+                    KnowledgeDocument.knowledge_base,
+                    func.count(KnowledgeDocument.id).label("count")
+                )
+                .group_by(KnowledgeDocument.knowledge_base)
             )
-
-        count = collection.count()
-
-        # Get sample documents
-        sample = collection.peek(limit=5)
+            result = await session.execute(stmt)
+            kb_stats = [{"knowledge_base": kb, "count": count} for kb, count in result.all()]
 
         return {
-            "name": collection_name,
-            "document_count": count,
-            "metadata": collection.metadata,
-            "sample_ids": sample['ids'] if sample else []
+            "total_documents": total_docs,
+            "knowledge_bases": kb_stats
         }
     except Exception as e:
-        logger.error("Error getting collection stats", collection=collection_name, error=str(e))
+        logger.error("Error getting stats", error=str(e))
         return JSONResponse(
             status_code=500,
-            content={"error": "Failed to retrieve collection statistics"}
+            content={"error": "Failed to retrieve statistics"}
         )
 
 
@@ -404,12 +384,14 @@ async def answer(request: Request):
             )
 
         # Search knowledge base
-        documents = search_knowledge_base(
-            query=user_query,
-            collection_name=collection_name,
-            num_results=num_sources,
-            min_similarity=min_similarity
-        )
+        async with async_session_maker() as session:
+            documents = await search_knowledge_base(
+                query=user_query,
+                session=session,
+                collection_name=collection_name,
+                num_results=num_sources,
+                min_similarity=min_similarity
+            )
 
         # Generate answer
         if documents:
@@ -458,8 +440,7 @@ if __name__ == "__main__":
     logger.info(
         "Starting RAG API Service",
         url="http://0.0.0.0:8080",
-        chroma_host=CHROMA_HOST,
-        chroma_port=CHROMA_PORT,
+        database_url=DATABASE_URL.split('@')[-1],
         llm_model=LLM_MODEL,
         embedding_model=EMBEDDING_MODEL,
     )

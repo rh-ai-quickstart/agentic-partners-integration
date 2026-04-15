@@ -4,14 +4,13 @@ Deploys the full Partner Agent system to Kubernetes/OpenShift.
 
 ## Services
 
-| Service | Image | Port |
-|---------|-------|------|
-| PostgreSQL (pgvector) | `pgvector/pgvector:pg16` | 5432 |
-| ChromaDB | `chromadb/chroma:latest` | 8000 |
-| RAG API | `ghcr.io/ccamacho/partner-rag-api` | 8080 |
-| Agent Service | `ghcr.io/ccamacho/partner-agent-service` | 8080 |
-| Request Manager | `ghcr.io/ccamacho/partner-request-manager` | 8080 |
-| PF Chat UI | `ghcr.io/ccamacho/partner-pf-chat-ui` | 80 |
+| Service | Image | Port | Purpose |
+|---------|-------|------|---------|
+| PostgreSQL + pgvector | `pgvector/pgvector:pg16` | 5432 | Application data + vector storage |
+| RAG API | `ghcr.io/ccamacho/partner-rag-api` | 8080 | RAG with pgvector |
+| Agent Service | `ghcr.io/ccamacho/partner-agent-service` | 8080 | LLM orchestration |
+| Request Manager | `ghcr.io/ccamacho/partner-request-manager` | 8080 | API gateway |
+| PF Chat UI | `ghcr.io/ccamacho/partner-pf-chat-ui` | 80 | Web interface |
 
 ## Prerequisites
 
@@ -106,10 +105,7 @@ pfChatUi:
 postgresql:
   image: pgvector/pgvector:pg16
   storage: 5Gi
-
-chromadb:
-  image: chromadb/chroma:latest
-  storage: 5Gi
+  # Provides both application data and vector storage for RAG
 
 networkPolicies:
   enabled: true

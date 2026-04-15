@@ -17,6 +17,7 @@ cd "$PROJECT_ROOT"
 if [ -z "$GOOGLE_API_KEY" ] && [ -f ".env" ]; then
     echo "Loading environment from .env..."
     source .env
+    export GOOGLE_API_KEY
 fi
 
 # Prompt for GOOGLE_API_KEY if still not set
@@ -28,6 +29,7 @@ if [ -z "$GOOGLE_API_KEY" ]; then
         echo "ERROR: GOOGLE_API_KEY is required."
         exit 1
     fi
+    export GOOGLE_API_KEY
     # Save to .env so future runs pick it up automatically
     echo "GOOGLE_API_KEY=${GOOGLE_API_KEY}" >> .env
     echo "Saved to .env"
@@ -69,15 +71,6 @@ docker run -d \
     -p 5433:5432 \
     pgvector/pgvector:pg16
 echo "  PostgreSQL started"
-
-# Start ChromaDB
-docker rm -f partner-chromadb-full 2>/dev/null || true
-docker run -d \
-    --name partner-chromadb-full \
-    --network partner-agent-network \
-    -p 8002:8000 \
-    chromadb/chroma:latest
-echo "  ChromaDB started"
 
 # Start Keycloak (OIDC Identity Provider)
 docker rm -f partner-keycloak-full 2>/dev/null || true
@@ -211,13 +204,13 @@ docker run -d \
 echo "  Request manager starting..."
 
 # RAG API (must have GOOGLE_API_KEY for embeddings)
+echo "  Starting RAG API with Gemini API key: ${GOOGLE_API_KEY:0:10}...${GOOGLE_API_KEY: -4}"
 docker rm -f partner-rag-api-full 2>/dev/null || true
 docker run -d \
     --name partner-rag-api-full \
     --network partner-agent-network \
     -e "GOOGLE_API_KEY=${GOOGLE_API_KEY}" \
-    -e CHROMA_HOST=partner-chromadb-full \
-    -e CHROMA_PORT=8000 \
+    -e DATABASE_URL=postgresql+asyncpg://user:pass@partner-postgres-full:5432/partner_agent \
     -e EMBEDDING_MODEL=models/gemini-embedding-001 \
     -e LLM_MODEL=gemini-2.5-flash \
     -p 8003:8080 \

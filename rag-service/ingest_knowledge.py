@@ -2,61 +2,72 @@
 """
 Knowledge Base Ingestion Script.
 
-Loads support tickets and documentation into ChromaDB for RAG.
+Loads support tickets and documentation into PostgreSQL/pgvector for RAG.
 """
 
+import asyncio
 import json
 import os
-import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
-# Swap in pysqlite3 for sqlite3 (UBI9 ships sqlite3 < 3.35.0, required by chromadb)
-__import__("pysqlite3")
-sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
-
-import chromadb
 import numpy as np
 import structlog
-from chromadb.config import Settings
 from google import genai
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import Column, DateTime, Integer, String, Text, delete, func, select
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import declarative_base
 
 logger = structlog.get_logger()
 
 # Configuration
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-CHROMA_HOST = os.getenv("CHROMA_HOST", "localhost")
-CHROMA_PORT = int(os.getenv("CHROMA_PORT", "8000"))
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:pass@postgres:5432/partner_agent")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "models/gemini-embedding-001")
+EMBEDDING_DIM = 3072  # Google Gemini embedding-001 dimension (updated from 768)
+
+# Database setup
+Base = declarative_base()
 
 
-# Custom embedding function using new Google GenAI SDK
-class GoogleGenAIEmbeddingFunction:
-    """Custom embedding function using new google-genai package."""
+class KnowledgeDocument(Base):
+    """Model for knowledge documents stored in PostgreSQL."""
+    __tablename__ = "knowledge_documents"
 
-    def __init__(self, client: genai.Client, model_name: str):
-        self.client = client
-        self.model_name = model_name
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    knowledge_base = Column(String(255), nullable=False, index=True)
+    document_id = Column(String(255), nullable=False, index=True)
+    content = Column(Text, nullable=False)
+    metadata_ = Column("metadata", JSONB, nullable=True)
+    embedding = Column(Vector(EMBEDDING_DIM), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    def name(self) -> str:
-        """Return the name of the embedding function."""
-        return f"GoogleGenAI-{self.model_name}"
 
-    def __call__(self, input: List[str]) -> List[np.ndarray]:
-        """Generate embeddings for input texts (used when adding documents)."""
-        embeddings = []
-        for text in input:
-            response = self.client.models.embed_content(
-                model=self.model_name,
-                contents=text
-            )
-            # Convert to numpy array (ChromaDB expects numpy arrays)
-            embeddings.append(np.array(response.embeddings[0].values))
-        return embeddings
+def generate_embedding(text: str, genai_client: genai.Client) -> np.ndarray:
+    """
+    Generate embedding for a single text using Google Gemini.
 
-    def embed_query(self, input: List[str]) -> List[np.ndarray]:
-        """Generate embeddings for query texts (used when searching)."""
-        return self.__call__(input)
+    Args:
+        text: Text to embed
+        genai_client: Google GenAI client
+
+    Returns:
+        Embedding vector as numpy array
+    """
+    try:
+        response = genai_client.models.embed_content(
+            model=EMBEDDING_MODEL,
+            contents=text
+        )
+        if not response.embeddings or not response.embeddings[0].values:
+            raise ValueError(f"Empty embedding response for text: {text[:50]}...")
+        return np.array(response.embeddings[0].values)
+    except Exception as e:
+        logger.error("Error generating embedding", error=str(e), text_preview=text[:50])
+        raise
 
 
 def load_from_json_files(data_dir: str = "data") -> Dict[str, List[Dict[str, Any]]]:
@@ -107,73 +118,71 @@ def load_from_json_files(data_dir: str = "data") -> Dict[str, List[Dict[str, Any
     return collections
 
 
-def ingest_collection(
+async def ingest_collection(
     collection_name: str,
     documents: List[Dict[str, Any]],
-    chroma_client,
-    embedding_function
+    session: AsyncSession,
+    genai_client: genai.Client
 ):
     """
-    Ingest documents into a ChromaDB collection.
+    Ingest documents into PostgreSQL/pgvector.
 
     Args:
-        collection_name: Name of the collection
+        collection_name: Name of the knowledge base
         documents: List of documents to ingest
-        chroma_client: ChromaDB client
-        embedding_function: Embedding function to use
+        session: Database session
+        genai_client: Google GenAI client for embeddings
     """
     try:
-        logger.info("Creating/updating collection", collection=collection_name)
-
-        # Get or create collection
-        collection = chroma_client.get_or_create_collection(
-            name=collection_name,
-            embedding_function=embedding_function,
-            metadata={"hnsw:space": "cosine"}
-        )
+        logger.info("Ingesting collection", collection=collection_name)
 
         # Clear existing data (for fresh ingestion)
-        existing_count = collection.count()
-        if existing_count > 0:
-            logger.info("Clearing existing documents", count=existing_count)
-            # Delete collection and recreate
-            chroma_client.delete_collection(collection_name)
-            collection = chroma_client.create_collection(
-                name=collection_name,
-                embedding_function=embedding_function,
-                metadata={"hnsw:space": "cosine"}
+        stmt = delete(KnowledgeDocument).where(KnowledgeDocument.knowledge_base == collection_name)
+        result = await session.execute(stmt)
+        await session.commit()
+        logger.info("Cleared existing documents", count=result.rowcount)
+
+        # Ingest documents with embeddings
+        for i, doc in enumerate(documents):
+            # Generate embedding
+            content = doc["content"]
+            embedding = generate_embedding(content, genai_client)
+
+            # Create document record
+            knowledge_doc = KnowledgeDocument(
+                knowledge_base=collection_name,
+                document_id=doc["id"],
+                content=content,
+                metadata=doc["metadata"],
+                embedding=embedding.tolist()  # Convert numpy array to list for pgvector
             )
+            session.add(knowledge_doc)
 
-        # Prepare data for ingestion
-        ids = [doc["id"] for doc in documents]
-        contents = [doc["content"] for doc in documents]
-        metadatas = [doc["metadata"] for doc in documents]
+            if (i + 1) % 10 == 0:
+                logger.info("Ingesting documents", collection=collection_name, progress=f"{i+1}/{len(documents)}")
 
-        # Add documents to collection
-        logger.info("Adding documents", collection=collection_name, count=len(documents))
-        collection.add(
-            ids=ids,
-            documents=contents,
-            metadatas=metadatas
-        )
+        await session.commit()
 
         # Verify ingestion
-        final_count = collection.count()
+        stmt = select(func.count()).select_from(KnowledgeDocument).where(KnowledgeDocument.knowledge_base == collection_name)
+        result = await session.execute(stmt)
+        final_count = result.scalar()
         logger.info("Ingestion complete", collection=collection_name, document_count=final_count)
 
         # Show sample
-        sample = collection.peek(limit=3)
-        logger.info("Sample IDs", ids=sample["ids"])
-
-        return collection
+        stmt = select(KnowledgeDocument.document_id).where(KnowledgeDocument.knowledge_base == collection_name).limit(3)
+        result = await session.execute(stmt)
+        sample_ids = [row[0] for row in result.all()]
+        logger.info("Sample IDs", ids=sample_ids)
 
     except Exception as e:
         logger.error("Failed to ingest collection", collection=collection_name, error=str(e))
+        await session.rollback()
         raise
 
 
-def main():
-    """Main ingestion function."""
+async def main_async():
+    """Main ingestion function (async)."""
     logger.info("Starting knowledge base ingestion...")
 
     # Check Google API key
@@ -181,22 +190,22 @@ def main():
         logger.error("GOOGLE_API_KEY environment variable not set")
         return
 
-    # Initialize new Google GenAI client
+    # Initialize Google GenAI client
     genai_client = genai.Client(api_key=GOOGLE_API_KEY)
     logger.info("Google GenAI client initialized", model=EMBEDDING_MODEL)
 
-    # Initialize ChromaDB client
-    logger.info("Connecting to ChromaDB", host=CHROMA_HOST, port=CHROMA_PORT)
-    chroma_client = chromadb.HttpClient(
-        host=CHROMA_HOST,
-        port=CHROMA_PORT,
-        settings=Settings(anonymized_telemetry=False)
+    # Initialize database connection
+    logger.info("Connecting to PostgreSQL", database_url=DATABASE_URL.split('@')[-1])
+    engine = create_async_engine(
+        DATABASE_URL,
+        echo=False,
+        pool_pre_ping=True
     )
 
-    # Initialize custom embedding function using new Google GenAI SDK
-    embedding_function = GoogleGenAIEmbeddingFunction(
-        client=genai_client,
-        model_name=EMBEDDING_MODEL
+    async_session_maker = async_sessionmaker(
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False
     )
 
     # Load data from JSON files
@@ -204,18 +213,34 @@ def main():
     data = load_from_json_files()
 
     # Ingest each collection
-    for collection_name, documents in data.items():
-        ingest_collection(
-            collection_name=collection_name,
-            documents=documents,
-            chroma_client=chroma_client,
-            embedding_function=embedding_function
-        )
+    async with async_session_maker() as session:
+        for collection_name, documents in data.items():
+            await ingest_collection(
+                collection_name=collection_name,
+                documents=documents,
+                session=session,
+                genai_client=genai_client
+            )
 
-    collections = chroma_client.list_collections()
-    summary = {coll.name: coll.count() for coll in collections}
+    # Show final summary
+    async with async_session_maker() as session:
+        stmt = select(
+            KnowledgeDocument.knowledge_base,
+            func.count(KnowledgeDocument.id).label("count")
+        ).group_by(KnowledgeDocument.knowledge_base)
+        result = await session.execute(stmt)
+        summary = {kb: count for kb, count in result.all()}
+
     logger.info("Knowledge base ingestion complete", collections=summary)
     logger.info("RAG service is ready to use!")
+
+    # Close database
+    await engine.dispose()
+
+
+def main():
+    """Main entry point."""
+    asyncio.run(main_async())
 
 
 if __name__ == "__main__":

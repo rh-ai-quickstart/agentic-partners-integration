@@ -32,7 +32,7 @@ cd agentic-partners-integration
 make setup
 ```
 
-On first run it prompts for your Google API key and saves it to `.env`. Then it builds all container images, starts infrastructure (PostgreSQL, ChromaDB, Keycloak, OPA), runs database migrations, starts application services, ingests the RAG knowledge base, and launches the web UI. At the end it verifies all services are healthy and prints login credentials.
+On first run it prompts for your Google API key and saves it to `.env`. Then it builds all container images, starts infrastructure (PostgreSQL with pgvector, Keycloak, OPA), runs database migrations, starts application services, ingests the RAG knowledge base into pgvector, and launches the web UI. At the end it verifies all services are healthy and prints login credentials.
 
 **Services:**
 
@@ -222,20 +222,20 @@ Specialist agents don't hallucinate answers -- they query a knowledge base of hi
 
 ```mermaid
 flowchart TD
-    A["data/software_support_tickets.json"] --> C["ingest_knowledge.py\n(embeds via Gemini, stores in ChromaDB)"]
+    A["data/software_support_tickets.json"] --> C["ingest_knowledge.py\n(embeds via Gemini, stores in PostgreSQL/pgvector)"]
     B["data/network_support_tickets.json"] --> C
-    C --> D["ChromaDB collections"]
-    D --> D1["software_support"]
-    D --> D2["network_support"]
-    D1 & D2 --> E["/answer endpoint\n(query embedding → similarity search → LLM summary)"]
+    C --> D["pgvector knowledge_documents table"]
+    D --> D1["knowledge_base: software_support"]
+    D --> D2["knowledge_base: network_support"]
+    D1 & D2 --> E["/answer endpoint\n(query embedding → pgvector cosine similarity → LLM summary)"]
     E --> F["RAG API response:\n{response, sources: [{id, content, similarity}]}"]
 ```
 
 #### How it works
 
-1. **Ingestion** (`ingest_knowledge.py`): Reads JSON support tickets, embeds each ticket using the Gemini embeddings model (`models/gemini-embedding-001`), and stores vectors in ChromaDB collections.
+1. **Ingestion** (`ingest_knowledge.py`): Reads JSON support tickets, embeds each ticket using the Gemini embeddings model (`models/gemini-embedding-001`), and stores vectors in PostgreSQL with pgvector extension.
 
-2. **Query** (`rag_service.py`): When a specialist agent receives a user message, the agent-service calls `POST /answer` on the RAG API. The RAG API embeds the query, performs similarity search against ChromaDB, and returns the top matching tickets with similarity scores.
+2. **Query** (`rag_service.py`): When a specialist agent receives a user message, the agent-service calls `POST /answer` on the RAG API. The RAG API embeds the query, performs cosine similarity search using pgvector, and returns the top matching tickets with similarity scores.
 
 3. **Grounding** (`main.py`): The agent-service builds the LLM prompt by combining the agent's system message, conversation history, and the RAG results as context. The LLM generates a response that references specific ticket IDs and known solutions.
 
@@ -243,9 +243,9 @@ flowchart TD
 
 | Component | Role | Port |
 |-----------|------|------|
-| ChromaDB | Vector database storing embedded support tickets | 8002 |
-| RAG API | FastAPI service that embeds queries and searches ChromaDB | 8003 |
-| Gemini Embeddings | `models/gemini-embedding-001` for vector generation | -- |
+| PostgreSQL + pgvector | Vector database storing embedded support tickets (3072-dim vectors, no index due to pgvector 2000-dim limit — see Production Recommendations) | 5432 |
+| RAG API | FastAPI service that embeds queries and performs pgvector similarity search | 8003 |
+| Gemini Embeddings | `models/gemini-embedding-001` for vector generation (3072 dimensions) | -- |
 
 #### Synthetic data
 
@@ -382,7 +382,7 @@ flowchart TB
     end
 
     subgraph rag["RAG API · port 8003"]
-        ragapi["Embed query → Search ChromaDB → Return top matches"]
+        ragapi["Embed query → Search pgvector → Return top matches"]
     end
 
     subgraph db["PostgreSQL + pgvector · port 5433"]
@@ -392,7 +392,6 @@ flowchart TB
     end
 
     gemini["Google Gemini API\ngemini-2.5-flash"]
-    chroma["ChromaDB · port 8002\nVector database with embedded support tickets"]
     opa["OPA · port 8181"]
     keycloak["Keycloak · port 8090"]
 
@@ -401,7 +400,7 @@ flowchart TB
     strategy -->|"authorization query"| opa
     llm -->|"LLM API calls"| gemini
     specialist -->|"POST /answer"| ragapi
-    ragapi --> chroma
+    ragapi --> db
     rm --> db
     keycloak -.->|"JWT validation"| identity
 ```
@@ -410,8 +409,7 @@ flowchart TB
 
 | Service | Port | Role |
 |---------|------|------|
-| PostgreSQL (pgvector) | 5433 | User data, sessions, accounting logs |
-| ChromaDB | 8002 | Vector database for RAG embeddings |
+| PostgreSQL (pgvector) | 5433 | User data, sessions, accounting logs, and vector storage for RAG |
 | RAG API | 8003 | Semantic search over support tickets |
 | Agent Service | 8001 | LLM-based routing and specialist agents |
 | Request Manager | 8000 | AAA enforcement, A2A orchestration, chat API |
@@ -419,7 +417,7 @@ flowchart TB
 | Keycloak | 8090 | OIDC identity provider (user authentication) |
 | Web UI (nginx) | 3000 | PatternFly chat interface |
 
-> **Note:** Ports above are for `make setup` (uses `scripts/setup.sh`). The `docker-compose.yaml` uses different host port mappings: PostgreSQL on 5432, ChromaDB on 8100, RAG API on 8080. Internal container ports remain the same.
+> **Note:** Ports above are for `make setup` (uses `scripts/setup.sh`). The `docker-compose.yaml` uses different host port mappings: PostgreSQL on 5432, RAG API on 8080. Internal container ports remain the same.
 
 ### Request Flow
 
@@ -522,7 +520,7 @@ Available agents:
 │       ├── agent_client_enhanced.py   # HTTP client for A2A calls
 │       └── credential_service.py      # Request-scoped credential management
 │
-├── rag-service/                # RAG API (ChromaDB + Gemini embeddings)
+├── rag-service/                # RAG API (pgvector + Gemini embeddings)
 │   ├── rag_service.py          # FastAPI service for /answer endpoint
 │   └── ingest_knowledge.py     # Data ingestion script
 │
@@ -556,7 +554,7 @@ Available agents:
 |-------|--------------|------------|----------|
 | `partner-agent-service:latest` | `agent-service/Containerfile` | UBI9 Python 3.12 | Agent service + shared-models |
 | `partner-request-manager:latest` | `request-manager/Containerfile` | UBI9 Python 3.12 | Request manager + shared-models |
-| `partner-rag-api:latest` | `rag-service/Containerfile` | UBI9 Python 3.12 | RAG API (ChromaDB client + Gemini embeddings) |
+| `partner-rag-api:latest` | `rag-service/Containerfile` | UBI9 Python 3.12 | RAG API (pgvector + Gemini embeddings) |
 | `partner-pf-chat-ui:latest` | `pf-chat-ui/Containerfile` | UBI9 nginx 1.24 | Static PatternFly UI + nginx reverse proxy |
 
 All custom images use Red Hat UBI9 base images. Agent service and request manager use a multi-stage build: `registry.access.redhat.com/ubi9/python-312` (builder) / `ubi9/python-312-minimal` (runtime). RAG API uses `ubi9/python-312`. Chat UI uses `ubi9/nginx-124`.
@@ -633,8 +631,6 @@ Agent conversation state is managed in-memory per request (stateless A2A calls).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CHROMA_HOST` | `chromadb` | ChromaDB hostname |
-| `CHROMA_PORT` | `8000` | ChromaDB port (internal) |
 | `EMBEDDING_MODEL` | `models/gemini-embedding-001` | Embedding model for vector generation |
 | `LLM_MODEL` | -- | LLM model used by RAG service for answer generation |
 
@@ -781,10 +777,10 @@ make clean          # When you want to wipe everything
 docker compose up   # Starts stack with different port mappings
 ```
 
-| Method | Command | PG Port | Chroma Port | RAG Port |
-|--------|---------|---------|-------------|----------|
-| Makefile (recommended) | `make setup` | 5433 | 8002 | 8003 |
-| Docker Compose | `docker compose up` | 5432 | 8100 | 8080 |
+| Method | Command | PG Port | RAG Port |
+|--------|---------|---------|----------|
+| Makefile (recommended) | `make setup` | 5433 | 8003 |
+| Docker Compose | `docker compose up` | 5432 | 8080 |
 
 Both expose Web UI on 3000, Request Manager on 8000, and Agent Service on 8001.
 
@@ -794,17 +790,64 @@ Both expose Web UI on 3000, Request Manager on 8000, and Agent Service on 8001.
 
 The stack uses lightweight, easy-to-run components for local development. Below are the recommended production-grade alternatives for each service.
 
-### Vector Database: ChromaDB → pgvector
+### Vector Database: pgvector
 
-ChromaDB is single-node only with no built-in authentication, replication, or backup tooling. Since the stack already runs PostgreSQL with the pgvector extension, consolidate vector storage into PostgreSQL to eliminate an entire service.
+The system uses PostgreSQL with the pgvector extension for vector storage. This consolidates both application data and vector embeddings into a single database service.
 
-| | PoC (current) | Production |
+| | Current Implementation | Production Enhancements |
 |---|---|---|
-| **Service** | ChromaDB (separate container) | pgvector (existing PostgreSQL) |
-| **Why change** | No auth, no clustering, no backup/restore, limited query performance at 100K+ vectors | ACID transactions, RBAC, backups, replication — all inherited from PostgreSQL. One fewer service to operate |
-| **Index type** | Default (brute-force) | HNSW index (`CREATE INDEX ON ... USING hnsw (embedding vector_cosine_ops)`) for sub-10ms queries |
-| **Scale ceiling** | ~100K vectors | ~10M vectors with HNSW tuning; beyond that, evaluate Weaviate, Qdrant, or Pinecone |
-| **Migration path** | — | Move `ingest_knowledge.py` to write embeddings into a `support_tickets_embeddings` table; update RAG service to query PostgreSQL instead of ChromaDB |
+| **Service** | pgvector (PostgreSQL 16) | Same — pgvector in production PostgreSQL |
+| **Benefits** | ACID transactions, RBAC, backups, replication — all inherited from PostgreSQL. Unified data stack. | Maintain these benefits with production-grade PostgreSQL (see below) |
+| **Index type** | No vector index (sequential scan) — see dimension limitation below | HNSW or IVFFlat index if using ≤2000 dimensions; otherwise sequential scan or migrate to specialized vector DB |
+| **Scale ceiling** | ~10,000 documents without index (acceptable for POC) | With index: ~10M vectors. Without index: migrate to specialized vector DB beyond 10,000 documents |
+| **Monitoring** | Standard PostgreSQL metrics | Add pgvector-specific metrics: index build time, query latency percentiles |
+
+#### Embedding Dimension Limitation (Critical for Production)
+
+**Current Constraint:** The system uses Google Gemini's `gemini-embedding-001` model which produces **3072-dimensional embeddings**. However, PostgreSQL pgvector has a hard limit:
+
+- **HNSW index**: Maximum 2000 dimensions
+- **IVFFlat index**: Maximum 2000 dimensions
+
+**Impact on Current System:**
+- ✅ **POC (current state)**: No vector index — uses sequential scan through all 240 documents
+- ✅ **Performance**: Acceptable for datasets under ~10,000 documents (searches complete in milliseconds)
+- ⚠️ **Scalability**: Sequential scan becomes slow beyond 10,000+ documents
+
+**Production Solutions:**
+
+| Strategy | When to Use | Trade-offs | Implementation |
+|----------|-------------|------------|----------------|
+| **Option 1: Lower-Dimension Model** | Best for staying with pgvector + wanting index performance | Slightly lower embedding quality (often negligible) | Switch `EMBEDDING_MODEL=models/text-embedding-004` (768 dims), re-run migrations with `Vector(768)`, rebuild index, re-ingest data |
+| **Option 2: Dimensionality Reduction** | Want to keep high-quality embeddings but need indexing | Adds PCA step; 95%+ accuracy retention typical | Apply PCA to reduce 3072→1536 dims post-embedding, update schema to `Vector(1536)`, enable HNSW index |
+| **Option 3: Dedicated Vector DB** | Scaling beyond 100K documents or need <10ms p99 latency | Additional infrastructure; operational complexity | Migrate to **Weaviate** (no dimension limits, open source), **Pinecone** (fully managed), **Qdrant** (fast, production-ready), or **Milvus** (billion-scale) |
+| **Option 4: Keep Sequential Scan** | POC/demo or datasets under 10K documents | No index performance benefits | No changes needed — current setup is fine |
+
+**Recommended Production Path:**
+
+For most production deployments with the current dataset size (hundreds to low thousands of documents):
+
+1. **Short term (< 10K documents)**: Keep current setup — sequential scan is acceptable
+2. **Medium term (10K-100K documents)**: Switch to a lower-dimension model (Option 1) and enable HNSW indexing
+3. **Long term (> 100K documents)**: Migrate to a dedicated vector database (Option 3)
+
+**Code Changes Required for Option 1 (Lower Dimensions):**
+
+```python
+# In rag-service/rag_service.py and ingest_knowledge.py
+EMBEDDING_MODEL = "models/text-embedding-004"  # 768 dimensions instead of gemini-embedding-001
+EMBEDDING_DIM = 768  # Update from 3072
+
+# In shared-models/alembic/versions/004_add_knowledge_base_tables.py
+Vector(768)  # Update from Vector(3072)
+
+# Then re-create the table with HNSW index:
+CREATE INDEX idx_knowledge_documents_embedding ON knowledge_documents
+USING hnsw (embedding vector_cosine_ops)
+WITH (m = 16, ef_construction = 64);
+```
+
+**Current Migration State:** The migration file (`004_add_knowledge_base_tables.py`) uses `Vector(3072)` and intentionally **skips index creation** due to the dimension limit. The comment in that file documents this decision.
 
 ### PostgreSQL: Harden for Production
 
@@ -888,7 +931,7 @@ The RAG service has no caching, no reranking, and uses a one-time ingestion scri
 
 | Service | PoC | Production | Priority |
 |---------|-----|------------|----------|
-| ChromaDB | Standalone container | **Consolidate into pgvector** | High |
+| **Vector Embeddings** | **3072-dim (no index, sequential scan)** | **Switch to ≤2000-dim model + index** OR **migrate to dedicated vector DB** | **High** (if scaling > 10K docs) |
 | PostgreSQL | Single instance, no TLS | **CrunchyData PGO or managed DB** (TLS, HA, backups) | High |
 | Keycloak | `start-dev`, H2, no TLS | **Production mode** (external PG, TLS, clustering) | High |
 | OPA | Mounted files, no logging | **Bundle server + decision logs** | Medium |

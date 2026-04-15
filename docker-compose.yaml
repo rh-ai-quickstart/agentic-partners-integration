@@ -21,22 +21,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # ChromaDB Vector Database
-  chromadb:
-    image: chromadb/chroma:latest
-    container_name: partner-chromadb-adk
-    ports:
-      - "8100:8000"
-    volumes:
-      - partner-chromadb-data:/chroma/chroma
-    networks:
-      - partner-agent-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   # RAG API Service
   rag-api:
     build:
@@ -45,8 +29,7 @@ services:
     container_name: partner-rag-api-adk
     environment:
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      - CHROMA_HOST=chromadb
-      - CHROMA_PORT=8000
+      - DATABASE_URL=postgresql+asyncpg://user:pass@postgres:5432/partner_agent
       - EMBEDDING_MODEL=models/gemini-embedding-001
       - LLM_MODEL=gemini-2.5-flash
     ports:
@@ -54,7 +37,7 @@ services:
     networks:
       - partner-agent-network
     depends_on:
-      chromadb:
+      postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -71,19 +54,18 @@ services:
       - ./rag-service:/app/rag-service:ro
     environment:
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      - CHROMA_HOST=chromadb
-      - CHROMA_PORT=8000
+      - DATABASE_URL=postgresql+asyncpg://user:pass@postgres:5432/partner_agent
       - EMBEDDING_MODEL=models/gemini-embedding-001
     working_dir: /app
     command: >
       bash -c "
-      pip3 install --user -q chromadb google-genai numpy &&
+      pip3 install --user -q pgvector psycopg[binary] sqlalchemy[asyncio] google-genai numpy &&
       python3 rag-service/ingest_knowledge.py
       "
     networks:
       - partner-agent-network
     depends_on:
-      chromadb:
+      postgres:
         condition: service_healthy
     restart: "no"
 
@@ -250,4 +232,3 @@ networks:
 
 volumes:
   partner-postgres-data:
-  partner-chromadb-data:

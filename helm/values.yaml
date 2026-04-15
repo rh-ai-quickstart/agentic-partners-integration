@@ -25,25 +25,13 @@ database:
   # Expected Alembic migration version
   expectedMigrationVersion: "006"
 
-# PostgreSQL with pgvector
+# PostgreSQL with pgvector for both application data and vector storage
 postgresql:
   image: pgvector/pgvector:pg16
-  user: postgres
-  password: rag_password
-  database: partner_agent
-  storage: 5Gi
-  storageClass: ""
-  resources:
-    requests:
-      memory: "256Mi"
-      cpu: "100m"
-    limits:
-      memory: "512Mi"
-      cpu: "500m"
-
-# ChromaDB vector database
-chromadb:
-  image: chromadb/chroma:latest
+  auth:
+    username: postgres
+    password: rag_password
+    database: partner_agent
   storage: 5Gi
   storageClass: ""
   resources:

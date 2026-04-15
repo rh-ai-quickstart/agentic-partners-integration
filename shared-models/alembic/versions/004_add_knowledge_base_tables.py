@@ -15,6 +15,7 @@ from typing import Sequence, Union
 
 import sqlalchemy as sa
 from alembic import op
+from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
@@ -39,9 +40,9 @@ def upgrade() -> None:
         sa.Column("metadata", postgresql.JSONB(), nullable=True),
         sa.Column(
             "embedding",
-            postgresql.ARRAY(sa.Float()),
+            Vector(3072),  # Google Gemini embedding-001 produces 3072-dimensional vectors
             nullable=True,
-        ),  # Using ARRAY for compatibility
+        ),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -82,16 +83,18 @@ def upgrade() -> None:
         unique=True,
     )
 
-    # Note: IVFFlat index for vector similarity search will be created
-    # after documents are loaded (requires data for clustering)
-    # Can be created manually with:
-    # CREATE INDEX idx_knowledge_documents_embedding ON knowledge_documents
-    # USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+    # Note: Vector index creation is skipped for 3072-dimensional embeddings
+    # Both HNSW and IVFFlat in pgvector have a 2000 dimension limit
+    # Similarity search will use sequential scan (acceptable for small datasets)
+    # For production with large datasets, consider:
+    # - Using an embedding model with <=2000 dimensions
+    # - Applying dimensionality reduction (e.g., PCA)
+    # - Using a dedicated vector database (e.g., Pinecone, Weaviate)
 
 
 def downgrade() -> None:
     """Downgrade database schema."""
-    # Drop indexes
+    # Drop indexes (vector index not created for 3072-dim embeddings)
     op.drop_index("idx_kb_document", table_name="knowledge_documents")
     op.drop_index("idx_document_id", table_name="knowledge_documents")
     op.drop_index("idx_knowledge_base_name", table_name="knowledge_documents")

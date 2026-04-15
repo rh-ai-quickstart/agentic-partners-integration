@@ -12,7 +12,7 @@ bash scripts/setup.sh
 
 **What it does:**
 - Builds all container images
-- Starts PostgreSQL, ChromaDB, Keycloak, OPA
+- Starts PostgreSQL, Keycloak, OPA
 - Runs database migrations
 - Starts agent-service, request-manager, rag-api, pf-chat-ui
 - Ingests RAG knowledge base

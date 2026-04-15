@@ -9,8 +9,10 @@ WORKDIR /app
 RUN pip3 install --no-cache-dir \
     fastapi \
     uvicorn[standard] \
-    chromadb \
-    pysqlite3-binary \
+    pgvector \
+    psycopg[binary] \
+    sqlalchemy[asyncio] \
+    asyncpg \
     google-genai \
     structlog
 
