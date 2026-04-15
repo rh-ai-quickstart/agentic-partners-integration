@@ -315,7 +315,7 @@ for svc in "Request Manager:8000" "Agent Service:8001" "RAG API:8003"; do
 done
 
 # Check RAG data
-RAG_DOCS=$(curl -sf http://localhost:8003/collections 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(sum(c['count'] for c in d['collections']))" 2>/dev/null || echo "0")
+RAG_DOCS=$(curl -sf http://localhost:8003/stats 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('total_documents', 0))" 2>/dev/null || echo "0")
 if [ "$RAG_DOCS" -gt 0 ] 2>/dev/null; then
     echo -e "  ${GREEN}OK${NC}  RAG knowledge base ($RAG_DOCS documents)"
 else
