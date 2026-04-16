@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from shared_models import configure_logging
+from shared_models.identity import make_spiffe_id, outbound_identity_headers
 
 from .credential_service import CredentialService
 
@@ -61,6 +62,7 @@ class EnhancedAgentClient:
         transfer_context: Optional[Dict[str, Any]] = None,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         previous_agent: Optional[str] = None,
+        delegation_user_spiffe_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Invoke an agent via HTTP with structured context support.
@@ -132,8 +134,17 @@ class EnhancedAgentClient:
             "transfer_context": enhanced_context,
         }
 
-        # Build headers with authentication from credential service
-        headers = {}
+        # Build headers: SPIFFE identity for service-to-service auth,
+        # delegation headers to carry user authority, and JWT for token propagation.
+        headers = outbound_identity_headers(
+            "request-manager",
+            delegation_user=delegation_user_spiffe_id,
+            delegation_agent=(
+                make_spiffe_id("agent", agent_name)
+                if delegation_user_spiffe_id
+                else None
+            ),
+        )
         auth_header = CredentialService.get_auth_header()
         if auth_header:
             headers["Authorization"] = auth_header

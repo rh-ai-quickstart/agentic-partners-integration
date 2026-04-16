@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import HTTPException, status
 from shared_models import SessionResponse, configure_logging
+from shared_models.identity import make_spiffe_id
 from shared_models.models import NormalizedRequest
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -424,9 +425,20 @@ class DirectHTTPStrategy(CommunicationStrategy):
         # Track previous agent for context optimization
         previous_agent: Optional[str] = None
 
+        # Build user SPIFFE ID for delegation headers on specialist calls.
+        # Delegation headers tell agent-service who the user is, enabling
+        # defense-in-depth OPA checks at the agent-service level.
+        user_spiffe_for_delegation = (
+            user_spiffe_id or make_spiffe_id("user", user_email)
+        )
+
         # Include departments in transfer_context so routing-agent
         # can make permission-aware routing decisions
         transfer_context["departments"] = departments
+
+        # Include delegation headers for specialist calls only (not routing-agent).
+        # When target_agent is pre-determined, we're going directly to a specialist.
+        include_delegation = target_agent is not None
 
         for hop in range(max_routing_hops):
             logger.info(
@@ -436,9 +448,12 @@ class DirectHTTPStrategy(CommunicationStrategy):
                 hop=hop + 1,
                 previous_agent=previous_agent,
                 has_conversation_history=bool(conversation_history),
+                include_delegation=include_delegation,
             )
 
-            # Invoke agent via HTTP with conversation history
+            # Invoke agent via HTTP with conversation history.
+            # delegation_user_spiffe_id is set for specialist calls so
+            # agent-service can independently verify authorization via OPA.
             response = await self.agent_client.invoke_agent(
                 agent_name=current_agent,
                 session_id=normalized_request.session_id,
@@ -447,6 +462,9 @@ class DirectHTTPStrategy(CommunicationStrategy):
                 transfer_context=transfer_context,
                 conversation_history=conversation_history,
                 previous_agent=previous_agent,
+                delegation_user_spiffe_id=(
+                    user_spiffe_for_delegation if include_delegation else None
+                ),
             )
 
             # Check for routing decision
@@ -457,7 +475,6 @@ class DirectHTTPStrategy(CommunicationStrategy):
                 # the user does not have access to. This is the hard gate
                 # that prevents unauthorized access regardless of LLM output.
                 # Uses permission intersection: Effective = User Departments ∩ Agent Capabilities
-                from shared_models.identity import make_spiffe_id
                 from shared_models.opa_client import (
                     Delegation,
                     check_agent_authorization,
@@ -514,15 +531,22 @@ class DirectHTTPStrategy(CommunicationStrategy):
                     session_id=normalized_request.session_id,
                 )
 
-                # Update transfer context
+                # Update transfer context with SCOPE REDUCTION:
+                # Pass effective_departments (the OPA intersection) instead of the
+                # user's full departments. This ensures specialist agents only see
+                # the narrowed scope they're authorized for, not the user's full set.
                 transfer_context = response.get("metadata") or {}
-                transfer_context["departments"] = departments
+                transfer_context["departments"] = (
+                    opa_decision.effective_departments or departments
+                )
 
                 # Track previous agent for context optimization
                 previous_agent = current_agent
 
-                # Route to specialist agent
+                # Route to specialist agent — enable delegation headers so
+                # agent-service can independently verify authorization via OPA.
                 current_agent = routing_decision
+                include_delegation = True
 
                 # Continue loop to invoke specialist agent
                 continue

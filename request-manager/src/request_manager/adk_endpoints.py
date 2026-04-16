@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .aaa_middleware import AAAMiddleware
 from .auth_endpoints import decode_token
 from .communication_strategy import UnifiedRequestProcessor, get_communication_strategy
+from .credential_service import CredentialService
 from .schemas import WebRequest
 
 logger = structlog.get_logger()
@@ -73,6 +74,11 @@ async def adk_chat(
             )
         payload = decode_token(auth_header)
         user_email = payload["email"]
+
+        # Store credentials in request-scoped context so downstream services
+        # (EnhancedAgentClient) can propagate the JWT to agent-service calls.
+        CredentialService.set_token(auth_header)
+        CredentialService.set_user_id(user_email)
 
         logger.info(
             "ADK chat request",
@@ -175,6 +181,9 @@ async def adk_chat(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to process chat request: {str(e)}"
         )
+    finally:
+        # Clean up request-scoped credentials regardless of outcome
+        CredentialService.clear_credentials()
 
 
 class ADKAuditEntry(BaseModel):

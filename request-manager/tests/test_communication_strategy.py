@@ -116,7 +116,7 @@ class TestInvokeAgentWithRouting:
             new_callable=AsyncMock,
             return_value=FakeOPADecision(),
         ), patch(
-            "shared_models.identity.make_spiffe_id",
+            "request_manager.communication_strategy.make_spiffe_id",
             return_value="spiffe://test/service/request-manager",
         ):
             result = await strategy.invoke_agent_with_routing(normalized, db)
@@ -166,7 +166,7 @@ class TestInvokeAgentWithRouting:
             new_callable=AsyncMock,
             return_value=FakeOPADecision(),
         ), patch(
-            "shared_models.identity.make_spiffe_id",
+            "request_manager.communication_strategy.make_spiffe_id",
             return_value="spiffe://test/service/request-manager",
         ):
             result = await strategy.invoke_agent_with_routing(normalized, db)
@@ -1028,7 +1028,7 @@ class TestInvokeAgentWithRoutingExtended:
             new_callable=AsyncMock,
             return_value=FakeOPADecision(),
         ), patch(
-            "shared_models.identity.make_spiffe_id",
+            "request_manager.communication_strategy.make_spiffe_id",
             return_value="spiffe://test/service/request-manager",
         ):
             with pytest.raises(Exception, match="Max routing hops"):
@@ -1132,7 +1132,7 @@ class TestInvokeAgentWithRoutingExtended:
             new_callable=AsyncMock,
             return_value=FakeOPADecision(),
         ), patch(
-            "shared_models.identity.make_spiffe_id",
+            "request_manager.communication_strategy.make_spiffe_id",
             return_value="spiffe://test/service/request-manager",
         ):
             result = await strategy.invoke_agent_with_routing(normalized, db)
@@ -1140,6 +1140,177 @@ class TestInvokeAgentWithRoutingExtended:
         assert result["content"] == "Final multi-hop answer."
         assert result["agent_id"] == "specialist2"
         assert strategy.agent_client.invoke_agent.call_count == 3
+
+    async def test_scope_reduction_passes_effective_departments(self):
+        """After OPA check, specialist receives effective_departments (intersection), not full departments."""
+        from dataclasses import dataclass, field
+
+        @dataclass
+        class FakeOPADecision:
+            allow: bool = True
+            reason: str = "ok"
+            effective_departments: list = field(default_factory=lambda: ["software"])
+
+        strategy = DirectHTTPStrategy()
+        strategy.agent_client = AsyncMock()
+
+        # Routing agent routes to software-support
+        routing_response = {
+            "content": "",
+            "agent_id": "routing-agent",
+            "routing_decision": "software-support",
+            "metadata": {},
+        }
+        specialist_response = {
+            "content": "Fixed it.",
+            "agent_id": "software-support",
+            "routing_decision": None,
+            "metadata": {},
+        }
+        strategy.agent_client.invoke_agent = AsyncMock(
+            side_effect=[routing_response, specialist_response]
+        )
+
+        # User has engineering + software, but OPA intersection gives only software
+        normalized = MagicMock()
+        normalized.request_id = "req-scope"
+        normalized.session_id = "sess-scope"
+        normalized.user_id = "user@example.com"
+        normalized.content = "software issue"
+        normalized.user_context = {
+            "user_context": {
+                "departments": ["engineering", "software"],
+                "spiffe_id": "spiffe://test/user/user",
+                "email": "user@example.com",
+            }
+        }
+
+        db = AsyncMock()
+
+        with patch.object(
+            strategy, "_get_conversation_history", new_callable=AsyncMock, return_value=[]
+        ), patch(
+            "shared_models.opa_client.check_agent_authorization",
+            new_callable=AsyncMock,
+            return_value=FakeOPADecision(),
+        ), patch(
+            "request_manager.communication_strategy.make_spiffe_id",
+            return_value="spiffe://test/service/request-manager",
+        ):
+            result = await strategy.invoke_agent_with_routing(normalized, db)
+
+        assert result["content"] == "Fixed it."
+
+        # The second call (specialist) should receive effective_departments ["software"],
+        # NOT the full user departments ["engineering", "software"]
+        specialist_call = strategy.agent_client.invoke_agent.call_args_list[1]
+        specialist_tc = specialist_call.kwargs.get("transfer_context", {})
+        assert specialist_tc["departments"] == ["software"]
+
+    async def test_delegation_headers_sent_for_specialist_not_routing(self):
+        """Delegation headers are sent to specialist agents but NOT to routing-agent."""
+        from dataclasses import dataclass, field
+
+        @dataclass
+        class FakeOPADecision:
+            allow: bool = True
+            reason: str = "ok"
+            effective_departments: list = field(default_factory=lambda: ["software"])
+
+        strategy = DirectHTTPStrategy()
+        strategy.agent_client = AsyncMock()
+
+        routing_response = {
+            "content": "",
+            "agent_id": "routing-agent",
+            "routing_decision": "software-support",
+            "metadata": {},
+        }
+        specialist_response = {
+            "content": "Answer.",
+            "agent_id": "software-support",
+            "routing_decision": None,
+            "metadata": {},
+        }
+        strategy.agent_client.invoke_agent = AsyncMock(
+            side_effect=[routing_response, specialist_response]
+        )
+
+        normalized = MagicMock()
+        normalized.request_id = "req-deleg"
+        normalized.session_id = "sess-deleg"
+        normalized.user_id = "user@example.com"
+        normalized.content = "help"
+        normalized.user_context = {
+            "user_context": {
+                "departments": ["software"],
+                "spiffe_id": "spiffe://test/user/user",
+                "email": "user@example.com",
+            }
+        }
+
+        db = AsyncMock()
+
+        with patch.object(
+            strategy, "_get_conversation_history", new_callable=AsyncMock, return_value=[]
+        ), patch(
+            "shared_models.opa_client.check_agent_authorization",
+            new_callable=AsyncMock,
+            return_value=FakeOPADecision(),
+        ), patch(
+            "request_manager.communication_strategy.make_spiffe_id",
+            return_value="spiffe://test/service/request-manager",
+        ):
+            await strategy.invoke_agent_with_routing(normalized, db)
+
+        # First call (routing-agent): NO delegation
+        routing_call = strategy.agent_client.invoke_agent.call_args_list[0]
+        assert routing_call.kwargs.get("delegation_user_spiffe_id") is None
+
+        # Second call (specialist): WITH delegation
+        specialist_call = strategy.agent_client.invoke_agent.call_args_list[1]
+        assert specialist_call.kwargs.get("delegation_user_spiffe_id") is not None
+
+    async def test_delegation_sent_when_target_agent_provided(self):
+        """When target_agent bypasses routing, delegation is included from the start."""
+        strategy = DirectHTTPStrategy()
+        strategy.agent_client = AsyncMock()
+
+        direct_response = {
+            "content": "Direct answer.",
+            "agent_id": "software-support",
+            "routing_decision": None,
+            "metadata": {},
+        }
+        strategy.agent_client.invoke_agent = AsyncMock(return_value=direct_response)
+
+        normalized = MagicMock()
+        normalized.request_id = "req-direct-deleg"
+        normalized.session_id = "sess-direct-deleg"
+        normalized.user_id = "user@example.com"
+        normalized.content = "help"
+        normalized.user_context = {
+            "user_context": {
+                "departments": ["software"],
+                "spiffe_id": "spiffe://test/user/user",
+                "email": "user@example.com",
+            }
+        }
+
+        db = AsyncMock()
+
+        with patch.object(
+            strategy, "_get_conversation_history", new_callable=AsyncMock, return_value=[]
+        ), patch(
+            "request_manager.communication_strategy.make_spiffe_id",
+            return_value="spiffe://test/user/user",
+        ):
+            await strategy.invoke_agent_with_routing(
+                normalized, db, target_agent="software-support"
+            )
+
+        call = strategy.agent_client.invoke_agent.call_args
+        assert call.kwargs.get("delegation_user_spiffe_id") is not None
 
 
 # ---------------------------------------------------------------------------

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from shared_models import (
     configure_logging,
     create_shared_lifespan,
@@ -47,6 +47,22 @@ from .a2a.server import get_network_support_a2a_app, get_software_support_a2a_ap
 app.mount("/a2a/software-support", get_software_support_a2a_app())
 app.mount("/a2a/network-support", get_network_support_a2a_app())
 
+# Add SPIFFE identity middleware — extracts caller identity from
+# X-SPIFFE-ID header (mock mode) or mTLS peer certificate (production).
+from shared_models.identity_middleware import IdentityMiddleware
+
+app.add_middleware(IdentityMiddleware)
+
+
+def _enforce_agent_auth() -> bool:
+    """Check if agent authentication enforcement is enabled.
+
+    When enabled (default), the /invoke endpoint requires callers to provide
+    a SPIFFE identity and verifies authorization via OPA when delegation
+    context is present. Disable with ENFORCE_AGENT_AUTH=false for testing.
+    """
+    return os.getenv("ENFORCE_AGENT_AUTH", "true").lower() == "true"
+
 
 @app.get("/health")
 async def health_check() -> Dict[str, Any]:
@@ -77,6 +93,7 @@ async def detailed_health_check(
 async def invoke_agent(
     agent_name: str,
     request: AgentInvokeRequest,
+    http_request: Request,
     db: AsyncSession = Depends(get_db_session_dependency),
 ) -> AgentInvokeResponse:
     """Invoke a specific agent directly via HTTP for A2A communication.
@@ -88,16 +105,22 @@ async def invoke_agent(
     (software-support, network-support), this endpoint directly invokes
     that agent's LLM capabilities, bypassing the routing-agent flow.
 
+    Security: When ENFORCE_AGENT_AUTH=true (default), requires caller
+    identity via X-SPIFFE-ID header or mTLS. When delegation headers
+    are present (X-Delegation-User), verifies authorization via OPA
+    using the permission intersection model.
+
     Args:
         agent_name: Name of the agent to invoke (routing-agent, software-support, etc.)
         request: Agent invocation request containing session, user, and message
+        http_request: The underlying HTTP request (for identity/header extraction)
         db: Database session dependency
 
     Returns:
         Agent response with content and optional routing decision
 
     Raises:
-        HTTPException: If agent not found or invocation fails
+        HTTPException: If agent not found, invocation fails, or authorization denied
     """
     logger.info(
         "Agent invocation request",
@@ -106,6 +129,69 @@ async def invoke_agent(
         user_id=request.user_id,
         message_length=len(request.message),
     )
+
+    # ── Caller identity & authorization enforcement ─────────────────────
+    if _enforce_agent_auth():
+        identity = getattr(http_request.state, "identity", None)
+        if not identity:
+            logger.warning(
+                "Agent invocation rejected: no caller identity",
+                agent_name=agent_name,
+                session_id=request.session_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "Caller identity required — provide X-SPIFFE-ID header "
+                    "or mTLS certificate"
+                ),
+            )
+
+        # If delegation context is present (a service acting on behalf of
+        # a user), verify authorization via OPA. Without delegation headers,
+        # this is a plain service-to-service call (OPA Rule 1: allowed).
+        delegation_user = http_request.headers.get("X-Delegation-User")
+        if delegation_user:
+            transfer_ctx = request.transfer_context or {}
+            delegation_departments = transfer_ctx.get("departments", [])
+
+            from shared_models.identity import make_spiffe_id
+            from shared_models.opa_client import (
+                Delegation,
+                check_agent_authorization,
+            )
+
+            delegation = Delegation(
+                user_spiffe_id=delegation_user,
+                agent_spiffe_id=make_spiffe_id("agent", agent_name),
+                user_departments=delegation_departments,
+            )
+
+            opa_decision = await check_agent_authorization(
+                caller_spiffe_id=identity.spiffe_id,
+                agent_name=agent_name,
+                delegation=delegation,
+            )
+
+            if not opa_decision.allow:
+                logger.warning(
+                    "Agent invocation rejected by OPA",
+                    agent_name=agent_name,
+                    caller=identity.spiffe_id,
+                    delegation_user=delegation_user,
+                    reason=opa_decision.reason,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Authorization denied: {opa_decision.reason}",
+                )
+
+            logger.info(
+                "Agent invocation authorized by OPA",
+                agent_name=agent_name,
+                caller=identity.spiffe_id,
+                effective_departments=opa_decision.effective_departments,
+            )
 
     try:
         if agent_name == "routing-agent":

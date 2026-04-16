@@ -75,7 +75,7 @@ clean: stop
 # ============================================================
 
 .PHONY: test
-test:
+test: test-unit
 	@bash scripts/test.sh
 
 .PHONY: test-unit

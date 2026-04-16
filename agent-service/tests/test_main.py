@@ -12,6 +12,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+# Default SPIFFE identity header for service-to-service calls.
+# All /invoke requests require caller identity when ENFORCE_AGENT_AUTH=true.
+SERVICE_SPIFFE_ID = "spiffe://partner.example.com/service/request-manager"
+DEFAULT_HEADERS = {"X-SPIFFE-ID": SERVICE_SPIFFE_ID}
+
 
 @pytest.fixture
 def patched_app():
@@ -94,6 +99,7 @@ class TestInvokeAgent:
                 "user_id": "user@test.com",
                 "message": "Hello",
             },
+            headers=DEFAULT_HEADERS,
         )
 
         assert response.status_code == 200
@@ -141,6 +147,7 @@ class TestInvokeAgent:
                 "user_id": "user@test.com",
                 "message": "My app crashes",
             },
+            headers=DEFAULT_HEADERS,
         )
 
         assert response.status_code == 200
@@ -166,6 +173,7 @@ class TestInvokeAgent:
                 "user_id": "user@test.com",
                 "message": "Help",
             },
+            headers=DEFAULT_HEADERS,
         )
 
         assert response.status_code == 404
@@ -201,6 +209,7 @@ class TestInvokeAgent:
                 "user_id": "user@test.com",
                 "message": "App crash",
             },
+            headers=DEFAULT_HEADERS,
         )
 
         assert response.status_code == 503
@@ -233,6 +242,7 @@ class TestInvokeAgent:
                 "message": "My software is crashing",
                 "transfer_context": {"departments": ["software"]},
             },
+            headers=DEFAULT_HEADERS,
         )
 
         assert response.status_code == 200
@@ -302,6 +312,7 @@ class TestInvokeAgent:
                     "departments": ["software", "network"],
                 },
             },
+            headers=DEFAULT_HEADERS,
         )
 
         assert response.status_code == 200
@@ -340,6 +351,7 @@ class TestInvokeAgent:
                     ],
                 },
             },
+            headers=DEFAULT_HEADERS,
         )
 
         assert response.status_code == 200
@@ -378,6 +390,7 @@ class TestInvokeAgent:
                 "user_id": "user@test.com",
                 "message": "App crash",
             },
+            headers=DEFAULT_HEADERS,
         )
 
         assert response.status_code == 503
@@ -428,6 +441,7 @@ class TestInvokeAgent:
                     ],
                 },
             },
+            headers=DEFAULT_HEADERS,
         )
 
         assert response.status_code == 200
@@ -475,6 +489,7 @@ class TestInvokeAgent:
                 "user_id": "user@test.com",
                 "message": "App crash",
             },
+            headers=DEFAULT_HEADERS,
         )
 
         # Should still return 200 with the default apology message
@@ -500,6 +515,7 @@ class TestInvokeAgent:
                 "user_id": "user@test.com",
                 "message": "Hello",
             },
+            headers=DEFAULT_HEADERS,
         )
 
         assert response.status_code == 500
@@ -515,7 +531,6 @@ class TestInvokeAgent:
         The 404 test already covers this implicitly, but this test is explicit
         about it being distinct from the generic Exception handler.
         """
-        from fastapi import HTTPException
         from fastapi.testclient import TestClient
 
         mock_manager = MagicMock()
@@ -530,10 +545,225 @@ class TestInvokeAgent:
                 "user_id": "user@test.com",
                 "message": "Help",
             },
+            headers=DEFAULT_HEADERS,
         )
 
         # HTTPException(404) should pass through, NOT become 500
         assert response.status_code == 404
+
+
+class TestAuthEnforcement:
+    """Tests for caller identity and OPA authorization enforcement."""
+
+    def test_rejects_request_without_identity(self, patched_app, monkeypatch):
+        """When ENFORCE_AGENT_AUTH=true, requests without X-SPIFFE-ID are rejected."""
+        from fastapi.testclient import TestClient
+
+        monkeypatch.setenv("ENFORCE_AGENT_AUTH", "true")
+
+        client = TestClient(patched_app)
+        response = client.post(
+            "/api/v1/agents/routing-agent/invoke",
+            json={
+                "session_id": "sess-noauth",
+                "user_id": "user@test.com",
+                "message": "Hello",
+            },
+            # No X-SPIFFE-ID header
+        )
+
+        assert response.status_code == 403
+        assert "Caller identity required" in response.json()["detail"]
+
+    @patch("agent_service.agents.AgentManager")
+    def test_allows_request_with_service_identity(
+        self, mock_agent_manager_cls, patched_app, monkeypatch
+    ):
+        """Service-to-service call with X-SPIFFE-ID but no delegation is allowed."""
+        from fastapi.testclient import TestClient
+
+        monkeypatch.setenv("ENFORCE_AGENT_AUTH", "true")
+
+        mock_agent = AsyncMock()
+        mock_agent.create_response_with_retry.return_value = ("Hello!", False)
+        mock_manager = MagicMock()
+        mock_manager.get_agent.return_value = mock_agent
+        mock_manager.agents_dict = {"routing-agent": mock_agent}
+        mock_agent_manager_cls.return_value = mock_manager
+
+        client = TestClient(patched_app)
+        response = client.post(
+            "/api/v1/agents/routing-agent/invoke",
+            json={
+                "session_id": "sess-svc",
+                "user_id": "user@test.com",
+                "message": "Hello",
+            },
+            headers=DEFAULT_HEADERS,
+        )
+
+        assert response.status_code == 200
+
+    def test_opa_delegation_allows(self, patched_app, monkeypatch):
+        """When delegation headers present and OPA allows, request proceeds."""
+        from dataclasses import dataclass, field
+        from fastapi.testclient import TestClient
+
+        monkeypatch.setenv("ENFORCE_AGENT_AUTH", "true")
+
+        @dataclass
+        class FakeOPADecision:
+            allow: bool = True
+            reason: str = "Delegated access granted"
+            effective_departments: list = field(default_factory=lambda: ["software"])
+
+        with patch(
+            "agent_service.agents.AgentManager"
+        ) as mock_agent_manager_cls, patch(
+            "shared_models.opa_client.check_agent_authorization",
+            new_callable=AsyncMock,
+            return_value=FakeOPADecision(),
+        ), patch(
+            "agent_service.main.httpx.AsyncClient"
+        ) as mock_httpx_cls:
+            mock_agent = AsyncMock()
+            mock_agent.create_response_with_retry.return_value = ("Fix: restart app", False)
+            mock_manager = MagicMock()
+            mock_manager.get_agent.return_value = mock_agent
+            mock_agent_manager_cls.return_value = mock_manager
+
+            mock_rag_response = MagicMock()
+            mock_rag_response.status_code = 200
+            mock_rag_response.json.return_value = {
+                "response": "RAG answer",
+                "sources": [{"id": "T-1", "similarity": 0.9, "content": "Fix"}],
+            }
+            mock_httpx_instance = AsyncMock()
+            mock_httpx_instance.post.return_value = mock_rag_response
+            mock_httpx_instance.__aenter__ = AsyncMock(return_value=mock_httpx_instance)
+            mock_httpx_instance.__aexit__ = AsyncMock(return_value=False)
+            mock_httpx_cls.return_value = mock_httpx_instance
+
+            client = TestClient(patched_app)
+            response = client.post(
+                "/api/v1/agents/software-support/invoke",
+                json={
+                    "session_id": "sess-deleg-ok",
+                    "user_id": "carlos@example.com",
+                    "message": "App crash",
+                    "transfer_context": {"departments": ["software"]},
+                },
+                headers={
+                    "X-SPIFFE-ID": SERVICE_SPIFFE_ID,
+                    "X-Delegation-User": "spiffe://partner.example.com/user/carlos",
+                },
+            )
+
+        assert response.status_code == 200
+
+    def test_opa_delegation_denies(self, patched_app, monkeypatch):
+        """When delegation headers present and OPA denies, returns 403."""
+        from dataclasses import dataclass, field
+        from fastapi.testclient import TestClient
+
+        monkeypatch.setenv("ENFORCE_AGENT_AUTH", "true")
+
+        @dataclass
+        class FakeOPADecision:
+            allow: bool = False
+            reason: str = "No overlapping departments"
+            effective_departments: list = field(default_factory=list)
+
+        with patch(
+            "shared_models.opa_client.check_agent_authorization",
+            new_callable=AsyncMock,
+            return_value=FakeOPADecision(),
+        ):
+            client = TestClient(patched_app)
+            response = client.post(
+                "/api/v1/agents/network-support/invoke",
+                json={
+                    "session_id": "sess-deleg-deny",
+                    "user_id": "carlos@example.com",
+                    "message": "VPN issue",
+                    "transfer_context": {"departments": ["software"]},
+                },
+                headers={
+                    "X-SPIFFE-ID": SERVICE_SPIFFE_ID,
+                    "X-Delegation-User": "spiffe://partner.example.com/user/carlos",
+                },
+            )
+
+        assert response.status_code == 403
+        assert "Authorization denied" in response.json()["detail"]
+
+    @patch("agent_service.agents.AgentManager")
+    def test_enforcement_disabled_allows_without_identity(
+        self, mock_agent_manager_cls, patched_app, monkeypatch
+    ):
+        """When ENFORCE_AGENT_AUTH=false, identity is not required."""
+        from fastapi.testclient import TestClient
+
+        monkeypatch.setenv("ENFORCE_AGENT_AUTH", "false")
+
+        mock_agent = AsyncMock()
+        mock_agent.create_response_with_retry.return_value = ("Hello!", False)
+        mock_manager = MagicMock()
+        mock_manager.get_agent.return_value = mock_agent
+        mock_manager.agents_dict = {"routing-agent": mock_agent}
+        mock_agent_manager_cls.return_value = mock_manager
+
+        client = TestClient(patched_app)
+        response = client.post(
+            "/api/v1/agents/routing-agent/invoke",
+            json={
+                "session_id": "sess-noauth-ok",
+                "user_id": "user@test.com",
+                "message": "Hello",
+            },
+            # No X-SPIFFE-ID header
+        )
+
+        assert response.status_code == 200
+
+    def test_agent_caller_without_delegation_denied(self, patched_app, monkeypatch):
+        """Agent callers without delegation context are rejected.
+
+        This verifies defense-in-depth: OPA Rule 5 denies autonomous agents.
+        """
+        from dataclasses import dataclass, field
+        from fastapi.testclient import TestClient
+
+        monkeypatch.setenv("ENFORCE_AGENT_AUTH", "true")
+
+        # Agent identity (not a service) with delegation but OPA denies
+        @dataclass
+        class FakeOPADecision:
+            allow: bool = False
+            reason: str = "Autonomous agent access denied"
+            effective_departments: list = field(default_factory=list)
+
+        with patch(
+            "shared_models.opa_client.check_agent_authorization",
+            new_callable=AsyncMock,
+            return_value=FakeOPADecision(),
+        ):
+            client = TestClient(patched_app)
+            response = client.post(
+                "/api/v1/agents/software-support/invoke",
+                json={
+                    "session_id": "sess-agent-auto",
+                    "user_id": "user@test.com",
+                    "message": "Do something",
+                    "transfer_context": {"departments": []},
+                },
+                headers={
+                    "X-SPIFFE-ID": "spiffe://partner.example.com/agent/rogue-agent",
+                    "X-Delegation-User": "spiffe://partner.example.com/user/nobody",
+                },
+            )
+
+        assert response.status_code == 403
 
 
 class TestLifespan:

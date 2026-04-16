@@ -174,6 +174,85 @@ class TestEnhancedAgentClient:
                 message="oops",
             )
 
+    # -- SPIFFE identity headers --------------------------------------------
+
+    @patch("request_manager.agent_client_enhanced.CredentialService")
+    async def test_invoke_agent_sends_spiffe_identity_header(self, mock_cred):
+        """Outbound calls include X-SPIFFE-ID header for service identity."""
+        mock_cred.get_auth_header.return_value = None
+
+        client = self._make_client()
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"content": "ok"}
+        mock_resp.raise_for_status = MagicMock()
+        client.client.post = AsyncMock(return_value=mock_resp)
+
+        await client.invoke_agent(
+            agent_name="test-agent",
+            session_id="s1",
+            user_id="u1",
+            message="msg",
+        )
+
+        call_kwargs = client.client.post.call_args
+        headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
+        # In mock mode (MOCK_SPIFFE=true, default), X-SPIFFE-ID is set
+        assert "X-SPIFFE-ID" in headers
+        assert "request-manager" in headers["X-SPIFFE-ID"]
+
+    @patch("request_manager.agent_client_enhanced.CredentialService")
+    async def test_invoke_agent_sends_delegation_headers(self, mock_cred):
+        """When delegation_user_spiffe_id is provided, delegation headers are sent."""
+        mock_cred.get_auth_header.return_value = None
+
+        client = self._make_client()
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"content": "ok"}
+        mock_resp.raise_for_status = MagicMock()
+        client.client.post = AsyncMock(return_value=mock_resp)
+
+        user_spiffe = "spiffe://partner.example.com/user/carlos"
+        await client.invoke_agent(
+            agent_name="software-support",
+            session_id="s1",
+            user_id="carlos@example.com",
+            message="help",
+            delegation_user_spiffe_id=user_spiffe,
+        )
+
+        call_kwargs = client.client.post.call_args
+        headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
+        assert headers["X-Delegation-User"] == user_spiffe
+        assert "X-Delegation-Agent" in headers
+        assert "software-support" in headers["X-Delegation-Agent"]
+
+    @patch("request_manager.agent_client_enhanced.CredentialService")
+    async def test_invoke_agent_no_delegation_headers_when_not_set(self, mock_cred):
+        """When delegation_user_spiffe_id is None, no delegation headers are sent."""
+        mock_cred.get_auth_header.return_value = None
+
+        client = self._make_client()
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"content": "ok"}
+        mock_resp.raise_for_status = MagicMock()
+        client.client.post = AsyncMock(return_value=mock_resp)
+
+        await client.invoke_agent(
+            agent_name="routing-agent",
+            session_id="s1",
+            user_id="u1",
+            message="hi",
+            delegation_user_spiffe_id=None,
+        )
+
+        call_kwargs = client.client.post.call_args
+        headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
+        assert "X-Delegation-User" not in headers
+        assert "X-Delegation-Agent" not in headers
+
     # -- close / context manager --------------------------------------------
 
     async def test_close_closes_httpx_client(self):
