@@ -30,7 +30,7 @@ sequenceDiagram
 4. **Two-hop routing:** The request-manager first invokes the routing-agent (service-to-service, no delegation). If the response contains a `routing_decision`, the request-manager queries OPA for authorization, reduces scope to `effective_departments`, then makes a second A2A call to the specialist agent with delegation headers.
 5. **Defense-in-depth OPA enforcement:** The request-manager queries OPA before each specialist invocation (primary gate). The agent-service also verifies caller SPIFFE identity and re-checks OPA when delegation headers are present (secondary gate). If the primary gate is bypassed, the secondary gate blocks the request.
 6. **Credential propagation:** `CredentialService` stores the user's JWT in request-scoped context vars. `outbound_identity_headers()` builds SPIFFE and delegation headers. Both are attached to outbound A2A calls by `EnhancedAgentClient`.
-7. **Accounting at every hop:** After each A2A call completes, `_complete_request_log()` records the responding agent, full response, and processing time in `request_logs`.
+7. **Audit at every hop:** After each A2A call completes, `_complete_request_log()` records the responding agent, full response, and processing time in `request_logs`.
 
 ## A2A Endpoint Contract
 
@@ -74,5 +74,5 @@ flowchart LR
 
 - **Simplicity:** No broker infrastructure to deploy and manage.
 - **Synchronous responses:** The user waits for a response -- direct HTTP keeps the architecture straightforward.
-- **Observability:** Each A2A call is a simple HTTP request with full accounting. No message delivery guarantees to debug.
+- **Observability:** Each A2A call is a simple HTTP request with full audit. No message delivery guarantees to debug.
 - **Horizontal scaling:** Agents are stateless HTTP services. Scale by adding replicas behind a load balancer.

@@ -349,6 +349,119 @@ async def adk_audit_log(
         )
 
 
+class AuditEventEntry(BaseModel):
+    """Single SOC 2 audit event."""
+    event_id: str
+    event_type: str
+    actor: str
+    action: str
+    resource: str
+    outcome: str
+    reason: str
+    metadata: Dict[str, Any]
+    source_ip: str
+    service: str
+    timestamp: str
+
+
+class AuditEventsResponse(BaseModel):
+    """SOC 2 audit events response."""
+    entries: List[AuditEventEntry]
+    total: int
+    user_email: str
+    user_role: str
+
+
+@router.get("/audit-events", response_model=AuditEventsResponse)
+async def adk_audit_events(
+    request: Request,
+    limit: int = 50,
+    event_type: Optional[str] = None,
+    outcome: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get SOC 2 audit events for the authenticated user.
+
+    Admin users see all events. Regular users see only events where
+    they are the actor. Supports filtering by event_type and outcome.
+    """
+    try:
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authorization header required",
+            )
+        payload = decode_token(auth_header)
+        user_email = payload["email"]
+
+        from shared_models.models import AuditEvent
+        from sqlalchemy import func, select
+
+        user = await AAAService.get_user_by_email(db, user_email)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
+
+        user_role = user.role.value if user.role else "user"
+        is_admin = user_role == "admin"
+
+        # Build query
+        stmt = select(AuditEvent)
+
+        if not is_admin:
+            stmt = stmt.where(AuditEvent.actor == user_email)
+        if event_type:
+            stmt = stmt.where(AuditEvent.event_type == event_type)
+        if outcome:
+            stmt = stmt.where(AuditEvent.outcome == outcome)
+
+        # Count (same filters, no limit)
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        total = (await db.execute(count_stmt)).scalar() or 0
+
+        # Fetch rows
+        stmt = stmt.order_by(AuditEvent.created_at.desc()).limit(limit)
+        result = await db.execute(stmt)
+        rows = result.scalars().all()
+
+        entries = [
+            AuditEventEntry(
+                event_id=row.event_id,
+                event_type=row.event_type,
+                actor=row.actor,
+                action=row.action,
+                resource=row.resource,
+                outcome=row.outcome,
+                reason=row.reason or "",
+                metadata=row.metadata_ or {},
+                source_ip=row.source_ip or "",
+                service=row.service or "",
+                timestamp=row.created_at.isoformat() if row.created_at else "",
+            )
+            for row in rows
+        ]
+
+        return AuditEventsResponse(
+            entries=entries,
+            total=total,
+            user_email=user_email,
+            user_role=user_role,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("ADK audit events error", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get audit events: {str(e)}",
+        )
+
+
 async def _append_conversation_turn(
     db: AsyncSession,
     session_id: str,

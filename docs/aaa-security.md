@@ -1,6 +1,6 @@
-# AAA -- Authentication, Authorization, and Accounting
+# AAA -- Authentication, Authorization, and Audit
 
-The system implements a Zero Trust AAA framework using **SPIFFE workload identity** for authentication, **OPA (Open Policy Agent)** for authorization, and PostgreSQL-backed accounting for every request.
+The system implements a Zero Trust AAA framework using **SPIFFE workload identity** for authentication, **OPA (Open Policy Agent)** for authorization, and PostgreSQL-backed audit for every request.
 
 ## Authentication -- SPIFFE Workload Identity
 
@@ -182,7 +182,7 @@ sequenceDiagram
 
     Note over U,RAG: ── Phase 6: Cleanup ──
 
-    Note right of RM: _complete_request_log() → accounting<br/>Store conversation turn in session<br/>CredentialService.clear_credentials()
+    Note right of RM: _complete_request_log() → audit<br/>Store conversation turn in session<br/>CredentialService.clear_credentials()
     RM-->>U: {response, agent: "software-support"}
 ```
 
@@ -193,7 +193,7 @@ sequenceDiagram
 3. **Autonomous agent access**: Always denied (agents require user delegation context)
 4. **Unknown agent**: Denied (agent not in capabilities map)
 
-## Accounting
+## Audit
 
 Every request is logged in the `request_logs` table with a complete audit trail:
 
@@ -221,15 +221,15 @@ erDiagram
     request_logs }o--|| request_sessions : "belongs to"
 ```
 
-The accounting write-back happens in `communication_strategy.py` after each A2A call completes. The `_complete_request_log()` method updates the `RequestLog` row with the response data, agent identity, and timing.
+The audit write-back happens in `communication_strategy.py` after each A2A call completes. The `_complete_request_log()` method updates the `RequestLog` row with the response data, agent identity, and timing.
 
-Session-level accounting is stored in `request_sessions.conversation_context`, which records every message and response in the conversation as a JSON array.
+Session-level audit is stored in `request_sessions.conversation_context`, which records every message and response in the conversation as a JSON array.
 
 The audit trail is queryable via the **Audit page** (`audit.html`), which calls `GET /adk/audit` and displays a table of all request logs.
 
 ## SOC 2 Audit Events (CC7.1, CC7.2)
 
-In addition to request accounting, the system maintains an append-only `audit_events` table that captures security-relevant events across all services. This satisfies SOC 2 Trust Service Criteria CC7.1 (monitoring) and CC7.2 (anomaly detection).
+In addition to request audit, the system maintains an append-only `audit_events` table that captures security-relevant events across all services. This satisfies SOC 2 Trust Service Criteria CC7.1 (monitoring) and CC7.2 (anomaly detection).
 
 ```mermaid
 erDiagram
@@ -259,6 +259,7 @@ erDiagram
 | `auth.token.invalid` | Request Manager | JWT malformed or signature invalid |
 | `authz.allow` | Request Manager, Agent Service | OPA permits agent access |
 | `authz.deny` | Request Manager, Agent Service | OPA blocks agent access |
+| `authz.routing_direct` | Request Manager | Routing-agent handled request directly without delegating (soft deny) |
 | `authz.no_identity` | Agent Service | Request missing SPIFFE identity |
 | `data.chat.request` | Request Manager | User sends a chat message |
 | `data.audit.access` | Request Manager | User views the audit log |
@@ -269,3 +270,5 @@ erDiagram
 - **Independent transactions:** Each audit event is written in its own database session (`AuditService.emit()`), so events are persisted even when the business transaction rolls back.
 - **Fire-and-forget:** A failed audit write logs an error but never crashes the calling request.
 - **Dual-layer coverage:** Both request-manager (primary OPA gate) and agent-service (defense-in-depth gate) emit audit events, providing correlated records across service boundaries.
+
+**Viewing audit events:** The audit trail is viewable via the **Audit Trail page** (`audit-events.html`), which calls `GET /adk/audit-events` and displays a filterable table of all events with expandable detail rows. Admin users see all events; regular users see only their own. Supports filtering by event type and outcome.

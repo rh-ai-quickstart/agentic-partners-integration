@@ -735,6 +735,7 @@
                 </div>
                 <div class="sidebar-footer-actions">
                     <button onclick="window.location.href='/audit.html'" title="Audit log" aria-label="View audit log" id="auditIcon"></button>
+                    <button onclick="window.location.href='/audit-events.html'" title="Audit trail" aria-label="View audit trail" id="auditEventsIcon"></button>
                     <button onclick="toggleTheme()" title="Toggle theme" aria-label="Toggle dark/light theme" id="themeBtn"></button>
                     <button onclick="logout()" title="Logout" aria-label="Sign out" id="logoutIcon"></button>
                 </div>
@@ -871,6 +872,7 @@
             // Populate static icon placeholders
             document.getElementById('headerIcon').innerHTML = pfIcon('process-automation', 20);
             document.getElementById('auditIcon').innerHTML = pfIcon('history', 14);
+            document.getElementById('auditEventsIcon').innerHTML = pfIcon('security', 14);
             document.getElementById('themeBtn').innerHTML = pfIcon('asleep', 14);
             document.getElementById('logoutIcon').innerHTML = pfIcon('export', 14);
 

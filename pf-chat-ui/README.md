@@ -24,6 +24,7 @@ User -> PF Chat UI -> Request Manager -> Keycloak (auth) + OPA (authz) -> Routin
 | `login.html` | `/login.html` | Login form with test user buttons |
 | `chat.html` | `/chat.html` | Main chat interface |
 | `audit.html` | `/audit.html` | Request audit log |
+| `audit-events.html` | `/audit-events.html` | Audit trail viewer |
 
 ## Authentication Flow
 
@@ -85,6 +86,11 @@ Returns: `{ "response", "session_id", "agent", "user_context" }`
 
 ### GET /adk/audit
 Headers: `Authorization: Bearer <token>`
+Returns: `{ "entries", "total", "user_email", "user_role" }`
+
+### GET /adk/audit-events
+Headers: `Authorization: Bearer <token>`
+Query params: `limit` (default 50), `event_type` (optional), `outcome` (optional)
 Returns: `{ "entries", "total", "user_email", "user_role" }`
 
 For more information, see the main [README](../README.md).

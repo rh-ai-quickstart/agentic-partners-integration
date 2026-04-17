@@ -9,6 +9,7 @@ The system uses a custom PatternFly-based chat UI for the chat interface. It loa
 | Login | `login.html` | Email form with quick-login buttons for test users. Sets user identity for chat session. |
 | Chat | `chat.html` | PatternFly 6 chat interface. Sends `POST /adk/chat` with user email. Displays agent responses with markdown. |
 | Audit | `audit.html` | Request audit log. Calls `GET /adk/audit` and displays all request logs in a table with agent, timing, and response data. |
+| Audit Trail | `audit-events.html` | Audit trail viewer. Calls `GET /adk/audit-events` and displays authentication, authorization, and data-access events with filtering by event type and outcome. |
 | Index | `index.html` | Landing page that redirects to login or chat based on auth state. |
 
 ## Architecture

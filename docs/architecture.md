@@ -11,7 +11,7 @@ flowchart TB
     subgraph rm["Request Manager · port 8000"]
         identity["Identity Middleware\nSPIFFE ID extraction (X-SPIFFE-ID mock)"]
         adk["adk_endpoints.py\n/adk/chat · /adk/audit"]
-        strategy["communication_strategy.py\ninvoke routing · detect ROUTE:\nquery OPA · invoke specialist · write accounting"]
+        strategy["communication_strategy.py\ninvoke routing · detect ROUTE:\nquery OPA · invoke specialist · write audit"]
         identity --> adk --> strategy
     end
 
@@ -53,7 +53,7 @@ flowchart TB
 
 | Service | Port | Role |
 |---------|------|------|
-| PostgreSQL (pgvector) | 5433 | User data, sessions, accounting logs, and vector storage for RAG |
+| PostgreSQL (pgvector) | 5433 | User data, sessions, audit logs, and vector storage for RAG |
 | RAG API | 8003 | Semantic search over support tickets |
 | Agent Service | 8001 | LLM-based routing and specialist agents |
 | Request Manager | 8000 | AAA enforcement, A2A orchestration, chat API |
@@ -71,7 +71,7 @@ flowchart TB
 4. **Routing decision** -- Routing-agent's LLM classifies intent. Returns `ROUTE:software-support` or a conversational response.
 5. **OPA authorization + scope reduction** -- If routing to a specialist, Request Manager queries OPA with `Delegation(user_spiffe_id, agent_spiffe_id, user_departments)`. OPA computes `User Departments ∩ Agent Capabilities`. Blocked if intersection is empty. The **effective departments** (intersection result) replace the user's full departments in the downstream `transfer_context`.
 6. **A2A call: specialist agent** -- Request Manager invokes the specialist via A2A with delegation headers (`X-Delegation-User`, `X-Delegation-Agent`), JWT, and the narrowed `effective_departments`. Agent-service verifies caller identity via SPIFFE and re-checks OPA authorization (defense-in-depth). Specialist queries RAG API, gets matching tickets, builds LLM prompt with RAG context, returns grounded response.
-7. **Accounting** -- `_complete_request_log()` updates `request_logs` with `agent_id`, `response_content`, `processing_time_ms`, `completed_at`.
+7. **Audit** -- `_complete_request_log()` updates `request_logs` with `agent_id`, `response_content`, `processing_time_ms`, `completed_at`.
 8. **Response** -- Request Manager stores conversation turn in `request_sessions.conversation_context`, returns response to the UI.
 
 ## Key Design Decisions
@@ -79,7 +79,7 @@ flowchart TB
 - **Single-turn routing:** The routing-agent classifies intent in one LLM call (no multi-turn state machine). Returns `ROUTE:<agent>` or a conversational response.
 - **Mandatory RAG:** Specialist agents always query the RAG API. If RAG is unavailable, the request fails (no silent degradation).
 - **OPA + permission intersection:** Authorization uses `User Departments ∩ Agent Capabilities` evaluated by OPA. The LLM can't bypass the OPA hard gate.
-- **Full accounting:** Every A2A call records which agent handled the request, the response, and processing time.
+- **Full audit:** Every A2A call records which agent handled the request, the response, and processing time.
 - **A2A exclusively:** No message brokers. Agents communicate via synchronous HTTP calls.
 - **Pluggable LLM:** Backend configured via `LLM_BACKEND` env var. Supports Gemini (default in setup), OpenAI, and Ollama.
 
@@ -157,7 +157,7 @@ flowchart TD
     rm --> rm_src["src/request_manager/"]
     rm_src --> rm_main["main.py — FastAPI app, IdentityMiddleware, session cleanup"]
     rm_src --> rm_adk["adk_endpoints.py — /adk/chat, /adk/audit (chat + audit API)"]
-    rm_src --> rm_cs["communication_strategy.py — A2A invocation, OPA hard gate, accounting"]
+    rm_src --> rm_cs["communication_strategy.py — A2A invocation, OPA hard gate, audit"]
     rm_src --> rm_ac["agent_client_enhanced.py — HTTP client for A2A calls"]
     rm_src --> rm_cred["credential_service.py — Request-scoped credential management"]
 
@@ -171,6 +171,7 @@ flowchart TD
     ui_static --> ui_login["login.html — Login page with JWT authentication"]
     ui_static --> ui_chat["chat.html — Chat interface with PF6 components"]
     ui_static --> ui_audit["audit.html — Request audit log viewer"]
+    ui_static --> ui_events["audit-events.html — Audit trail viewer"]
     ui --> ui_nginx["nginx.conf — Reverse proxy to request-manager"]
 
     root --> shared["shared-models/\nShared library: DB models, migrations, identity, OPA client"]
@@ -219,7 +220,7 @@ PostgreSQL 16 with pgvector extension. Schema managed by Alembic (current versio
 |-------|---------|
 | `users` | SPIFFE identity, roles, `departments` (OPA authorization) |
 | `request_sessions` | Session state, `conversation_context` (JSON message history) |
-| `request_logs` | Full accounting: request content, response content, agent_id, processing time, timestamps |
+| `request_logs` | Full audit: request content, response content, agent_id, processing time, timestamps |
 | `audit_events` | SOC 2 audit trail: authentication, authorization, and data-access events (append-only) |
 | `alembic_version` | Migration tracking |
 

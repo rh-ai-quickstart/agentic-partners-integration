@@ -14,8 +14,16 @@ curl -X POST http://localhost:8000/adk/chat \
   -H "Authorization: Bearer $TOKEN" \
   -d '{"message": "My app crashes with error 500", "user": {"email": "carlos@example.com"}}'
 
-# View audit log
+# View audit log (request history)
 curl http://localhost:8000/adk/audit \
+  -H "Authorization: Bearer $TOKEN"
+
+# View SOC 2 audit events (authentication, authorization, data access)
+curl http://localhost:8000/adk/audit-events \
+  -H "Authorization: Bearer $TOKEN"
+
+# Filter by event type or outcome
+curl "http://localhost:8000/adk/audit-events?event_type=authz.deny&outcome=failure" \
   -H "Authorization: Bearer $TOKEN"
 ```
 

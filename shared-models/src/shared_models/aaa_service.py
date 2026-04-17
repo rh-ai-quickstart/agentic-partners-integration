@@ -1,5 +1,5 @@
 """
-AAA (Authentication, Authorization, Accounting) Service.
+AAA (Authentication, Authorization, Audit) Service.
 
 Authorization is now handled by OPA (Open Policy Agent) with Rego policies.
 This module retains user management and department-based access helpers.

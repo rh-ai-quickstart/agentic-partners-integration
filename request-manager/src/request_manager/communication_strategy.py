@@ -586,6 +586,24 @@ class DirectHTTPStrategy(CommunicationStrategy):
                     response_length=len(response.get("content", "")),
                 )
 
+                # Log when routing-agent handled directly without
+                # delegating — captures soft-deny cases where the user
+                # asked about a department they lack access to.
+                if current_agent == "routing-agent":
+                    await AuditService.emit(
+                        event_type="authz.routing_direct",
+                        actor=user_email,
+                        action="route_handled_directly",
+                        resource="routing-agent",
+                        outcome="success",
+                        reason="Routing-agent handled request without delegating to specialist",
+                        metadata={
+                            "departments": departments,
+                            "session_id": normalized_request.session_id,
+                        },
+                        service="request-manager",
+                    )
+
                 # Format response for compatibility with existing code
                 return {
                     "request_id": normalized_request.request_id,
@@ -860,7 +878,7 @@ class UnifiedRequestProcessor:
         processing_time_ms: int,
         db: AsyncSession,
     ) -> None:
-        """Update RequestLog with response data for accounting.
+        """Update RequestLog with response data for audit.
 
         Called after an A2A request completes to record which agent handled it,
         the response content, and how long it took.
@@ -886,14 +904,14 @@ class UnifiedRequestProcessor:
             await db.commit()
 
             logger.debug(
-                "RequestLog accounting completed",
+                "RequestLog audit completed",
                 request_id=request_id,
                 agent_id=agent_id,
                 processing_time_ms=processing_time_ms,
             )
         except Exception as e:
             logger.warning(
-                "Failed to complete RequestLog accounting",
+                "Failed to complete RequestLog audit",
                 request_id=request_id,
                 error=str(e),
             )

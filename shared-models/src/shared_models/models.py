@@ -85,7 +85,7 @@ class User(Base, TimestampMixin):  # type: ignore[misc]
     last_login = Column(TIMESTAMP(timezone=True), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False, index=True)
 
-    # AAA (Authentication, Authorization, Accounting)
+    # AAA (Authentication, Authorization, Audit)
     role: Column[UserRole] = Column(
         SQLEnum(UserRole, name='user_role', values_callable=lambda x: [e.value for e in x]),
         default=UserRole.USER.value, nullable=False, index=True
