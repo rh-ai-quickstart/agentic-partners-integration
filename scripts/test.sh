@@ -315,7 +315,7 @@ echo -e "${YELLOW}6. Database${NC}"
 
 test_endpoint "Alembic migration version" \
     "docker exec partner-postgres-full psql -U user -d partner_agent -t -c 'SELECT version_num FROM alembic_version;' 2>/dev/null || docker exec partner-postgres-adk psql -U user -d partner_agent -t -c 'SELECT version_num FROM alembic_version;'" \
-    "008"
+    "009"
 
 test_endpoint "Users table has departments column" \
     "docker exec partner-postgres-full psql -U user -d partner_agent -t -c \"SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='departments';\" 2>/dev/null || docker exec partner-postgres-adk psql -U user -d partner_agent -t -c \"SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='departments';\"" \

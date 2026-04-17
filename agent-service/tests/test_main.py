@@ -607,6 +607,7 @@ class TestAuthEnforcement:
     def test_opa_delegation_allows(self, patched_app, monkeypatch):
         """When delegation headers present and OPA allows, request proceeds."""
         from dataclasses import dataclass, field
+
         from fastapi.testclient import TestClient
 
         monkeypatch.setenv("ENFORCE_AGENT_AUTH", "true")
@@ -664,6 +665,7 @@ class TestAuthEnforcement:
     def test_opa_delegation_denies(self, patched_app, monkeypatch):
         """When delegation headers present and OPA denies, returns 403."""
         from dataclasses import dataclass, field
+
         from fastapi.testclient import TestClient
 
         monkeypatch.setenv("ENFORCE_AGENT_AUTH", "true")
@@ -732,6 +734,7 @@ class TestAuthEnforcement:
         This verifies defense-in-depth: OPA Rule 5 denies autonomous agents.
         """
         from dataclasses import dataclass, field
+
         from fastapi.testclient import TestClient
 
         monkeypatch.setenv("ENFORCE_AGENT_AUTH", "true")
