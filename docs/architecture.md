@@ -211,7 +211,7 @@ All custom images use Red Hat UBI9 base images. Agent service and request manage
 
 ## Database
 
-PostgreSQL 16 with pgvector extension. Schema managed by Alembic (current version: 008).
+PostgreSQL 16 with pgvector extension. Schema managed by Alembic (current version: 009).
 
 ### Core Tables
 
@@ -220,6 +220,7 @@ PostgreSQL 16 with pgvector extension. Schema managed by Alembic (current versio
 | `users` | SPIFFE identity, roles, `departments` (OPA authorization) |
 | `request_sessions` | Session state, `conversation_context` (JSON message history) |
 | `request_logs` | Full accounting: request content, response content, agent_id, processing time, timestamps |
+| `audit_events` | SOC 2 audit trail: authentication, authorization, and data-access events (append-only) |
 | `alembic_version` | Migration tracking |
 
 ### Additional Tables

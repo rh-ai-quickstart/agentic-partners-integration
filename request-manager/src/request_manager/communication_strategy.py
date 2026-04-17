@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import HTTPException, status
 from shared_models import SessionResponse, configure_logging
+from shared_models.audit import AuditService
 from shared_models.identity import make_spiffe_id
 from shared_models.models import NormalizedRequest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -502,6 +503,19 @@ class DirectHTTPStrategy(CommunicationStrategy):
                         reason=opa_decision.reason,
                         session_id=normalized_request.session_id,
                     )
+                    await AuditService.emit(
+                        event_type="authz.deny",
+                        actor=user_email,
+                        action="route_to_agent",
+                        resource=routing_decision,
+                        outcome="failure",
+                        reason=opa_decision.reason,
+                        metadata={
+                            "departments": departments,
+                            "session_id": normalized_request.session_id,
+                        },
+                        service="request-manager",
+                    )
                     agent_display = routing_decision.replace("-", " ").title()
                     dept_display = ", ".join(departments) if departments else "none"
                     return {
@@ -529,6 +543,19 @@ class DirectHTTPStrategy(CommunicationStrategy):
                     to_agent=routing_decision,
                     effective_departments=opa_decision.effective_departments,
                     session_id=normalized_request.session_id,
+                )
+                await AuditService.emit(
+                    event_type="authz.allow",
+                    actor=user_email,
+                    action="route_to_agent",
+                    resource=routing_decision,
+                    outcome="success",
+                    metadata={
+                        "departments": departments,
+                        "effective_departments": opa_decision.effective_departments,
+                        "session_id": normalized_request.session_id,
+                    },
+                    service="request-manager",
                 )
 
                 # Update transfer context with SCOPE REDUCTION:

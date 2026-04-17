@@ -15,6 +15,7 @@ import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from shared_models.aaa_service import AAAService
+from shared_models.audit import AuditService
 from shared_models.database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -66,8 +67,29 @@ def decode_token(authorization: str) -> dict:
     try:
         return _decode_keycloak_jwt(token)
     except jwt.ExpiredSignatureError:
+        # Fire-and-forget: audit runs in its own session, won't block if DB is slow.
+        import asyncio
+        asyncio.ensure_future(AuditService.emit(
+            event_type="auth.token.expired",
+            actor="unknown",
+            action="validate_token",
+            resource="/adk/*",
+            outcome="failure",
+            reason="Token expired",
+            service="request-manager",
+        ))
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.PyJWTError as e:
+        import asyncio
+        asyncio.ensure_future(AuditService.emit(
+            event_type="auth.token.invalid",
+            actor="unknown",
+            action="validate_token",
+            resource="/adk/*",
+            outcome="failure",
+            reason=str(e),
+            service="request-manager",
+        ))
         raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
 
 
@@ -154,6 +176,15 @@ async def login(
             detail = err.get("error_description", detail)
         except Exception:
             pass
+        await AuditService.emit(
+            event_type="auth.login.failure",
+            actor=request.email,
+            action="login",
+            resource="/auth/login",
+            outcome="failure",
+            reason=detail,
+            service="request-manager",
+        )
         raise HTTPException(status_code=401, detail=detail)
 
     token_data = resp.json()
@@ -175,6 +206,16 @@ async def login(
     role = user.role.value if user.role else "user"
 
     logger.info("Login successful", user=email, departments=departments)
+
+    await AuditService.emit(
+        event_type="auth.login.success",
+        actor=email,
+        action="login",
+        resource="/auth/login",
+        outcome="success",
+        metadata={"departments": departments, "role": role},
+        service="request-manager",
+    )
 
     return LoginResponse(
         token=access_token,

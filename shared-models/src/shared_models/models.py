@@ -37,6 +37,7 @@ __all__ = [
     "UserIntegrationMapping",
     "AgentResponse",
     "NormalizedRequest",
+    "AuditEvent",
     "ErrorResponse",
 ]
 
@@ -357,6 +358,42 @@ class NormalizedRequest(BaseModel):
         """Pydantic config."""
 
         use_enum_values = True
+
+
+class AuditEvent(Base):  # type: ignore[misc]
+    """Append-only SOC 2 audit log (CC7.1, CC7.2).
+
+    Captures authentication, authorization, and data-access events.
+    This table should never be UPDATEd or DELETEd in normal operation.
+    """
+
+    __tablename__ = "audit_events"
+
+    id = Column(Integer, primary_key=True)
+    event_id = Column(String(36), unique=True, nullable=False, index=True)
+
+    # What happened
+    event_type = Column(String(100), nullable=False, index=True)
+    action = Column(String(255), nullable=False)
+    outcome = Column(String(20), nullable=False, default="success")
+    reason = Column(String(1000), nullable=False, default="")
+
+    # Who and what
+    actor = Column(String(255), nullable=False, index=True)
+    resource = Column(String(255), nullable=False, default="")
+
+    # Context
+    metadata_ = Column("metadata", JSON, nullable=False, default=dict)
+    source_ip = Column(String(45), nullable=False, default="")
+    service = Column(String(100), nullable=False, default="")
+
+    # Timestamp (append-only — no updated_at)
+    created_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
+    )
 
 
 class ErrorResponse(BaseModel):

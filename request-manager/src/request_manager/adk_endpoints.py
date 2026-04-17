@@ -14,6 +14,8 @@ from shared_models.database import get_db
 from shared_models.models import IntegrationType
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared_models.audit import AuditService
+
 from .aaa_middleware import AAAMiddleware
 from .auth_endpoints import decode_token
 from .communication_strategy import UnifiedRequestProcessor, get_communication_strategy
@@ -79,6 +81,19 @@ async def adk_chat(
         # (EnhancedAgentClient) can propagate the JWT to agent-service calls.
         CredentialService.set_token(auth_header)
         CredentialService.set_user_id(user_email)
+
+        # Audit: data access event
+        source_ip = http_request.client.host if http_request.client else ""
+        await AuditService.emit(
+            event_type="data.chat.request",
+            actor=user_email,
+            action="send_message",
+            resource="/adk/chat",
+            outcome="success",
+            metadata={"session_id": request.session_id, "message_length": len(request.message)},
+            source_ip=source_ip,
+            service="request-manager",
+        )
 
         logger.info(
             "ADK chat request",
@@ -241,6 +256,17 @@ async def adk_audit_log(
 
         user_role = user.role.value if user.role else "user"
         is_admin = user_role == "admin"
+
+        # Audit: audit log access event
+        await AuditService.emit(
+            event_type="data.audit.access",
+            actor=user_email,
+            action="view_audit_log",
+            resource="/adk/audit",
+            outcome="success",
+            metadata={"role": user_role, "is_admin": is_admin, "limit": limit},
+            service="request-manager",
+        )
 
         # Build query: join request_logs with request_sessions to get user_id
         stmt = (

@@ -12,6 +12,7 @@ from shared_models import (
     get_db_session_dependency,
     simple_health_check,
 )
+from shared_models.audit import AuditService
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import __version__
@@ -139,6 +140,16 @@ async def invoke_agent(
                 agent_name=agent_name,
                 session_id=request.session_id,
             )
+            await AuditService.emit(
+                event_type="authz.no_identity",
+                actor="unknown",
+                action="invoke_agent",
+                resource=agent_name,
+                outcome="failure",
+                reason="No caller identity provided",
+                metadata={"session_id": request.session_id, "user_id": request.user_id},
+                service="agent-service",
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=(
@@ -181,6 +192,20 @@ async def invoke_agent(
                     delegation_user=delegation_user,
                     reason=opa_decision.reason,
                 )
+                await AuditService.emit(
+                    event_type="authz.deny",
+                    actor=delegation_user,
+                    action="invoke_agent",
+                    resource=agent_name,
+                    outcome="failure",
+                    reason=opa_decision.reason,
+                    metadata={
+                        "caller": identity.spiffe_id,
+                        "departments": delegation_departments,
+                        "layer": "defense-in-depth",
+                    },
+                    service="agent-service",
+                )
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail=f"Authorization denied: {opa_decision.reason}",
@@ -191,6 +216,19 @@ async def invoke_agent(
                 agent_name=agent_name,
                 caller=identity.spiffe_id,
                 effective_departments=opa_decision.effective_departments,
+            )
+            await AuditService.emit(
+                event_type="authz.allow",
+                actor=delegation_user,
+                action="invoke_agent",
+                resource=agent_name,
+                outcome="success",
+                metadata={
+                    "caller": identity.spiffe_id,
+                    "effective_departments": opa_decision.effective_departments,
+                    "layer": "defense-in-depth",
+                },
+                service="agent-service",
             )
 
     try:
