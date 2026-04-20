@@ -71,9 +71,9 @@ User authentication is handled by **Keycloak** (OIDC Identity Provider). A pre-c
 
 | User | Password | Keycloak Roles (departments) |
 |------|----------|------------------------------|
-| carlos@example.com | carlos123 | engineering, software |
+| carlos@example.com | carlos123 | engineering, software, kubernetes |
 | luis@example.com | luis123 | engineering, network |
-| sharon@example.com | sharon123 | engineering, software, network, admin |
+| sharon@example.com | sharon123 | engineering, software, network, kubernetes, admin |
 | josh@example.com | josh123 | _(none)_ |
 
 Departments are extracted from Keycloak's `realm_access.roles` claim in the JWT. The Keycloak realm export is at `keycloak/realm-partner.json`.
@@ -93,27 +93,28 @@ When a user delegates access to an agent, the agent can only operate within depa
 | File | Purpose |
 |------|---------|
 | `user_permissions.rego` | Maps users to departments (fallback for local dev) |
-| `agent_permissions.rego` | Maps agents to department capabilities |
+| `agent_permissions.rego` | **Auto-generated** — maps agents to department capabilities |
 | `delegation.rego` | Main authorization rules + permission intersection logic |
 
-**Agent capabilities** (from `agent_permissions.rego`):
+**Agent capabilities** are defined in each agent's YAML config (`agent-service/config/agents/*.yaml`) via the `departments` field and synced to OPA by `scripts/sync_agent_capabilities.py` (run via `make sync-agents` or automatically during `make build`). Example:
 
-| Agent | Capabilities |
-|-------|-------------|
-| routing-agent | software, network, admin |
-| software-support | software |
-| network-support | network |
+| Agent | Capabilities | Source |
+|-------|-------------|--------|
+| routing-agent | _(union of all specialist departments + admin)_ | auto-derived |
+| software-support | software | `software-support-agent.yaml` |
+| network-support | network | `network-support-agent.yaml` |
+| kubernetes-support | kubernetes | `kubernetes-support-agent.yaml` |
 
 **User departments** (from DB or `user_permissions.rego` fallback):
 
 | User | Departments | Can Access |
 |------|-------------|------------|
-| carlos@example.com | engineering, software | software-support |
+| carlos@example.com | engineering, software, kubernetes | software-support, kubernetes-support |
 | luis@example.com | engineering, network | network-support |
-| sharon@example.com | engineering, software, network, admin | all agents |
+| sharon@example.com | engineering, software, network, kubernetes, admin | all agents |
 | josh@example.com | _(none)_ | no agents |
 
-**Example intersection**: Carlos (departments: `[engineering, software]`) + software-support (capabilities: `[software]`) = effective: `[software]` -- access granted. Carlos + network-support (capabilities: `[network]`) = effective: `[]` -- access denied.
+**Example intersection**: Carlos (departments: `[engineering, software, kubernetes]`) + software-support (capabilities: `[software]`) = effective: `[software]` -- access granted. Carlos + kubernetes-support (capabilities: `[kubernetes]`) = effective: `[kubernetes]` -- access granted. Carlos + network-support (capabilities: `[network]`) = effective: `[]` -- access denied.
 
 **Authorization enforcement** happens at four layers (defense-in-depth):
 
@@ -121,7 +122,7 @@ When a user delegates access to an agent, the agent can only operate within depa
 |-------|-------|-----|
 | OPA hard gate (primary) | Request Manager | `communication_strategy.py` queries OPA before every specialist A2A call; blocks unauthorized routing regardless of LLM output |
 | OPA hard gate (defense-in-depth) | Agent Service | `main.py` verifies caller identity via SPIFFE and re-checks OPA when delegation headers are present (`X-Delegation-User`); blocks direct calls from unauthorized agents or services |
-| LLM prompt | Agent Service | Routing-agent's system prompt lists only agents matching the user's departments; LLM won't route to others |
+| LLM prompt | Agent Service | Routing-agent's system prompt is built dynamically from agent YAML configs — lists only agents whose `departments` overlap with the user's; LLM won't route to others |
 | UI filtering | Chat UI | The UI filters available agents based on user departments |
 
 **Scope reduction:** After the OPA intersection check, the specialist agent receives only the **effective departments** (the intersection result), not the user's full department list. This ensures agents operate within the narrowest possible authority.

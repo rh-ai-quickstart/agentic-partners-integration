@@ -17,10 +17,7 @@ class AAAMiddleware:
     """Middleware for building user authorization context."""
 
     @staticmethod
-    async def get_user_context(
-        db: AsyncSession,
-        user_email: str
-    ) -> Dict[str, Any]:
+    async def get_user_context(db: AsyncSession, user_email: str) -> Dict[str, Any]:
         """
         Get user context with departments for OPA-based authorization.
 
@@ -39,7 +36,7 @@ class AAAMiddleware:
                     "email": user_email,
                     "role": "user",
                     "status": "unknown",
-                    "departments": []
+                    "departments": [],
                 }
 
             # Get departments from DB or OPA fallback
@@ -54,18 +51,14 @@ class AAAMiddleware:
                 "department": user.department,
                 "departments": departments,
                 "spiffe_id": user.spiffe_id,
-                "privileges": user.privileges or {}
+                "privileges": user.privileges or {},
             }
 
         except Exception as e:
-            logger.error(
-                "Failed to get user context",
-                user=user_email,
-                error=str(e)
-            )
+            logger.error("Failed to get user context", user=user_email, error=str(e))
             return {
                 "email": user_email,
                 "role": "user",
                 "status": "error",
-                "departments": []
+                "departments": [],
             }

@@ -29,6 +29,10 @@
         "description": "Network department"
       },
       {
+        "name": "kubernetes",
+        "description": "Kubernetes department"
+      },
+      {
         "name": "admin",
         "description": "Administration department"
       }
@@ -51,6 +55,11 @@
       "realmRoles": ["network"]
     },
     {
+      "name": "kubernetes",
+      "path": "/kubernetes",
+      "realmRoles": ["kubernetes"]
+    },
+    {
       "name": "admin",
       "path": "/admin",
       "realmRoles": ["admin"]
@@ -71,8 +80,8 @@
           "temporary": false
         }
       ],
-      "realmRoles": ["engineering", "software"],
-      "groups": ["/engineering", "/software"]
+      "realmRoles": ["engineering", "software", "kubernetes"],
+      "groups": ["/engineering", "/software", "/kubernetes"]
     },
     {
       "username": "luis",
@@ -105,8 +114,8 @@
           "temporary": false
         }
       ],
-      "realmRoles": ["engineering", "software", "network", "admin"],
-      "groups": ["/engineering", "/software", "/network", "/admin"]
+      "realmRoles": ["engineering", "software", "network", "kubernetes", "admin"],
+      "groups": ["/engineering", "/software", "/network", "/kubernetes", "/admin"]
     },
     {
       "username": "josh",

@@ -1,0 +1,49 @@
+# Containerfile for kubernetes-partner-agent
+# Standalone partner agent — no shared-models dependency
+
+ARG UV_VERSION=0.8.9
+
+# Builder stage
+FROM registry.access.redhat.com/ubi9/python-312:latest as builder
+
+USER root
+ARG UV_VERSION
+RUN pip3 install --no-cache-dir uv==${UV_VERSION}
+
+WORKDIR /app/kubernetes-partner-agent
+
+# Copy dependency files
+COPY kubernetes-partner-agent/pyproject.toml kubernetes-partner-agent/uv.lock ./
+
+# Install dependencies
+RUN uv sync --frozen --no-cache --no-dev
+
+# Production stage
+FROM registry.access.redhat.com/ubi9/python-312-minimal:latest
+
+WORKDIR /app
+
+# Copy virtual environment
+COPY --from=builder /app/kubernetes-partner-agent/.venv /app/.venv
+
+# Copy application source and config
+COPY kubernetes-partner-agent/src/ ./src/
+COPY kubernetes-partner-agent/config/ ./config/
+
+# Set environment variables
+ENV VIRTUAL_ENV=/app/.venv
+ENV PATH="/usr/bin:${VIRTUAL_ENV}/bin:$PATH"
+ENV PYTHONPATH="/usr/lib64/python3.12:${VIRTUAL_ENV}/lib/python3.12/site-packages:/app/src:$PYTHONPATH"
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Ensure arbitrary UID in group 0 can access all files (OpenShift compatibility)
+USER 0
+RUN chgrp -R 0 /app && chmod -R g=u /app
+
+# Run as non-root
+USER 1001
+
+EXPOSE 8080
+
+CMD python3 -m uvicorn kubernetes_agent.main:app --host 0.0.0.0 --port 8080

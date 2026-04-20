@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from request_manager.database_utils import (
     cleanup_old_sessions,
     create_request_log_entry_unified,
@@ -22,7 +21,8 @@ class TestCreateRequestLogEntryUnified:
     async def test_creates_log_with_db(self, mock_rl_cls, mock_log, mock_db_session):
         """When db is provided, adds the log to that session and commits."""
         with patch(
-            "request_manager.communication_strategy.get_pod_name", return_value="pod-abc"
+            "request_manager.communication_strategy.get_pod_name",
+            return_value="pod-abc",
         ):
             await create_request_log_entry_unified(
                 request_id="req-1",
@@ -39,7 +39,9 @@ class TestCreateRequestLogEntryUnified:
 
     @patch("shared_models.configure_logging")
     @patch("shared_models.models.RequestLog")
-    async def test_creates_log_without_pod_name(self, mock_rl_cls, mock_log, mock_db_session):
+    async def test_creates_log_without_pod_name(
+        self, mock_rl_cls, mock_log, mock_db_session
+    ):
         """When set_pod_name=False, pod_name should not be fetched."""
         await create_request_log_entry_unified(
             request_id="req-2",
@@ -56,7 +58,9 @@ class TestCreateRequestLogEntryUnified:
 
     @patch("shared_models.configure_logging")
     @patch("shared_models.models.RequestLog", side_effect=Exception("boom"))
-    async def test_does_not_raise_on_failure(self, mock_rl_cls, mock_log, mock_db_session):
+    async def test_does_not_raise_on_failure(
+        self, mock_rl_cls, mock_log, mock_db_session
+    ):
         """Failure to create a log entry should not propagate."""
         # Should NOT raise
         await create_request_log_entry_unified(
@@ -74,7 +78,8 @@ class TestCreateRequestLogEntryUnified:
     async def test_creates_log_without_db(self, mock_rl_cls, mock_log):
         """When db is None, obtains a session from the database manager."""
         # Set up the async context manager chain
-        inner_session = AsyncMock()
+        inner_session = MagicMock()
+        inner_session.commit = AsyncMock()
 
         mock_ctx = AsyncMock()
         mock_ctx.__aenter__ = AsyncMock(return_value=inner_session)
@@ -83,10 +88,11 @@ class TestCreateRequestLogEntryUnified:
         mock_db_mgr = MagicMock()
         mock_db_mgr.get_session.return_value = mock_ctx
 
-        with patch(
-            "shared_models.get_database_manager", return_value=mock_db_mgr
-        ), patch(
-            "request_manager.communication_strategy.get_pod_name", return_value=None
+        with (
+            patch("shared_models.get_database_manager", return_value=mock_db_mgr),
+            patch(
+                "request_manager.communication_strategy.get_pod_name", return_value=None
+            ),
         ):
             await create_request_log_entry_unified(
                 request_id="req-4",
@@ -172,7 +178,9 @@ class TestCleanupOldSessions:
         result_mock.scalars.return_value = scalars_mock
         mock_db_session.execute = AsyncMock(return_value=result_mock)
 
-        count = await cleanup_old_sessions(mock_db_session, "user-1", integration_type="WEB")
+        count = await cleanup_old_sessions(
+            mock_db_session, "user-1", integration_type="WEB"
+        )
 
         assert count == 1
 

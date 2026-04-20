@@ -35,13 +35,11 @@ def upgrade() -> None:
     # This allows multiple users to have __NOT_FOUND__ entries while still
     # preventing duplicate real integration user IDs
     # PostgreSQL requires using a unique index for partial unique constraints
-    op.execute(
-        """
+    op.execute("""
         CREATE UNIQUE INDEX uq_integration_user_id_type
         ON user_integration_mappings (integration_user_id, integration_type)
         WHERE integration_user_id != '__NOT_FOUND__';
-        """
-    )
+        """)
 
 
 def downgrade() -> None:

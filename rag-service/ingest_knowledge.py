@@ -24,7 +24,9 @@ logger = structlog.get_logger()
 
 # Configuration
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:pass@postgres:5432/partner_agent")
+DATABASE_URL = os.getenv(
+    "DATABASE_URL", "postgresql+asyncpg://user:pass@postgres:5432/partner_agent"
+)
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "models/gemini-embedding-001")
 EMBEDDING_DIM = 3072  # Google Gemini embedding-001 dimension (updated from 768)
 
@@ -34,6 +36,7 @@ Base = declarative_base()
 
 class KnowledgeDocument(Base):
     """Model for knowledge documents stored in PostgreSQL."""
+
     __tablename__ = "knowledge_documents"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -42,8 +45,15 @@ class KnowledgeDocument(Base):
     content = Column(Text, nullable=False)
     metadata_ = Column("metadata", JSONB, nullable=True)
     embedding = Column(Vector(EMBEDDING_DIM), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
 
 
 def generate_embedding(text: str, genai_client: genai.Client) -> np.ndarray:
@@ -59,8 +69,7 @@ def generate_embedding(text: str, genai_client: genai.Client) -> np.ndarray:
     """
     try:
         response = genai_client.models.embed_content(
-            model=EMBEDDING_MODEL,
-            contents=text
+            model=EMBEDDING_MODEL, contents=text
         )
         if not response.embeddings or not response.embeddings[0].values:
             raise ValueError(f"Empty embedding response for text: {text[:50]}...")
@@ -90,16 +99,18 @@ def load_from_json_files(data_dir: str = "data") -> Dict[str, List[Dict[str, Any
     software_file = data_path / "software_support_tickets.json"
     if software_file.exists():
         logger.info("Loading software support tickets", path=str(software_file))
-        with open(software_file, 'r') as f:
+        with open(software_file, "r") as f:
             software_tickets = json.load(f)
             collections["software_support"] = software_tickets
-            logger.info("Loaded software support documents", count=len(software_tickets))
+            logger.info(
+                "Loaded software support documents", count=len(software_tickets)
+            )
 
     # Load network support tickets
     network_file = data_path / "network_support_tickets.json"
     if network_file.exists():
         logger.info("Loading network support tickets", path=str(network_file))
-        with open(network_file, 'r') as f:
+        with open(network_file, "r") as f:
             network_tickets = json.load(f)
             collections["network_support"] = network_tickets
             logger.info("Loaded network support documents", count=len(network_tickets))
@@ -122,7 +133,7 @@ async def ingest_collection(
     collection_name: str,
     documents: List[Dict[str, Any]],
     session: AsyncSession,
-    genai_client: genai.Client
+    genai_client: genai.Client,
 ):
     """
     Ingest documents into PostgreSQL/pgvector.
@@ -137,7 +148,9 @@ async def ingest_collection(
         logger.info("Ingesting collection", collection=collection_name)
 
         # Clear existing data (for fresh ingestion)
-        stmt = delete(KnowledgeDocument).where(KnowledgeDocument.knowledge_base == collection_name)
+        stmt = delete(KnowledgeDocument).where(
+            KnowledgeDocument.knowledge_base == collection_name
+        )
         result = await session.execute(stmt)
         await session.commit()
         logger.info("Cleared existing documents", count=result.rowcount)
@@ -154,29 +167,45 @@ async def ingest_collection(
                 document_id=doc["id"],
                 content=content,
                 metadata=doc["metadata"],
-                embedding=embedding.tolist()  # Convert numpy array to list for pgvector
+                embedding=embedding.tolist(),  # Convert numpy array to list for pgvector
             )
             session.add(knowledge_doc)
 
             if (i + 1) % 10 == 0:
-                logger.info("Ingesting documents", collection=collection_name, progress=f"{i+1}/{len(documents)}")
+                logger.info(
+                    "Ingesting documents",
+                    collection=collection_name,
+                    progress=f"{i+1}/{len(documents)}",
+                )
 
         await session.commit()
 
         # Verify ingestion
-        stmt = select(func.count()).select_from(KnowledgeDocument).where(KnowledgeDocument.knowledge_base == collection_name)
+        stmt = (
+            select(func.count())
+            .select_from(KnowledgeDocument)
+            .where(KnowledgeDocument.knowledge_base == collection_name)
+        )
         result = await session.execute(stmt)
         final_count = result.scalar()
-        logger.info("Ingestion complete", collection=collection_name, document_count=final_count)
+        logger.info(
+            "Ingestion complete", collection=collection_name, document_count=final_count
+        )
 
         # Show sample
-        stmt = select(KnowledgeDocument.document_id).where(KnowledgeDocument.knowledge_base == collection_name).limit(3)
+        stmt = (
+            select(KnowledgeDocument.document_id)
+            .where(KnowledgeDocument.knowledge_base == collection_name)
+            .limit(3)
+        )
         result = await session.execute(stmt)
         sample_ids = [row[0] for row in result.all()]
         logger.info("Sample IDs", ids=sample_ids)
 
     except Exception as e:
-        logger.error("Failed to ingest collection", collection=collection_name, error=str(e))
+        logger.error(
+            "Failed to ingest collection", collection=collection_name, error=str(e)
+        )
         await session.rollback()
         raise
 
@@ -195,17 +224,11 @@ async def main_async():
     logger.info("Google GenAI client initialized", model=EMBEDDING_MODEL)
 
     # Initialize database connection
-    logger.info("Connecting to PostgreSQL", database_url=DATABASE_URL.split('@')[-1])
-    engine = create_async_engine(
-        DATABASE_URL,
-        echo=False,
-        pool_pre_ping=True
-    )
+    logger.info("Connecting to PostgreSQL", database_url=DATABASE_URL.split("@")[-1])
+    engine = create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
 
     async_session_maker = async_sessionmaker(
-        engine,
-        class_=AsyncSession,
-        expire_on_commit=False
+        engine, class_=AsyncSession, expire_on_commit=False
     )
 
     # Load data from JSON files
@@ -219,14 +242,14 @@ async def main_async():
                 collection_name=collection_name,
                 documents=documents,
                 session=session,
-                genai_client=genai_client
+                genai_client=genai_client,
             )
 
     # Show final summary
     async with async_session_maker() as session:
         stmt = select(
             KnowledgeDocument.knowledge_base,
-            func.count(KnowledgeDocument.id).label("count")
+            func.count(KnowledgeDocument.id).label("count"),
         ).group_by(KnowledgeDocument.knowledge_base)
         result = await session.execute(stmt)
         summary = {kb: count for kb, count in result.all()}

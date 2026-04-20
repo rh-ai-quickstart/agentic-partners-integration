@@ -9,11 +9,11 @@ Revises: 007
 Create Date: 2026-04-13 12:00:00.000000
 
 """
+
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "008"
@@ -37,8 +37,7 @@ def upgrade() -> None:
     # Migrate allowed_agents -> departments
     # Map agent names to department tags
     conn = op.get_bind()
-    conn.execute(
-        sa.text("""
+    conn.execute(sa.text("""
             UPDATE users SET departments =
                 CASE
                     WHEN allowed_agents::text = '["*"]'
@@ -52,8 +51,7 @@ def upgrade() -> None:
                         THEN '["engineering", "network"]'::jsonb
                     ELSE '[]'::jsonb
                 END
-        """)
-    )
+        """))
 
     # Drop old columns
     op.drop_column("users", "password_hash")
@@ -73,8 +71,7 @@ def downgrade() -> None:
 
     # Reverse migrate departments -> allowed_agents
     conn = op.get_bind()
-    conn.execute(
-        sa.text("""
+    conn.execute(sa.text("""
             UPDATE users SET allowed_agents =
                 CASE
                     WHEN departments::text LIKE '%admin%'
@@ -88,8 +85,7 @@ def downgrade() -> None:
                         THEN '["network-support"]'::jsonb
                     ELSE '[]'::jsonb
                 END
-        """)
-    )
+        """))
 
     op.drop_column("users", "departments")
     op.drop_column("users", "spiffe_id")

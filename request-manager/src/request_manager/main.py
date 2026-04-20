@@ -163,12 +163,16 @@ async def credential_context_middleware(request: Request, call_next):
             CredentialService.set_token(auth_header)
 
         # Extract user_id if available from query params or headers
-        user_id = request.headers.get("X-User-ID") or request.query_params.get("user_id")
+        user_id = request.headers.get("X-User-ID") or request.query_params.get(
+            "user_id"
+        )
         if user_id:
             CredentialService.set_user_id(user_id)
 
         # Extract session_id if available
-        session_id = request.headers.get("X-Session-ID") or request.query_params.get("session_id")
+        session_id = request.headers.get("X-Session-ID") or request.query_params.get(
+            "session_id"
+        )
         if session_id:
             CredentialService.set_session_id(session_id)
 
@@ -254,4 +258,3 @@ if __name__ == "__main__":
         reload=os.getenv("RELOAD", "false").lower() == "true",
         log_level=os.getenv("LOG_LEVEL", "INFO").lower(),
     )
-

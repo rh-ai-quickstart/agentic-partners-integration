@@ -9,9 +9,8 @@ import os
 from typing import Any, Dict, Optional
 
 import yaml
-from shared_models import configure_logging
-
 from agent_service.llm import LLMClientFactory, LLMMessage
+from shared_models import configure_logging
 
 from .config_utils import load_config_from_path, resolve_agent_service_path
 
@@ -187,16 +186,20 @@ class Agent:
             for msg in messages:
                 if isinstance(msg, dict):
                     llm_messages.append(
-                        LLMMessage(role=msg.get("role", "user"), content=msg.get("content", ""))
+                        LLMMessage(
+                            role=msg.get("role", "user"), content=msg.get("content", "")
+                        )
                     )
                 else:
                     # Handle other message formats
-                    llm_messages.append(
-                        LLMMessage(role="user", content=str(msg))
-                    )
+                    llm_messages.append(LLMMessage(role="user", content=str(msg)))
 
             # Get temperature from config or parameter
-            temp = temperature if temperature is not None else self.default_response_config.get("temperature", 0.7)
+            temp = (
+                temperature
+                if temperature is not None
+                else self.default_response_config.get("temperature", 0.7)
+            )
 
             logger.debug(
                 "Calling LLM",
@@ -262,17 +265,24 @@ class Agent:
 
 
 class AgentManager:
-    """Manages multiple agent instances for the application."""
+    """Manages multiple agent instances for the application.
+
+    Loads agent definitions from YAML config files in config/agents/.
+    Each YAML file is the single source of truth for that agent's:
+    - LLM configuration (backend, model, system message)
+    - Departments (authorization scope)
+    - Description (used by routing-agent for delegation decisions)
+    - A2A card metadata (skills, tags, examples)
+    """
 
     def __init__(self) -> None:
         self.agents_dict: dict[str, Agent] = {}
+        self._agent_configs: dict[str, dict[str, Any]] = {}
 
         # Load the configuration using centralized path resolution
         try:
             config_path = resolve_agent_service_path("config")
-            logger.info(
-                "AgentManager found config", config_path=str(config_path)
-            )
+            logger.info("AgentManager found config", config_path=str(config_path))
         except FileNotFoundError as e:
             logger.error(
                 "AgentManager config not found",
@@ -298,6 +308,7 @@ class AgentManager:
                 self.agents_dict[agent_name] = Agent(
                     agent_name, agent_config, global_config
                 )
+                self._agent_configs[agent_name] = agent_config
 
     def get_agent(self, agent_id: str) -> Agent:
         """Get an agent by ID, returning default if not found."""
@@ -312,3 +323,88 @@ class AgentManager:
         raise ValueError(
             f"No agent found with ID '{agent_id}' and no agents are loaded"
         )
+
+    def get_agent_config(self, agent_name: str) -> dict[str, Any]:
+        """Get the raw YAML config for an agent."""
+        return self._agent_configs.get(agent_name, {})
+
+    def get_specialist_agents(self) -> dict[str, dict[str, Any]]:
+        """Get configs for all specialist agents (excludes routing-agent).
+
+        Returns:
+            Dict mapping agent name to its YAML config, for agents that
+            have a 'departments' field (i.e. specialist agents).
+        """
+        return {
+            name: config
+            for name, config in self._agent_configs.items()
+            if name != "routing-agent" and config.get("departments")
+        }
+
+    def get_agent_dept_map(self) -> dict[str, list[str]]:
+        """Get department mapping for all specialist agents.
+
+        Returns:
+            Dict mapping agent name to list of departments, e.g.
+            {"software-support": ["software"], "network-support": ["network"]}
+        """
+        return {
+            name: config.get("departments", [])
+            for name, config in self.get_specialist_agents().items()
+        }
+
+    def get_agent_descriptions(self) -> dict[str, str]:
+        """Get routing descriptions for all specialist agents.
+
+        Returns:
+            Dict mapping agent name to description string, e.g.
+            {"software-support": "Handles software issues, bugs, ..."}
+        """
+        return {
+            name: config.get("description", "")
+            for name, config in self.get_specialist_agents().items()
+        }
+
+    def get_agent_endpoints(self) -> dict[str, str]:
+        """Get invoke endpoint URLs for all specialist agents.
+
+        Returns:
+            Dict mapping agent name to its full invoke URL.
+            Agents with an explicit ``endpoint`` field in their YAML config
+            use that URL; others default to the local agent-service URL
+            constructed from the ``AGENT_SERVICE_URL`` env var (or
+            ``http://localhost:8080``).
+        """
+        default_base = os.getenv("AGENT_SERVICE_URL", "http://localhost:8080").rstrip(
+            "/"
+        )
+
+        endpoints: dict[str, str] = {}
+        for name, config in self.get_specialist_agents().items():
+            explicit = config.get("endpoint")
+            if explicit:
+                endpoints[name] = explicit.rstrip("/")
+            else:
+                endpoints[name] = f"{default_base}/api/v1/agents/{name}/invoke"
+        return endpoints
+
+    def get_agent_capabilities_for_opa(self) -> dict[str, list[str]]:
+        """Get agent capabilities dict suitable for OPA policy.
+
+        Returns the same structure as agent_permissions.rego's
+        agent_capabilities map, including routing-agent with the
+        union of all specialist departments plus 'admin'.
+        """
+        specialists = self.get_agent_dept_map()
+
+        # routing-agent can route to any department
+        all_departments = set()
+        for depts in specialists.values():
+            all_departments.update(depts)
+        all_departments.add("admin")
+
+        capabilities: dict[str, list[str]] = {
+            "routing-agent": sorted(all_departments),
+        }
+        capabilities.update(specialists)
+        return capabilities

@@ -203,18 +203,20 @@ class TestSessionCleanupTask:
             if call_count >= 2:
                 raise asyncio.CancelledError()
 
-        with patch("asyncio.sleep", side_effect=mock_sleep), \
-             patch("shared_models.get_database_manager", return_value=mock_db_manager), \
-             patch(
-                 "request_manager.database_utils.expire_old_sessions",
-                 new_callable=AsyncMock,
-                 return_value=3,
-             ) as mock_expire, \
-             patch(
-                 "request_manager.database_utils.delete_inactive_sessions",
-                 new_callable=AsyncMock,
-                 return_value=2,
-             ) as mock_delete:
+        with (
+            patch("asyncio.sleep", side_effect=mock_sleep),
+            patch("shared_models.get_database_manager", return_value=mock_db_manager),
+            patch(
+                "request_manager.database_utils.expire_old_sessions",
+                new_callable=AsyncMock,
+                return_value=3,
+            ) as mock_expire,
+            patch(
+                "request_manager.database_utils.delete_inactive_sessions",
+                new_callable=AsyncMock,
+                return_value=2,
+            ) as mock_delete,
+        ):
             await _session_cleanup_task()
 
         mock_expire.assert_awaited_once()
@@ -241,11 +243,13 @@ class TestSessionCleanupTask:
                 # Third call: cancel to stop the loop
                 raise asyncio.CancelledError()
 
-        with patch("asyncio.sleep", side_effect=mock_sleep), \
-             patch(
-                 "shared_models.get_database_manager",
-                 side_effect=RuntimeError("DB connection failed"),
-             ):
+        with (
+            patch("asyncio.sleep", side_effect=mock_sleep),
+            patch(
+                "shared_models.get_database_manager",
+                side_effect=RuntimeError("DB connection failed"),
+            ),
+        ):
             await _session_cleanup_task()
 
         # Verify we got through the error path and the 60s retry sleep
@@ -301,12 +305,14 @@ class TestRequestManagerStartup:
         import request_manager.main as main_module
         from request_manager.main import _request_manager_startup
 
-        original_processor = getattr(main_module, 'unified_processor', None)
+        original_processor = getattr(main_module, "unified_processor", None)
 
-        with patch(
-            "request_manager.main.get_communication_strategy",
-        ) as mock_get_strategy, \
-             patch("asyncio.create_task") as mock_create_task:
+        with (
+            patch(
+                "request_manager.main.get_communication_strategy",
+            ) as mock_get_strategy,
+            patch("asyncio.create_task") as mock_create_task,
+        ):
 
             mock_strategy = MagicMock()
             mock_get_strategy.return_value = mock_strategy
@@ -338,7 +344,6 @@ class TestExceptionHandlersExtended:
         """HTTPException handler returns ErrorResponse format (lines 214-223)."""
         # Add a temporary route that raises HTTPException
         from fastapi import HTTPException as FastAPIHTTPException
-
         from request_manager.main import app
 
         @app.get("/test-http-error")
@@ -354,7 +359,9 @@ class TestExceptionHandlersExtended:
         assert data["error_code"] == "HTTP_403"
 
         # Clean up the temporary route
-        app.routes[:] = [r for r in app.routes if getattr(r, 'path', '') != '/test-http-error']
+        app.routes[:] = [
+            r for r in app.routes if getattr(r, "path", "") != "/test-http-error"
+        ]
 
     def test_general_exception_returns_500(self):
         """General exception handler returns 500 with structured error (lines 226-237)."""
@@ -373,7 +380,9 @@ class TestExceptionHandlersExtended:
         assert data["error_code"] == "INTERNAL_ERROR"
 
         # Clean up the temporary route
-        app.routes[:] = [r for r in app.routes if getattr(r, 'path', '') != '/test-general-error']
+        app.routes[:] = [
+            r for r in app.routes if getattr(r, "path", "") != "/test-general-error"
+        ]
 
 
 # ---------------------------------------------------------------------------

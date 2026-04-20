@@ -1,4 +1,6 @@
 name: "network-support"
+description: "Handles network issues, connectivity, VPN, firewall, DNS, router problems"
+departments: ["network"]
 llm_backend: "gemini"  # Options: openai, gemini, ollama
 llm_model: "gemini-2.5-flash"  # Model name for the selected backend
 system_message: |
@@ -29,3 +31,37 @@ sampling_params:
     type: "top_p"
     temperature: 0.7
     top_p: 0.95
+
+a2a:
+  card_name: "Network Support Agent"
+  card_description: |
+    Network support specialist that helps users resolve network issues
+    including VPN connectivity, DNS resolution, firewall configuration,
+    routing problems, and general connectivity failures. Uses a RAG-backed
+    knowledge base of network support tickets to provide grounded
+    troubleshooting with systematic diagnostic approaches.
+  skills:
+    - id: network_diagnostics
+      name: "Network Diagnostics & Troubleshooting"
+      description: |
+        Diagnoses and resolves network connectivity issues including VPN
+        failures, DNS resolution problems, firewall misconfigurations,
+        routing issues, and intermittent connectivity drops. Provides
+        systematic diagnostic commands and step-by-step resolution guides.
+      tags: ["network", "connectivity", "VPN", "DNS", "firewall", "routing"]
+      examples:
+        - "My VPN connection keeps dropping every few minutes"
+        - "DNS resolution is failing for internal domains"
+        - "I can't access the application behind the firewall"
+        - "Network latency is extremely high between two sites"
+        - "How do I troubleshoot a routing loop?"
+    - id: network_configuration
+      name: "Network Configuration"
+      description: |
+        Assists with network configuration tasks including firewall rules,
+        VPN setup, DNS configuration, and network topology analysis.
+      tags: ["configuration", "firewall-rules", "VPN-setup", "DNS-config"]
+      examples:
+        - "How do I configure a site-to-site VPN?"
+        - "What firewall rules do I need to allow HTTPS traffic?"
+        - "How do I set up DNS forwarding?"

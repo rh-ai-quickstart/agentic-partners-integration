@@ -3,7 +3,6 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from shared_models.fastapi_utils import (
     create_health_check_endpoint,
     create_shared_lifespan,
@@ -84,9 +83,7 @@ class TestCreateHealthCheckEndpoint:
         """If HealthChecker itself blows up, endpoint should return unhealthy."""
         mock_db = AsyncMock()
 
-        with patch(
-            "shared_models.fastapi_utils.HealthChecker"
-        ) as mock_checker_cls:
+        with patch("shared_models.fastapi_utils.HealthChecker") as mock_checker_cls:
             mock_checker = MagicMock()
             mock_checker.perform_health_check = AsyncMock(
                 side_effect=RuntimeError("boom")

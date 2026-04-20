@@ -40,7 +40,9 @@ def upgrade() -> None:
         sa.Column("metadata", postgresql.JSONB(), nullable=True),
         sa.Column(
             "embedding",
-            Vector(3072),  # Google Gemini embedding-001 produces 3072-dimensional vectors
+            Vector(
+                3072
+            ),  # Google Gemini embedding-001 produces 3072-dimensional vectors
             nullable=True,
         ),
         sa.Column(

@@ -3,7 +3,6 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from request_manager.aaa_middleware import AAAMiddleware
 
 
@@ -46,11 +45,15 @@ class TestAAAMiddleware:
         assert ctx["privileges"] == {"can_deploy": True}
 
     @patch("request_manager.aaa_middleware.AAAService")
-    async def test_get_user_context_user_not_found(self, mock_aaa_service, mock_db_session):
+    async def test_get_user_context_user_not_found(
+        self, mock_aaa_service, mock_db_session
+    ):
         """When user is not found, return minimal fallback context."""
         mock_aaa_service.get_user_by_email = AsyncMock(return_value=None)
 
-        ctx = await AAAMiddleware.get_user_context(mock_db_session, "unknown@example.com")
+        ctx = await AAAMiddleware.get_user_context(
+            mock_db_session, "unknown@example.com"
+        )
 
         assert ctx["email"] == "unknown@example.com"
         assert ctx["role"] == "user"
@@ -59,7 +62,9 @@ class TestAAAMiddleware:
         assert "user_id" not in ctx
 
     @patch("request_manager.aaa_middleware.AAAService")
-    async def test_get_user_context_handles_exception(self, mock_aaa_service, mock_db_session):
+    async def test_get_user_context_handles_exception(
+        self, mock_aaa_service, mock_db_session
+    ):
         """When an exception occurs, return error fallback context."""
         mock_aaa_service.get_user_by_email = AsyncMock(
             side_effect=RuntimeError("DB connection lost")
@@ -73,7 +78,9 @@ class TestAAAMiddleware:
         assert ctx["departments"] == []
 
     @patch("request_manager.aaa_middleware.AAAService")
-    async def test_get_user_context_user_role_none(self, mock_aaa_service, mock_db_session):
+    async def test_get_user_context_user_role_none(
+        self, mock_aaa_service, mock_db_session
+    ):
         """When user.role is None, default to 'user'."""
         mock_user = MagicMock()
         mock_user.user_id = "uid-456"
@@ -88,7 +95,9 @@ class TestAAAMiddleware:
         mock_aaa_service.get_user_by_email = AsyncMock(return_value=mock_user)
         mock_aaa_service.get_user_departments = AsyncMock(return_value=[])
 
-        ctx = await AAAMiddleware.get_user_context(mock_db_session, "norole@example.com")
+        ctx = await AAAMiddleware.get_user_context(
+            mock_db_session, "norole@example.com"
+        )
 
         assert ctx["role"] == "user"
         # privileges comes from mock_user.privileges; when None, the code
@@ -96,7 +105,9 @@ class TestAAAMiddleware:
         assert ctx["privileges"] is None or ctx["privileges"] == {}
 
     @patch("request_manager.aaa_middleware.AAAService")
-    async def test_get_user_context_departments_exception(self, mock_aaa_service, mock_db_session):
+    async def test_get_user_context_departments_exception(
+        self, mock_aaa_service, mock_db_session
+    ):
         """When get_user_departments raises, the outer except catches it."""
         mock_user = MagicMock()
         mock_user.user_id = "uid-789"
@@ -107,7 +118,9 @@ class TestAAAMiddleware:
             side_effect=RuntimeError("departments query failed")
         )
 
-        ctx = await AAAMiddleware.get_user_context(mock_db_session, "dept-err@example.com")
+        ctx = await AAAMiddleware.get_user_context(
+            mock_db_session, "dept-err@example.com"
+        )
 
         # The outer except block catches and returns error context
         assert ctx["status"] == "error"

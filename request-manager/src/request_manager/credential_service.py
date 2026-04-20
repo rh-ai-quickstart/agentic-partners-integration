@@ -15,9 +15,15 @@ logger = structlog.get_logger()
 
 
 # Context variables for request-scoped storage
-_current_user_id: ContextVar[Optional[str]] = ContextVar('current_user_id', default=None)
-_current_user_token: ContextVar[Optional[str]] = ContextVar('current_user_token', default=None)
-_current_session_id: ContextVar[Optional[str]] = ContextVar('current_session_id', default=None)
+_current_user_id: ContextVar[Optional[str]] = ContextVar(
+    "current_user_id", default=None
+)
+_current_user_token: ContextVar[Optional[str]] = ContextVar(
+    "current_user_token", default=None
+)
+_current_session_id: ContextVar[Optional[str]] = ContextVar(
+    "current_session_id", default=None
+)
 
 
 class CredentialService:
@@ -166,4 +172,3 @@ class CredentialService:
         if not token.startswith("Bearer "):
             return f"Bearer {token}"
         return token
-

@@ -3,7 +3,6 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from agent_service.llm.base import InstrumentedLLMClient
 from agent_service.llm.factory import LLMClientFactory
 
@@ -14,8 +13,12 @@ class TestCreateClient:
     @patch("agent_service.llm.factory.GeminiClient")
     def test_gemini_backend(self, mock_gemini_cls, monkeypatch):
         monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
-        client = LLMClientFactory.create_client(backend="gemini", model="gemini-1.5-pro")
-        mock_gemini_cls.assert_called_once_with(api_key="fake-key", model="gemini-1.5-pro")
+        client = LLMClientFactory.create_client(
+            backend="gemini", model="gemini-1.5-pro"
+        )
+        mock_gemini_cls.assert_called_once_with(
+            api_key="fake-key", model="gemini-1.5-pro"
+        )
 
     @patch("agent_service.llm.factory.OpenAIClient")
     def test_openai_backend(self, mock_openai_cls, monkeypatch):

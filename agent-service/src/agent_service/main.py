@@ -43,10 +43,13 @@ app = FastAPI(
 # Mount standard A2A protocol endpoints for each specialist agent.
 # These serve agent cards at /.well-known/agent.json and accept
 # JSON-RPC messages at / under each mount prefix.
-from .a2a.server import get_network_support_a2a_app, get_software_support_a2a_app
+# Agents are discovered dynamically from YAML configs.
+from .a2a.server import get_a2a_app
+from .agents import AgentManager as _AgentManagerForA2A
 
-app.mount("/a2a/software-support", get_software_support_a2a_app())
-app.mount("/a2a/network-support", get_network_support_a2a_app())
+_a2a_manager = _AgentManagerForA2A()
+for _name, _config in _a2a_manager.get_specialist_agents().items():
+    app.mount(f"/a2a/{_name}", get_a2a_app(_name, _config))
 
 # Add SPIFFE identity middleware — extracts caller identity from
 # X-SPIFFE-ID header (mock mode) or mTLS peer certificate (production).
@@ -88,6 +91,36 @@ async def detailed_health_check(
             db=db,
         )
     )
+
+
+@app.get("/api/v1/agents/registry")
+async def agent_registry() -> Dict[str, Any]:
+    """Return the agent registry for service discovery.
+
+    Request-manager calls this endpoint to learn where each specialist
+    agent lives (local or remote) so it can route A2A calls to the
+    correct URL.  The response includes endpoints, departments, and
+    descriptions derived from the agent YAML configs.
+    """
+    from .agents import AgentManager
+
+    agent_manager = AgentManager()
+    specialists = agent_manager.get_specialist_agents()
+    dept_map = agent_manager.get_agent_dept_map()
+    descriptions = agent_manager.get_agent_descriptions()
+
+    agents: Dict[str, Any] = {}
+    for name, config in specialists.items():
+        entry: Dict[str, Any] = {
+            "departments": dept_map.get(name, []),
+            "description": descriptions.get(name, ""),
+        }
+        explicit_endpoint = config.get("endpoint")
+        if explicit_endpoint:
+            entry["endpoint"] = explicit_endpoint.rstrip("/")
+        agents[name] = entry
+
+    return {"agents": agents}
 
 
 @app.post("/api/v1/agents/{agent_name}/invoke", response_model=AgentInvokeResponse)
@@ -254,20 +287,16 @@ async def invoke_agent(
             transfer_ctx = request.transfer_context or {}
             user_departments = transfer_ctx.get("departments", [])
 
-            # Map departments to accessible specialist agents.
-            # Agent capabilities mirror the OPA agent_permissions.rego policy.
-            agent_dept_map = {
-                "software-support": ["software"],
-                "network-support": ["network"],
-            }
-            agent_descriptions = {
-                "software-support": "Handles software issues, bugs, errors, crashes, application problems, error codes",
-                "network-support": "Handles network issues, connectivity, VPN, firewall, DNS, router problems",
-            }
+            # Load specialist agent capabilities dynamically from YAML configs.
+            # Each agent YAML defines its departments and description — the
+            # AgentManager is the single source of truth.
+            agent_dept_map = agent_manager.get_agent_dept_map()
+            agent_descriptions = agent_manager.get_agent_descriptions()
 
             all_specialists = list(agent_dept_map.keys())
             accessible_agents = [
-                agent for agent, required_depts in agent_dept_map.items()
+                agent
+                for agent, required_depts in agent_dept_map.items()
                 if any(d in user_departments for d in required_depts)
             ]
 
@@ -284,7 +313,8 @@ async def invoke_agent(
             if blocked_agents:
                 blocked_section = (
                     "\n\nIMPORTANT ACCESS RESTRICTION: The user does NOT have access to: "
-                    + ", ".join(blocked_agents) + ". "
+                    + ", ".join(blocked_agents)
+                    + ". "
                     "If the user's question relates to a blocked agent, do NOT use ROUTE:. "
                     "Instead, respond politely explaining that they don't have access to that "
                     "specialist and suggest they contact their administrator for access."
@@ -292,21 +322,39 @@ async def invoke_agent(
             else:
                 blocked_section = ""
 
+            # Build dynamic routing rules from accessible agents
+            routing_rules = []
+            routing_rules.append(
+                "1. If the message is a greeting, chitchat, or general conversation "
+                '(like "Hello", "Hi", "How are you", "Thanks"), respond '
+                "conversationally as a friendly routing agent. Introduce yourself "
+                "briefly and ask how you can help."
+            )
+            for i, agent_name_item in enumerate(accessible_agents, start=2):
+                desc = agent_descriptions.get(agent_name_item, "")
+                routing_rules.append(
+                    f"{i}. If the message relates to: {desc}, AND the user has "
+                    f"access to {agent_name_item}, respond with EXACTLY this format:\n"
+                    f"   ROUTE:{agent_name_item}\n"
+                    f"   I'll connect you with our {agent_name_item.replace('-', ' ')} specialist to help with your issue."
+                )
+            next_rule = len(accessible_agents) + 2
+            routing_rules.append(
+                f"{next_rule}. If unclear, ask clarifying questions to determine the right specialist."
+            )
+            routing_rules.append(
+                f"{next_rule + 1}. Use conversation history to understand follow-up questions. "
+                "If the user references something from earlier, use that context."
+            )
+            rules_section = "\n".join(routing_rules)
+
             routing_system_prompt = f"""You are a routing agent for a support system. Analyze the user's message and decide how to respond.
 
 Specialist agents the user has access to:
 {agents_section}
 
 RULES:
-1. If the message is a greeting, chitchat, or general conversation (like "Hello", "Hi", "How are you", "Thanks"), respond conversationally as a friendly routing agent. Introduce yourself briefly and ask how you can help.
-2. If the message describes a technical software problem AND the user has access to software-support, respond with EXACTLY this format:
-   ROUTE:software-support
-   I'll connect you with our software support specialist to help with your issue.
-3. If the message describes a network/connectivity problem AND the user has access to network-support, respond with EXACTLY this format:
-   ROUTE:network-support
-   I'll connect you with our network support specialist to help with your issue.
-4. If unclear, ask clarifying questions to determine the right specialist.
-5. Use conversation history to understand follow-up questions. If the user references something from earlier, use that context.
+{rules_section}
 
 IMPORTANT: Only use the ROUTE: prefix when you are confident the message needs a specialist AND the user has access to that specialist. For greetings and general chat, just respond normally without any ROUTE: prefix.{blocked_section}"""
 
@@ -342,7 +390,11 @@ IMPORTANT: Only use the ROUTE: prefix when you are confident the message needs a
                 if target in available_agents:
                     routing_decision = target
                     # Use the message after the ROUTE line as the response
-                    response_content = lines[1].strip() if len(lines) > 1 else f"I'll connect you with our {target.replace('-', ' ')} specialist."
+                    response_content = (
+                        lines[1].strip()
+                        if len(lines) > 1
+                        else f"I'll connect you with our {target.replace('-', ' ')} specialist."
+                    )
                     logger.info(
                         "Routing decision detected",
                         routing_decision=routing_decision,
@@ -365,8 +417,14 @@ IMPORTANT: Only use the ROUTE: prefix when you are confident the message needs a
                 routing_decision=routing_decision,
                 metadata={
                     **(request.transfer_context or {}),
-                    "handling_agent": handling_agent if not routing_decision else routing_decision,
-                    "routing_reason": f"Delegated to {routing_decision}" if routing_decision else "Handled by routing-agent",
+                    "handling_agent": (
+                        handling_agent if not routing_decision else routing_decision
+                    ),
+                    "routing_reason": (
+                        f"Delegated to {routing_decision}"
+                        if routing_decision
+                        else "Handled by routing-agent"
+                    ),
                 },
             )
         else:
@@ -398,8 +456,7 @@ IMPORTANT: Only use the ROUTE: prefix when you are confident the message needs a
 
             # Query RAG API - this MUST succeed for the POC
             rag_endpoint = os.getenv(
-                "RAG_API_ENDPOINT",
-                "http://partner-rag-api-full:8080/answer"
+                "RAG_API_ENDPOINT", "http://partner-rag-api-full:8080/answer"
             )
 
             logger.info(
@@ -434,7 +491,9 @@ IMPORTANT: Only use the ROUTE: prefix when you are confident the message needs a
                         )
 
                     rag_data = rag_response.json()
-                    rag_answer = rag_data.get("response", "") or ""  # Handle None response
+                    rag_answer = (
+                        rag_data.get("response", "") or ""
+                    )  # Handle None response
                     rag_sources = rag_data.get("sources", [])
 
                     logger.info(
@@ -477,7 +536,9 @@ The following information was retrieved from the support knowledge base for the 
 
             # Build messages with conversation history for follow-up context
             specialist_transfer_ctx = request.transfer_context or {}
-            conversation_history = specialist_transfer_ctx.get("conversation_history", [])
+            conversation_history = specialist_transfer_ctx.get(
+                "conversation_history", []
+            )
 
             messages = []
             # Add prior conversation turns so the specialist can handle follow-ups
@@ -488,13 +549,16 @@ The following information was retrieved from the support knowledge base for the 
 
             # Add current user query with RAG context
             messages.append(
-                {"role": "user", "content": f"""User Query: {request.message}
+                {
+                    "role": "user",
+                    "content": f"""User Query: {request.message}
 
 {rag_context}
 
 Based on the knowledge base results above, provide a helpful response to the user.
 Reference the specific ticket IDs and solutions from the knowledge base.
-If the knowledge base doesn't have relevant information, say so explicitly."""}
+If the knowledge base doesn't have relevant information, say so explicitly.""",
+                }
             )
 
             # Invoke agent with RAG-augmented context

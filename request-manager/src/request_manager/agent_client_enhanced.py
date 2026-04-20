@@ -17,7 +17,9 @@ from .credential_service import CredentialService
 logger = configure_logging("request-manager")
 
 # Feature flag
-STRUCTURED_CONTEXT_ENABLED = os.getenv("STRUCTURED_CONTEXT_ENABLED", "true").lower() == "true"
+STRUCTURED_CONTEXT_ENABLED = (
+    os.getenv("STRUCTURED_CONTEXT_ENABLED", "true").lower() == "true"
+)
 
 
 class EnhancedAgentClient:
@@ -35,15 +37,20 @@ class EnhancedAgentClient:
         self,
         agent_service_url: str = "http://agent-service:8080",
         timeout: float = 120.0,
+        agent_endpoints: Optional[Dict[str, str]] = None,
     ):
         """
         Initialize enhanced agent client.
 
         Args:
-            agent_service_url: Base URL for agent service
+            agent_service_url: Base URL for agent service (default for local agents)
             timeout: Request timeout in seconds
+            agent_endpoints: Optional mapping of agent name -> full invoke URL
+                for remote agents. When an agent appears here, its URL is used
+                instead of constructing one from ``agent_service_url``.
         """
         self.agent_service_url = agent_service_url.rstrip("/")
+        self.agent_endpoints: Dict[str, str] = agent_endpoints or {}
         self.client = httpx.AsyncClient(timeout=timeout)
 
         logger.info(
@@ -51,6 +58,9 @@ class EnhancedAgentClient:
             agent_service_url=self.agent_service_url,
             timeout=timeout,
             structured_context_enabled=STRUCTURED_CONTEXT_ENABLED,
+            remote_agents=(
+                list(self.agent_endpoints.keys()) if self.agent_endpoints else []
+            ),
         )
 
     async def invoke_agent(
@@ -104,7 +114,11 @@ class EnhancedAgentClient:
             ...     previous_agent="routing-agent"
             ... )
         """
-        url = f"{self.agent_service_url}/api/v1/agents/{agent_name}/invoke"
+        # Use per-agent endpoint if registered, otherwise construct from base URL
+        url = self.agent_endpoints.get(
+            agent_name,
+            f"{self.agent_service_url}/api/v1/agents/{agent_name}/invoke",
+        )
 
         # Build enhanced transfer context
         enhanced_context = transfer_context or {}
@@ -124,7 +138,7 @@ class EnhancedAgentClient:
                 history_length=len(conversation_history),
                 previous_agent=previous_agent,
                 is_agent_switch=is_agent_switch,
-                extraction_mode="rewrite" if is_agent_switch else "metadata"
+                extraction_mode="rewrite" if is_agent_switch else "metadata",
             )
 
         payload = {
@@ -172,7 +186,9 @@ class EnhancedAgentClient:
                 session_id=session_id,
                 has_routing=bool(data.get("routing_decision")),
                 response_length=len(data.get("content", "")),
-                context_was_extracted=data.get("metadata", {}).get("context_extracted", False)
+                context_was_extracted=data.get("metadata", {}).get(
+                    "context_extracted", False
+                ),
             )
 
             return data

@@ -28,7 +28,9 @@ class LLMResponse:
     """Response from an LLM completion."""
 
     content: str
-    usage: Dict[str, int]  # {"prompt_tokens": X, "completion_tokens": Y, "total_tokens": Z}
+    usage: Dict[
+        str, int
+    ]  # {"prompt_tokens": X, "completion_tokens": Y, "total_tokens": Z}
     model: Optional[str] = None
     finish_reason: Optional[str] = None
     latency_ms: Optional[float] = None

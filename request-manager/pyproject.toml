@@ -49,6 +49,11 @@ line_length = 88
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::sqlalchemy.exc.MovedIn20Warning",
+    "ignore::DeprecationWarning:pydantic.*:",
+    "ignore:coroutine '_session_cleanup_task' was never awaited:RuntimeWarning",
+]
 
 [tool.mypy]
 python_version = "3.12"

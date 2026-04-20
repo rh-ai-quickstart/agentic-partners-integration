@@ -34,12 +34,15 @@ _jwks_client: Optional[jwt.PyJWKClient] = None
 def _get_jwks_client() -> jwt.PyJWKClient:
     global _jwks_client
     if _jwks_client is None:
-        jwks_url = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/certs"
+        jwks_url = (
+            f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/certs"
+        )
         _jwks_client = jwt.PyJWKClient(jwks_url)
     return _jwks_client
 
 
 # ── JWT Helpers ──────────────────────────────────────────────────────────────
+
 
 def _decode_keycloak_jwt(token: str) -> dict:
     """Decode a Keycloak-issued JWT using JWKS. Raises on failure."""
@@ -61,7 +64,9 @@ def decode_token(authorization: str) -> dict:
     Used by adk_endpoints to extract user identity.
     """
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+        raise HTTPException(
+            status_code=401, detail="Missing or invalid Authorization header"
+        )
 
     token = authorization[7:]
     try:
@@ -69,27 +74,33 @@ def decode_token(authorization: str) -> dict:
     except jwt.ExpiredSignatureError:
         # Fire-and-forget: audit runs in its own session, won't block if DB is slow.
         import asyncio
-        asyncio.ensure_future(AuditService.emit(
-            event_type="auth.token.expired",
-            actor="unknown",
-            action="validate_token",
-            resource="/adk/*",
-            outcome="failure",
-            reason="Token expired",
-            service="request-manager",
-        ))
+
+        asyncio.ensure_future(
+            AuditService.emit(
+                event_type="auth.token.expired",
+                actor="unknown",
+                action="validate_token",
+                resource="/adk/*",
+                outcome="failure",
+                reason="Token expired",
+                service="request-manager",
+            )
+        )
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.PyJWTError as e:
         import asyncio
-        asyncio.ensure_future(AuditService.emit(
-            event_type="auth.token.invalid",
-            actor="unknown",
-            action="validate_token",
-            resource="/adk/*",
-            outcome="failure",
-            reason=str(e),
-            service="request-manager",
-        ))
+
+        asyncio.ensure_future(
+            AuditService.emit(
+                event_type="auth.token.invalid",
+                actor="unknown",
+                action="validate_token",
+                resource="/adk/*",
+                outcome="failure",
+                reason=str(e),
+                service="request-manager",
+            )
+        )
         raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
 
 
@@ -106,6 +117,7 @@ def _extract_departments(payload: dict) -> list[str]:
 
 
 # ── Request/Response Models ──────────────────────────────────────────────────
+
 
 class LoginRequest(BaseModel):
     email: str
@@ -194,14 +206,18 @@ async def login(
     try:
         payload = _decode_keycloak_jwt(access_token)
     except jwt.PyJWTError as e:
-        raise HTTPException(status_code=401, detail=f"Failed to validate Keycloak token: {e}")
+        raise HTTPException(
+            status_code=401, detail=f"Failed to validate Keycloak token: {e}"
+        )
 
     email = payload.get("email", request.email)
     departments = _extract_departments(payload)
 
     # Ensure user exists in DB (auto-create if needed)
     user = await AAAService.get_or_create_user(
-        db, email=email, departments=departments,
+        db,
+        email=email,
+        departments=departments,
     )
     role = user.role.value if user.role else "user"
 
@@ -270,7 +286,9 @@ async def refresh(
         )
 
     if resp.status_code != 200:
-        raise HTTPException(status_code=401, detail="Refresh token expired. Please login again.")
+        raise HTTPException(
+            status_code=401, detail="Refresh token expired. Please login again."
+        )
 
     token_data = resp.json()
     return RefreshResponse(

@@ -4,11 +4,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-
 from request_manager.agent_client_enhanced import EnhancedAgentClient
 
 
-@pytest.mark.asyncio
 class TestEnhancedAgentClient:
     """Tests for EnhancedAgentClient."""
 
@@ -38,7 +36,9 @@ class TestEnhancedAgentClient:
         )
 
         call_args = client.client.post.call_args
-        assert call_args[0][0] == "http://myagent:9090/api/v1/agents/routing-agent/invoke"
+        assert (
+            call_args[0][0] == "http://myagent:9090/api/v1/agents/routing-agent/invoke"
+        )
 
     @patch("request_manager.agent_client_enhanced.CredentialService")
     async def test_invoke_agent_includes_auth_header(self, mock_cred):
@@ -280,6 +280,68 @@ class TestEnhancedAgentClient:
         """Trailing slashes on agent_service_url should be stripped."""
         client = EnhancedAgentClient(agent_service_url="http://agent:8080/")
         assert client.agent_service_url == "http://agent:8080"
+
+    # -- per-agent endpoints --------------------------------------------------
+
+    @patch("request_manager.agent_client_enhanced.CredentialService")
+    async def test_invoke_agent_uses_per_agent_endpoint(self, mock_cred):
+        """When agent_endpoints maps an agent, use its custom URL."""
+        mock_cred.get_auth_header.return_value = None
+
+        client = EnhancedAgentClient(
+            agent_service_url="http://default:8080",
+            timeout=10.0,
+            agent_endpoints={
+                "db-support": "http://db-agent:9090/api/v1/agents/db-support/invoke",
+            },
+        )
+        client.client = AsyncMock(spec=httpx.AsyncClient)
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"content": "ok"}
+        mock_resp.raise_for_status = MagicMock()
+        client.client.post = AsyncMock(return_value=mock_resp)
+
+        await client.invoke_agent(
+            agent_name="db-support",
+            session_id="s1",
+            user_id="u1",
+            message="query",
+        )
+
+        call_args = client.client.post.call_args
+        assert call_args[0][0] == "http://db-agent:9090/api/v1/agents/db-support/invoke"
+
+    @patch("request_manager.agent_client_enhanced.CredentialService")
+    async def test_invoke_agent_falls_back_to_default_url(self, mock_cred):
+        """When agent has no per-agent endpoint, fall back to agent_service_url."""
+        mock_cred.get_auth_header.return_value = None
+
+        client = EnhancedAgentClient(
+            agent_service_url="http://default:8080",
+            timeout=10.0,
+            agent_endpoints={
+                "db-support": "http://db-agent:9090/api/v1/agents/db-support/invoke",
+            },
+        )
+        client.client = AsyncMock(spec=httpx.AsyncClient)
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"content": "ok"}
+        mock_resp.raise_for_status = MagicMock()
+        client.client.post = AsyncMock(return_value=mock_resp)
+
+        await client.invoke_agent(
+            agent_name="routing-agent",
+            session_id="s1",
+            user_id="u1",
+            message="hi",
+        )
+
+        call_args = client.client.post.call_args
+        assert (
+            call_args[0][0] == "http://default:8080/api/v1/agents/routing-agent/invoke"
+        )
 
     # -- invoke_agent payload -----------------------------------------------
 

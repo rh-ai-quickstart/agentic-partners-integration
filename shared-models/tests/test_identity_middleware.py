@@ -71,9 +71,7 @@ class TestIdentityMiddlewareDispatch:
     @patch("shared_models.identity_middleware.extract_identity")
     async def test_normal_path_extracts_identity(self, mock_extract):
         """Non-skip paths should have identity extracted."""
-        mock_identity = WorkloadIdentity(
-            spiffe_id="spiffe://example.com/user/alice"
-        )
+        mock_identity = WorkloadIdentity(spiffe_id="spiffe://example.com/user/alice")
         mock_extract.return_value = mock_identity
 
         middleware = IdentityMiddleware.__new__(IdentityMiddleware)

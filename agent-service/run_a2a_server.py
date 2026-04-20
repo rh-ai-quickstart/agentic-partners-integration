@@ -31,13 +31,10 @@ from a2a.types import (
 )
 from a2a.utils import new_task
 from a2a.utils.errors import ServerError
+from agent_service.a2a.agent_cards import create_agent_card
+from agent_service.agents import AgentManager
 from starlette.applications import Starlette
 from starlette.routing import Mount
-
-from agent_service.a2a.agent_cards import (
-    create_network_support_card,
-    create_software_support_card,
-)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -48,8 +45,10 @@ logger = logging.getLogger("a2a-server")
 PORT = int(os.getenv("PORT", "8001"))
 HOST = os.getenv("HOST", "0.0.0.0")
 
-SW_URL = os.getenv("SOFTWARE_SUPPORT_A2A_URL", f"http://localhost:{PORT}/a2a/software-support/")
-NW_URL = os.getenv("NETWORK_SUPPORT_A2A_URL", f"http://localhost:{PORT}/a2a/network-support/")
+
+def _get_a2a_url(agent_name: str) -> str:
+    env_key = agent_name.upper().replace("-", "_") + "_A2A_URL"
+    return os.getenv(env_key, f"http://localhost:{PORT}/a2a/{agent_name}/")
 
 
 SOFTWARE_RESPONSES = {
@@ -94,6 +93,30 @@ NETWORK_RESPONSES = {
         "- Network topology (VPN, proxy, firewall details)\n"
         "- Output of the diagnostic commands above\n"
         "- Time pattern of the failures (constant vs intermittent)"
+    ),
+}
+
+KUBERNETES_RESPONSES = {
+    "default": (
+        "Based on your description, this appears to be a Kubernetes issue. "
+        "Here is a systematic diagnostic approach:\n\n"
+        "**Analysis:**\n"
+        "The symptoms suggest a container orchestration issue. "
+        "Let's identify the affected layer and narrow down the root cause.\n\n"
+        "**Diagnostic Steps:**\n"
+        "1. Check pod status: `kubectl get pods -o wide`\n"
+        "2. Describe the resource: `kubectl describe pod <pod-name>`\n"
+        "3. Check pod logs: `kubectl logs <pod-name> --previous`\n"
+        "4. Check events: `kubectl get events --sort-by='.lastTimestamp'`\n"
+        "5. Check resource usage: `kubectl top pods` and `kubectl top nodes`\n\n"
+        "**Knowledge Base Reference:**\n"
+        "- [K8S-TICKET-001] CrashLoopBackOff resolved by increasing memory limits and configuring JVM cgroup support\n"
+        "- [K8S-TICKET-004] Service not routing traffic — fixed label selector mismatch\n"
+        "- [K8S-TICKET-006] Ingress 502 Bad Gateway — fixed service targetPort to match container port\n\n"
+        "If the issue persists, please provide:\n"
+        "- Output of `kubectl describe` for the affected resource\n"
+        "- Pod logs (`kubectl logs <pod-name>`)\n"
+        "- Resource YAML (`kubectl get <resource> -o yaml`)"
     ),
 }
 
@@ -152,39 +175,40 @@ class StandaloneExecutor(AgentExecutor):
         raise ServerError(UnsupportedOperationError(message="Not supported"))
 
 
+STANDALONE_RESPONSES: dict[str, dict[str, str]] = {
+    "software-support": SOFTWARE_RESPONSES,
+    "network-support": NETWORK_RESPONSES,
+    "kubernetes-support": KUBERNETES_RESPONSES,
+}
+
+
 def build_app() -> Starlette:
-    sw_card = create_software_support_card(SW_URL)
-    nw_card = create_network_support_card(NW_URL)
+    agent_manager = AgentManager()
+    specialists = agent_manager.get_specialist_agents()
 
-    sw_handler = DefaultRequestHandler(
-        agent_executor=StandaloneExecutor("software-support", SOFTWARE_RESPONSES),
-        task_store=InMemoryTaskStore(),
-    )
-    nw_handler = DefaultRequestHandler(
-        agent_executor=StandaloneExecutor("network-support", NETWORK_RESPONSES),
-        task_store=InMemoryTaskStore(),
-    )
+    routes = []
+    for name, config in specialists.items():
+        url = _get_a2a_url(name)
+        card = create_agent_card(name, config, url)
+        responses = STANDALONE_RESPONSES.get(
+            name, {"default": "No response available."}
+        )
+        handler = DefaultRequestHandler(
+            agent_executor=StandaloneExecutor(name, responses),
+            task_store=InMemoryTaskStore(),
+        )
+        a2a_app = A2AStarletteApplication(agent_card=card, http_handler=handler).build()
+        routes.append(Mount(f"/a2a/{name}", app=a2a_app))
 
-    sw_app = A2AStarletteApplication(agent_card=sw_card, http_handler=sw_handler).build()
-    nw_app = A2AStarletteApplication(agent_card=nw_card, http_handler=nw_handler).build()
-
-    return Starlette(routes=[
-        Mount("/a2a/software-support", app=sw_app),
-        Mount("/a2a/network-support", app=nw_app),
-    ])
+    return Starlette(routes=routes)
 
 
 if __name__ == "__main__":
-    print(f"""
-╔══════════════════════════════════════════════════════════════╗
-║  Partner A2A Agent Server                                    ║
-╠══════════════════════════════════════════════════════════════╣
-║  Software Support: http://localhost:{PORT}/a2a/software-support/  ║
-║  Network Support:  http://localhost:{PORT}/a2a/network-support/   ║
-╠══════════════════════════════════════════════════════════════╣
-║  Agent cards:                                                ║
-║    GET /a2a/software-support/.well-known/agent-card.json     ║
-║    GET /a2a/network-support/.well-known/agent-card.json      ║
-╚══════════════════════════════════════════════════════════════╝
-""")
+    agent_manager = AgentManager()
+    specialists = agent_manager.get_specialist_agents()
+    print("\n  Partner A2A Agent Server")
+    print("  " + "=" * 50)
+    for name in sorted(specialists):
+        print(f"  {name}: http://localhost:{PORT}/a2a/{name}/")
+    print("  " + "=" * 50 + "\n")
     uvicorn.run(build_app(), host=HOST, port=PORT, log_level="info")

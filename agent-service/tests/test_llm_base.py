@@ -3,7 +3,6 @@
 from unittest.mock import AsyncMock
 
 import pytest
-
 from agent_service.llm.base import (
     BaseLLMClient,
     InstrumentedLLMClient,
@@ -74,8 +73,12 @@ class TestBaseLLMClient:
         """Line 68: covers the 'pass' in abstract create_completion."""
 
         class ConcreteClient(BaseLLMClient):
-            async def create_completion(self, messages, temperature=0.7, max_tokens=None, **kwargs):
-                return await super().create_completion(messages, temperature, max_tokens, **kwargs)
+            async def create_completion(
+                self, messages, temperature=0.7, max_tokens=None, **kwargs
+            ):
+                return await super().create_completion(
+                    messages, temperature, max_tokens, **kwargs
+                )
 
             def get_model_name(self):
                 return "test"
@@ -88,7 +91,9 @@ class TestBaseLLMClient:
         """Line 77: covers the 'pass' in abstract get_model_name."""
 
         class ConcreteClient(BaseLLMClient):
-            async def create_completion(self, messages, temperature=0.7, max_tokens=None, **kwargs):
+            async def create_completion(
+                self, messages, temperature=0.7, max_tokens=None, **kwargs
+            ):
                 pass
 
             def get_model_name(self):
@@ -109,7 +114,9 @@ class TestInstrumentedLLMClient:
         result = await instrumented.create_completion(messages, temperature=0.5)
 
         mock_llm_client.create_completion.assert_awaited_once_with(
-            messages, temperature=0.5, max_tokens=None,
+            messages,
+            temperature=0.5,
+            max_tokens=None,
         )
         assert result.content == "Test response"
         assert result.latency_ms is not None

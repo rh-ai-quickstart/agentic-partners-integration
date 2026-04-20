@@ -3,7 +3,6 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
-
 from shared_models.opa_client import (
     Delegation,
     OPADecision,

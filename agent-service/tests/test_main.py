@@ -1,7 +1,8 @@
 """Tests for agent_service.main.
 
-The main module mounts A2A sub-applications at import time, so we patch
-the a2a server functions before importing the app to avoid side effects.
+The main module mounts A2A sub-applications at import time using an
+AgentManager instance, so we patch the AgentManager and get_a2a_app
+before importing the app to avoid side effects.
 
 The invoke_agent endpoint imports AgentManager inline via
 ``from .agents import AgentManager``, so we must patch
@@ -17,17 +18,41 @@ import pytest
 SERVICE_SPIFFE_ID = "spiffe://partner.example.com/service/request-manager"
 DEFAULT_HEADERS = {"X-SPIFFE-ID": SERVICE_SPIFFE_ID}
 
+# Standard specialist agent registry used across tests
+_TEST_AGENT_DEPT_MAP = {
+    "software-support": ["software"],
+    "network-support": ["network"],
+    "kubernetes-support": ["kubernetes"],
+}
+_TEST_AGENT_DESCRIPTIONS = {
+    "software-support": "Handles software issues, bugs, errors, crashes, application problems, error codes",
+    "network-support": "Handles network issues, connectivity, VPN, firewall, DNS, router problems",
+    "kubernetes-support": "Handles Kubernetes issues, pod failures, deployment problems, cluster troubleshooting, container orchestration",
+}
+
+
+def _make_mock_manager(**overrides: object) -> MagicMock:
+    """Create a MagicMock AgentManager with dynamic registry methods."""
+    manager = MagicMock()
+    manager.get_agent_dept_map.return_value = _TEST_AGENT_DEPT_MAP
+    manager.get_agent_descriptions.return_value = _TEST_AGENT_DESCRIPTIONS
+    manager.get_specialist_agents.return_value = {}
+    for key, value in overrides.items():
+        setattr(manager, key, value)
+    return manager
+
 
 @pytest.fixture
 def patched_app():
-    """Import the FastAPI app with A2A sub-apps mocked out."""
+    """Import the FastAPI app with A2A mounting and AgentManager mocked out."""
+    mock_a2a_manager = _make_mock_manager()
     with (
         patch(
-            "agent_service.a2a.server.get_software_support_a2a_app",
-            return_value=MagicMock(),
+            "agent_service.agents.AgentManager",
+            return_value=mock_a2a_manager,
         ),
         patch(
-            "agent_service.a2a.server.get_network_support_a2a_app",
+            "agent_service.a2a.server.get_a2a_app",
             return_value=MagicMock(),
         ),
     ):
@@ -75,9 +100,7 @@ class TestInvokeAgent:
     """Tests for the /api/v1/agents/{agent_name}/invoke endpoint."""
 
     @patch("agent_service.agents.AgentManager")
-    def test_invoke_routing_agent(
-        self, mock_agent_manager_cls, patched_app
-    ):
+    def test_invoke_routing_agent(self, mock_agent_manager_cls, patched_app):
         from fastapi.testclient import TestClient
 
         # Set up mock agent
@@ -86,7 +109,7 @@ class TestInvokeAgent:
             "Hello! How can I help you?",
             False,
         )
-        mock_manager = MagicMock()
+        mock_manager = _make_mock_manager()
         mock_manager.get_agent.return_value = mock_agent
         mock_manager.agents_dict = {"routing-agent": mock_agent}
         mock_agent_manager_cls.return_value = mock_manager
@@ -121,7 +144,7 @@ class TestInvokeAgent:
             "Here is the solution based on ticket T-123",
             False,
         )
-        mock_manager = MagicMock()
+        mock_manager = _make_mock_manager()
         mock_manager.get_agent.return_value = mock_agent
         mock_agent_manager_cls.return_value = mock_manager
 
@@ -161,7 +184,7 @@ class TestInvokeAgent:
     ):
         from fastapi.testclient import TestClient
 
-        mock_manager = MagicMock()
+        mock_manager = _make_mock_manager()
         mock_manager.get_agent.side_effect = ValueError("No agent found")
         mock_agent_manager_cls.return_value = mock_manager
 
@@ -186,7 +209,7 @@ class TestInvokeAgent:
         from fastapi.testclient import TestClient
 
         mock_agent = AsyncMock()
-        mock_manager = MagicMock()
+        mock_manager = _make_mock_manager()
         mock_manager.get_agent.return_value = mock_agent
         mock_agent_manager_cls.return_value = mock_manager
 
@@ -225,7 +248,7 @@ class TestInvokeAgent:
             "ROUTE:software-support\nI'll connect you with our software support specialist.",
             False,
         )
-        mock_manager = MagicMock()
+        mock_manager = _make_mock_manager()
         mock_manager.get_agent.return_value = mock_agent
         mock_manager.agents_dict = {
             "routing-agent": mock_agent,
@@ -250,9 +273,7 @@ class TestInvokeAgent:
         assert data["routing_decision"] == "software-support"
 
     @patch("agent_service.main.simple_health_check", new_callable=AsyncMock)
-    def test_detailed_health_check(
-        self, mock_simple_health, patched_app
-    ):
+    def test_detailed_health_check(self, mock_simple_health, patched_app):
         """Line 66: detailed_health_check endpoint calls simple_health_check."""
         from fastapi.testclient import TestClient
 
@@ -292,7 +313,7 @@ class TestInvokeAgent:
             "Hello! How can I help you?",
             False,
         )
-        mock_manager = MagicMock()
+        mock_manager = _make_mock_manager()
         mock_manager.get_agent.return_value = mock_agent
         mock_manager.agents_dict = {
             "routing-agent": mock_agent,
@@ -331,7 +352,7 @@ class TestInvokeAgent:
             "I see you mentioned a crash earlier. Let me help.",
             False,
         )
-        mock_manager = MagicMock()
+        mock_manager = _make_mock_manager()
         mock_manager.get_agent.return_value = mock_agent
         mock_manager.agents_dict = {"routing-agent": mock_agent}
         mock_agent_manager_cls.return_value = mock_manager
@@ -357,7 +378,11 @@ class TestInvokeAgent:
         assert response.status_code == 200
         # Verify conversation history was passed in messages
         call_args = mock_agent.create_response_with_retry.call_args
-        messages = call_args.kwargs.get("messages") or call_args[1].get("messages") or call_args[0][0]
+        messages = (
+            call_args.kwargs.get("messages")
+            or call_args[1].get("messages")
+            or call_args[0][0]
+        )
         # Should include system + 2 history turns + 1 current message
         assert len(messages) >= 4
 
@@ -371,7 +396,7 @@ class TestInvokeAgent:
         from fastapi.testclient import TestClient
 
         mock_agent = AsyncMock()
-        mock_manager = MagicMock()
+        mock_manager = _make_mock_manager()
         mock_manager.get_agent.return_value = mock_agent
         mock_agent_manager_cls.return_value = mock_manager
 
@@ -409,7 +434,7 @@ class TestInvokeAgent:
             "Based on your earlier issue, here is the fix.",
             False,
         )
-        mock_manager = MagicMock()
+        mock_manager = _make_mock_manager()
         mock_manager.get_agent.return_value = mock_agent
         mock_agent_manager_cls.return_value = mock_manager
 
@@ -447,7 +472,11 @@ class TestInvokeAgent:
         assert response.status_code == 200
         # Verify conversation history was included in messages
         call_args = mock_agent.create_response_with_retry.call_args
-        messages = call_args.kwargs.get("messages") or call_args[1].get("messages") or call_args[0][0]
+        messages = (
+            call_args.kwargs.get("messages")
+            or call_args[1].get("messages")
+            or call_args[0][0]
+        )
         # Should include 2 history turns + 1 current with RAG context
         assert len(messages) >= 3
 
@@ -464,7 +493,7 @@ class TestInvokeAgent:
             "I apologize, but I'm having difficulty generating a response right now. Please try again.",
             True,  # Response generation failed
         )
-        mock_manager = MagicMock()
+        mock_manager = _make_mock_manager()
         mock_manager.get_agent.return_value = mock_agent
         mock_agent_manager_cls.return_value = mock_manager
 
@@ -533,7 +562,7 @@ class TestInvokeAgent:
         """
         from fastapi.testclient import TestClient
 
-        mock_manager = MagicMock()
+        mock_manager = _make_mock_manager()
         mock_manager.get_agent.side_effect = ValueError("No agent found")
         mock_agent_manager_cls.return_value = mock_manager
 
@@ -550,6 +579,68 @@ class TestInvokeAgent:
 
         # HTTPException(404) should pass through, NOT become 500
         assert response.status_code == 404
+
+
+class TestAgentRegistry:
+    """Tests for the GET /api/v1/agents/registry endpoint."""
+
+    @patch("agent_service.agents.AgentManager")
+    def test_registry_returns_agent_info(self, mock_agent_manager_cls, patched_app):
+        """Registry endpoint returns departments and descriptions for local agents."""
+        from fastapi.testclient import TestClient
+
+        mock_manager = _make_mock_manager()
+        mock_manager.get_specialist_agents.return_value = {
+            "software-support": {"departments": ["software"]},
+            "network-support": {"departments": ["network"]},
+        }
+        mock_agent_manager_cls.return_value = mock_manager
+
+        client = TestClient(patched_app)
+        response = client.get("/api/v1/agents/registry")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "software-support" in data["agents"]
+        assert "network-support" in data["agents"]
+        sw = data["agents"]["software-support"]
+        assert "endpoint" not in sw
+        assert "departments" in sw
+        assert "description" in sw
+
+    @patch("agent_service.agents.AgentManager")
+    def test_registry_includes_remote_endpoint(
+        self, mock_agent_manager_cls, patched_app
+    ):
+        """Remote agents have their custom endpoint URL in the registry."""
+        from fastapi.testclient import TestClient
+
+        mock_manager = _make_mock_manager()
+        mock_manager.get_specialist_agents.return_value = {
+            "software-support": {"departments": ["software"]},
+            "database-support": {
+                "departments": ["database"],
+                "endpoint": "http://db-agent:9090/api/v1/agents/database-support/invoke",
+            },
+        }
+        mock_manager.get_agent_dept_map.return_value = {
+            "software-support": ["software"],
+            "database-support": ["database"],
+        }
+        mock_manager.get_agent_descriptions.return_value = {
+            "software-support": "Handles software issues",
+            "database-support": "Handles database issues",
+        }
+        mock_agent_manager_cls.return_value = mock_manager
+
+        client = TestClient(patched_app)
+        response = client.get("/api/v1/agents/registry")
+
+        data = response.json()
+        assert "endpoint" not in data["agents"]["software-support"]
+        assert data["agents"]["database-support"]["endpoint"] == (
+            "http://db-agent:9090/api/v1/agents/database-support/invoke"
+        )
 
 
 class TestAuthEnforcement:
@@ -586,7 +677,7 @@ class TestAuthEnforcement:
 
         mock_agent = AsyncMock()
         mock_agent.create_response_with_retry.return_value = ("Hello!", False)
-        mock_manager = MagicMock()
+        mock_manager = _make_mock_manager()
         mock_manager.get_agent.return_value = mock_agent
         mock_manager.agents_dict = {"routing-agent": mock_agent}
         mock_agent_manager_cls.return_value = mock_manager
@@ -618,18 +709,21 @@ class TestAuthEnforcement:
             reason: str = "Delegated access granted"
             effective_departments: list = field(default_factory=lambda: ["software"])
 
-        with patch(
-            "agent_service.agents.AgentManager"
-        ) as mock_agent_manager_cls, patch(
-            "shared_models.opa_client.check_agent_authorization",
-            new_callable=AsyncMock,
-            return_value=FakeOPADecision(),
-        ), patch(
-            "agent_service.main.httpx.AsyncClient"
-        ) as mock_httpx_cls:
+        with (
+            patch("agent_service.agents.AgentManager") as mock_agent_manager_cls,
+            patch(
+                "shared_models.opa_client.check_agent_authorization",
+                new_callable=AsyncMock,
+                return_value=FakeOPADecision(),
+            ),
+            patch("agent_service.main.httpx.AsyncClient") as mock_httpx_cls,
+        ):
             mock_agent = AsyncMock()
-            mock_agent.create_response_with_retry.return_value = ("Fix: restart app", False)
-            mock_manager = MagicMock()
+            mock_agent.create_response_with_retry.return_value = (
+                "Fix: restart app",
+                False,
+            )
+            mock_manager = _make_mock_manager()
             mock_manager.get_agent.return_value = mock_agent
             mock_agent_manager_cls.return_value = mock_manager
 
@@ -710,7 +804,7 @@ class TestAuthEnforcement:
 
         mock_agent = AsyncMock()
         mock_agent.create_response_with_retry.return_value = ("Hello!", False)
-        mock_manager = MagicMock()
+        mock_manager = _make_mock_manager()
         mock_manager.get_agent.return_value = mock_agent
         mock_manager.agents_dict = {"routing-agent": mock_agent}
         mock_agent_manager_cls.return_value = mock_manager
@@ -773,7 +867,9 @@ class TestLifespan:
     """Tests for the lifespan function."""
 
     @patch("agent_service.main.create_shared_lifespan")
-    def test_lifespan_calls_create_shared_lifespan(self, mock_create_lifespan, patched_app):
+    def test_lifespan_calls_create_shared_lifespan(
+        self, mock_create_lifespan, patched_app
+    ):
         """Line 27: lifespan function calls create_shared_lifespan."""
         from agent_service.main import lifespan
 

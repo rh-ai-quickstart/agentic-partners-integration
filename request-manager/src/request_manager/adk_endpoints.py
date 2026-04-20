@@ -10,11 +10,10 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from shared_models.aaa_service import AAAService
+from shared_models.audit import AuditService
 from shared_models.database import get_db
 from shared_models.models import IntegrationType
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from shared_models.audit import AuditService
 
 from .aaa_middleware import AAAMiddleware
 from .auth_endpoints import decode_token
@@ -30,6 +29,7 @@ router = APIRouter(prefix="/adk", tags=["adk"])
 # Request/Response Models
 class ADKUser(BaseModel):
     """User information in ADK format."""
+
     email: str
     name: Optional[str] = None
     organization: Optional[str] = None
@@ -37,6 +37,7 @@ class ADKUser(BaseModel):
 
 class ADKChatRequest(BaseModel):
     """Chat request in ADK format."""
+
     message: str = Field(..., description="User message")
     session_id: Optional[str] = Field(None, description="Conversation session ID")
     user: ADKUser = Field(..., description="User information")
@@ -45,19 +46,20 @@ class ADKChatRequest(BaseModel):
 
 class ADKChatResponse(BaseModel):
     """Chat response in ADK format."""
+
     response: str = Field(..., description="Agent response message")
     session_id: str = Field(..., description="Conversation session ID")
     agent: str = Field(..., description="Agent that handled the request")
-    user_context: Dict[str, Any] = Field(..., description="User context and permissions")
+    user_context: Dict[str, Any] = Field(
+        ..., description="User context and permissions"
+    )
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
 
 
 # Endpoints
 @router.post("/chat", response_model=ADKChatResponse)
 async def adk_chat(
-    request: ADKChatRequest,
-    http_request: Request,
-    db: AsyncSession = Depends(get_db)
+    request: ADKChatRequest, http_request: Request, db: AsyncSession = Depends(get_db)
 ):
     """
     Send a message to the agent system (ADK-compatible).
@@ -72,7 +74,7 @@ async def adk_chat(
         if not auth_header.startswith("Bearer "):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authorization header required"
+                detail="Authorization header required",
             )
         payload = decode_token(auth_header)
         user_email = payload["email"]
@@ -90,7 +92,10 @@ async def adk_chat(
             action="send_message",
             resource="/adk/chat",
             outcome="success",
-            metadata={"session_id": request.session_id, "message_length": len(request.message)},
+            metadata={
+                "session_id": request.session_id,
+                "message_length": len(request.message),
+            },
             source_ip=source_ip,
             service="request-manager",
         )
@@ -99,18 +104,14 @@ async def adk_chat(
             "ADK chat request",
             user=user_email,
             message=request.message[:100],
-            session_id=request.session_id
+            session_id=request.session_id,
         )
 
         # Get user context with departments for OPA authorization
         user_context = await AAAMiddleware.get_user_context(db, user_email)
         departments = user_context.get("departments", [])
 
-        logger.info(
-            "User departments",
-            user=user_email,
-            departments=departments
-        )
+        logger.info("User departments", user=user_email, departments=departments)
 
         # Route ALL messages to routing-agent first
         # The routing-agent will decide whether to:
@@ -121,7 +122,7 @@ async def adk_chat(
         logger.info(
             "Routing to routing-agent for conversation handling",
             user=user_email,
-            message=request.message[:100]
+            message=request.message[:100],
         )
 
         # Call the routing agent (it will handle delegation internally)
@@ -138,8 +139,8 @@ async def adk_chat(
                 "target_agent": "routing-agent",  # Always start with routing-agent
                 "user_context": user_context,
                 "source": "adk-web",
-                **(request.context or {})
-            }
+                **(request.context or {}),
+            },
         )
 
         # Send to agent service and get response
@@ -153,12 +154,15 @@ async def adk_chat(
 
         # Use the DB session_id (from the agent pipeline), not the client-provided one.
         # The pipeline creates/looks up a real session in the DB and passes its ID through.
-        response_session_id = agent_response.get("session_id") or request.session_id or ""
+        response_session_id = (
+            agent_response.get("session_id") or request.session_id or ""
+        )
         response_content = agent_response.get("content", "")
         if response_session_id:
             try:
                 await _append_conversation_turn(
-                    db, response_session_id,
+                    db,
+                    response_session_id,
                     user_message=request.message,
                     agent_response=response_content,
                     agent_name=actual_agent,
@@ -180,21 +184,17 @@ async def adk_chat(
             metadata={
                 **response_metadata,
                 "initial_router": "routing-agent",
-                "routing_reason": routing_reason
-            }
+                "routing_reason": routing_reason,
+            },
         )
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(
-            "ADK chat error",
-            user=request.user.email,
-            error=str(e)
-        )
+        logger.error("ADK chat error", user=request.user.email, error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to process chat request: {str(e)}"
+            detail=f"Failed to process chat request: {str(e)}",
         )
     finally:
         # Clean up request-scoped credentials regardless of outcome
@@ -203,6 +203,7 @@ async def adk_chat(
 
 class ADKAuditEntry(BaseModel):
     """Single audit log entry."""
+
     request_id: str
     timestamp: str
     message: str
@@ -214,6 +215,7 @@ class ADKAuditEntry(BaseModel):
 
 class ADKAuditResponse(BaseModel):
     """Audit log response."""
+
     entries: List[ADKAuditEntry]
     total: int
     user_email: str
@@ -222,9 +224,7 @@ class ADKAuditResponse(BaseModel):
 
 @router.get("/audit", response_model=ADKAuditResponse)
 async def adk_audit_log(
-    request: Request,
-    limit: int = 50,
-    db: AsyncSession = Depends(get_db)
+    request: Request, limit: int = 50, db: AsyncSession = Depends(get_db)
 ):
     """
     Get audit log of request history for the authenticated user.
@@ -238,7 +238,7 @@ async def adk_audit_log(
         if not auth_header.startswith("Bearer "):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authorization header required"
+                detail="Authorization header required",
             )
         payload = decode_token(auth_header)
         user_email = payload["email"]
@@ -250,8 +250,7 @@ async def adk_audit_log(
         user = await AAAService.get_user_by_email(db, user_email)
         if not user:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
+                status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
             )
 
         user_role = user.role.value if user.role else "user"
@@ -269,9 +268,8 @@ async def adk_audit_log(
         )
 
         # Build query: join request_logs with request_sessions to get user_id
-        stmt = (
-            select(RequestLog, RequestSession.user_id)
-            .join(RequestSession, RequestLog.session_id == RequestSession.session_id)
+        stmt = select(RequestLog, RequestSession.user_id).join(
+            RequestSession, RequestLog.session_id == RequestSession.session_id
         )
 
         # Non-admin users only see their own logs
@@ -285,6 +283,7 @@ async def adk_audit_log(
 
         # Build count query
         from sqlalchemy import func
+
         count_stmt = (
             select(func.count())
             .select_from(RequestLog)
@@ -312,7 +311,10 @@ async def adk_audit_log(
             if log.response_content:
                 # Strip thinking tags and truncate
                 import re
-                clean = re.sub(r"<thinking>[\s\S]*?</thinking>", "", log.response_content).strip()
+
+                clean = re.sub(
+                    r"<thinking>[\s\S]*?</thinking>", "", log.response_content
+                ).strip()
                 response_preview = clean[:200] + "..." if len(clean) > 200 else clean
 
             entry = ADKAuditEntry(
@@ -345,12 +347,13 @@ async def adk_audit_log(
         logger.error("ADK audit log error", user=user_email, error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get audit log: {str(e)}"
+            detail=f"Failed to get audit log: {str(e)}",
         )
 
 
 class AuditEventEntry(BaseModel):
     """Single SOC 2 audit event."""
+
     event_id: str
     event_type: str
     actor: str
@@ -366,6 +369,7 @@ class AuditEventEntry(BaseModel):
 
 class AuditEventsResponse(BaseModel):
     """SOC 2 audit events response."""
+
     entries: List[AuditEventEntry]
     total: int
     user_email: str
@@ -490,10 +494,15 @@ async def _append_conversation_turn(
 
     # Strip <thinking> tags from stored history – agents don't need prior reasoning
     import re
-    clean_response = re.sub(r"<thinking>[\s\S]*?</thinking>", "", agent_response).strip()
+
+    clean_response = re.sub(
+        r"<thinking>[\s\S]*?</thinking>", "", agent_response
+    ).strip()
 
     messages.append({"role": "user", "content": user_message})
-    messages.append({"role": "assistant", "content": clean_response, "agent": agent_name})
+    messages.append(
+        {"role": "assistant", "content": clean_response, "agent": agent_name}
+    )
 
     # Keep last 20 turns (40 entries)
     if len(messages) > 40:
@@ -504,6 +513,7 @@ async def _append_conversation_turn(
 
     # Explicitly mark JSON column as modified so SQLAlchemy flushes the change
     from sqlalchemy.orm.attributes import flag_modified
+
     flag_modified(session, "conversation_context")
 
     await db.commit()

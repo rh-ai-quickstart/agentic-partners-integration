@@ -30,18 +30,19 @@ On first run it prompts for your Google API key and saves it to `.env`. Then it 
 
 | User | Password | Departments | Access |
 |------|----------|-------------|--------|
-| carlos@example.com | carlos123 | engineering, software | Software support only |
+| carlos@example.com | carlos123 | engineering, software, kubernetes | Software + Kubernetes support |
 | luis@example.com | luis123 | engineering, network | Network support only |
-| sharon@example.com | sharon123 | engineering, software, network, admin | All agents |
+| sharon@example.com | sharon123 | engineering, software, network, kubernetes, admin | All agents |
 | josh@example.com | josh123 | _(none)_ | No agents (restricted) |
 
 ## Try It
 
 1. Open http://localhost:3000
 2. Click **Carlos** (or enter `carlos@example.com` / `carlos123`) and sign in
-3. Type: "My app crashes with error 500" -- Routes to software-support agent with RAG context
-4. Type: "VPN not connecting" -- Denied (Carlos lacks the `network` department)
-5. Log out, sign in as `sharon@example.com` / `sharon123` -- Both queries work (has all departments)
+3. Type: "My app crashes with error 500" -- Routes to software-support agent (local) with RAG context
+4. Type: "My pod is in CrashLoopBackOff" -- Routes to kubernetes-support agent (remote) with RAG context
+5. Type: "VPN not connecting" -- Denied (Carlos lacks the `network` department)
+6. Log out, sign in as `sharon@example.com` / `sharon123` -- All queries work (has all departments)
 
 ## Run Tests
 

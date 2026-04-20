@@ -10,6 +10,7 @@ help:
 	@echo "Setup & Deploy:"
 	@echo "  setup                    - Build, start services, initialize data (full stack)"
 	@echo "  build                    - Build all container images (no start)"
+	@echo "  sync-agents              - Sync OPA capabilities from agent YAML configs"
 	@echo "  stop                     - Stop all running containers"
 	@echo "  clean                    - Stop and remove all containers, volumes, and network"
 	@echo ""
@@ -19,6 +20,7 @@ help:
 	@echo "  test-shared-models       - Run shared-models unit tests"
 	@echo "  test-request-manager     - Run request-manager unit tests"
 	@echo "  test-agent-service       - Run agent-service unit tests"
+	@echo "  test-k8s-partner         - Run kubernetes-partner-agent unit tests"
 	@echo "  test-coverage            - Run all unit tests with coverage report"
 	@echo ""
 	@echo "Development:"
@@ -26,6 +28,7 @@ help:
 	@echo "  install-shared-models    - Install shared-models dependencies"
 	@echo "  install-agent-service    - Install agent-service dependencies"
 	@echo "  install-request-manager  - Install request-manager dependencies"
+	@echo "  install-k8s-partner      - Install kubernetes-partner-agent dependencies"
 	@echo "  reinstall                - Force reinstall all dependencies"
 	@echo ""
 	@echo "Code Quality:"
@@ -34,6 +37,7 @@ help:
 	@echo "  lint-shared-models       - Run mypy on shared-models"
 	@echo "  lint-agent-service       - Run mypy on agent-service"
 	@echo "  lint-request-manager     - Run mypy on request-manager"
+	@echo "  lint-k8s-partner         - Run mypy on kubernetes-partner-agent"
 	@echo ""
 	@echo "Lockfile Management:"
 	@echo "  check-lockfiles          - Check if all uv.lock files are up-to-date"
@@ -53,19 +57,23 @@ setup: build
 	@SKIP_BUILD=true bash scripts/setup.sh
 
 .PHONY: build
-build:
+build: sync-agents
 	@bash scripts/build_containers.sh
+
+.PHONY: sync-agents
+sync-agents:
+	@python3 scripts/sync_agent_capabilities.py
 
 .PHONY: stop
 stop:
 	@echo "Stopping all containers..."
-	@docker stop partner-pf-chat-ui partner-request-manager-full partner-agent-service-full partner-rag-api-full partner-postgres-full partner-keycloak-full partner-opa-full 2>/dev/null || true
+	@docker stop partner-pf-chat-ui partner-request-manager-full partner-agent-service-full partner-kubernetes-agent-full partner-rag-api-full partner-postgres-full partner-keycloak-full partner-opa-full 2>/dev/null || true
 	@echo "All containers stopped."
 
 .PHONY: clean
 clean: stop
 	@echo "Removing containers..."
-	@docker rm partner-pf-chat-ui partner-request-manager-full partner-agent-service-full partner-rag-api-full partner-postgres-full partner-keycloak-full partner-opa-full 2>/dev/null || true
+	@docker rm partner-pf-chat-ui partner-request-manager-full partner-agent-service-full partner-kubernetes-agent-full partner-rag-api-full partner-postgres-full partner-keycloak-full partner-opa-full 2>/dev/null || true
 	@echo "Removing network..."
 	@docker network rm partner-agent-network 2>/dev/null || true
 	@echo "Clean complete."
@@ -79,7 +87,7 @@ test: test-unit
 	@bash scripts/test.sh
 
 .PHONY: test-unit
-test-unit: test-shared-models test-request-manager test-agent-service
+test-unit: test-shared-models test-request-manager test-agent-service test-k8s-partner
 	@echo "All unit tests completed."
 
 .PHONY: test-shared-models
@@ -97,6 +105,11 @@ test-agent-service:
 	@echo "Running agent-service tests..."
 	@cd agent-service && uv run python -m pytest tests/
 
+.PHONY: test-k8s-partner
+test-k8s-partner:
+	@echo "Running kubernetes-partner-agent tests..."
+	@cd kubernetes-partner-agent && uv run python -m pytest tests/
+
 .PHONY: test-coverage
 test-coverage:
 	@echo "Running all unit tests with coverage..."
@@ -110,6 +123,9 @@ test-coverage:
 	@echo "=== request-manager ==="
 	@cd request-manager && uv run python -m pytest tests/ --cov=request_manager --cov-report=term-missing -q
 	@echo ""
+	@echo "=== kubernetes-partner-agent ==="
+	@cd kubernetes-partner-agent && uv run python -m pytest tests/ --cov=kubernetes_agent --cov-report=term-missing -q
+	@echo ""
 	@echo "Coverage report complete."
 
 # ============================================================
@@ -117,7 +133,7 @@ test-coverage:
 # ============================================================
 
 .PHONY: install
-install: install-shared-models install-agent-service install-request-manager
+install: install-shared-models install-agent-service install-request-manager install-k8s-partner
 	@echo "All dependencies installed."
 
 .PHONY: install-shared-models
@@ -135,12 +151,18 @@ install-request-manager:
 	@echo "Installing request-manager dependencies..."
 	@cd request-manager && uv sync
 
+.PHONY: install-k8s-partner
+install-k8s-partner:
+	@echo "Installing kubernetes-partner-agent dependencies..."
+	@cd kubernetes-partner-agent && uv sync
+
 .PHONY: reinstall
 reinstall:
 	@echo "Force reinstalling all dependencies..."
 	@cd shared-models && uv sync --reinstall
 	@cd agent-service && uv sync --reinstall
 	@cd request-manager && uv sync --reinstall
+	@cd kubernetes-partner-agent && uv sync --reinstall
 	@echo "All dependencies reinstalled."
 
 # ============================================================
@@ -165,7 +187,7 @@ format:
 	@echo "Formatting complete."
 
 .PHONY: lint
-lint: format lint-global lint-shared-models lint-agent-service lint-request-manager
+lint: format lint-global lint-shared-models lint-agent-service lint-request-manager lint-k8s-partner
 	@echo "All linting completed."
 
 .PHONY: lint-global
@@ -187,11 +209,15 @@ lint-agent-service:
 lint-request-manager:
 	$(call lint_mypy,request-manager)
 
+.PHONY: lint-k8s-partner
+lint-k8s-partner:
+	$(call lint_mypy,kubernetes-partner-agent)
+
 # ============================================================
 # Lockfile Management
 # ============================================================
 
-LOCKFILE_DIRS := shared-models agent-service request-manager
+LOCKFILE_DIRS := shared-models agent-service request-manager kubernetes-partner-agent
 
 .PHONY: check-lockfiles
 check-lockfiles:

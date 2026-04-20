@@ -51,6 +51,11 @@ line_length = 88
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::sqlalchemy.exc.MovedIn20Warning",
+    "ignore::DeprecationWarning:pydantic.*:",
+    "ignore:'agent_service.main' found in sys.modules:RuntimeWarning",
+]
 
 [tool.mypy]
 python_version = "3.12"

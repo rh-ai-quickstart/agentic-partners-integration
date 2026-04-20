@@ -88,6 +88,10 @@ docker run -d \
     start-dev --import-realm
 echo "  Keycloak started"
 
+# Sync OPA agent capabilities from YAML configs
+echo "  Syncing OPA agent capabilities from agent configs..."
+python3 "${PROJECT_ROOT}/scripts/sync_agent_capabilities.py"
+
 # Start OPA (Open Policy Agent)
 docker rm -f partner-opa-full 2>/dev/null || true
 docker run -d \
@@ -162,6 +166,20 @@ echo "  Migrations complete"
 echo ""
 echo -e "${YELLOW}Starting services...${NC}"
 
+# Kubernetes Partner Agent (standalone remote agent)
+docker rm -f partner-kubernetes-agent-full 2>/dev/null || true
+docker run -d \
+    --name partner-kubernetes-agent-full \
+    --network partner-agent-network \
+    -e LLM_BACKEND=gemini \
+    -e GOOGLE_API_KEY="${GOOGLE_API_KEY}" \
+    -e GEMINI_MODEL=gemini-2.5-flash \
+    -e LOG_LEVEL=INFO \
+    -e RAG_API_ENDPOINT=http://partner-rag-api-full:8080/answer \
+    -p 8002:8080 \
+    partner-kubernetes-agent:latest
+echo "  Kubernetes partner agent starting..."
+
 # Agent Service
 docker rm -f partner-agent-service-full 2>/dev/null || true
 docker run -d \
@@ -220,12 +238,17 @@ echo "  RAG API starting..."
 # Wait for all services to be ready
 echo "  Waiting for services to be ready..."
 AGENT_READY=false
+K8S_READY=false
 RM_READY=false
 RAG_READY=false
 for i in {1..60}; do
     if [ "$AGENT_READY" = false ] && curl -sf http://localhost:8001/health > /dev/null 2>&1; then
         echo "  Agent service ready"
         AGENT_READY=true
+    fi
+    if [ "$K8S_READY" = false ] && curl -sf http://localhost:8002/health > /dev/null 2>&1; then
+        echo "  Kubernetes partner agent ready"
+        K8S_READY=true
     fi
     if [ "$RM_READY" = false ] && curl -sf http://localhost:8000/health > /dev/null 2>&1; then
         echo "  Request manager ready"
@@ -235,15 +258,16 @@ for i in {1..60}; do
         echo "  RAG API ready"
         RAG_READY=true
     fi
-    if [ "$AGENT_READY" = true ] && [ "$RM_READY" = true ] && [ "$RAG_READY" = true ]; then
+    if [ "$AGENT_READY" = true ] && [ "$K8S_READY" = true ] && [ "$RM_READY" = true ] && [ "$RAG_READY" = true ]; then
         break
     fi
     sleep 2
 done
 
-if [ "$AGENT_READY" = false ] || [ "$RM_READY" = false ] || [ "$RAG_READY" = false ]; then
+if [ "$AGENT_READY" = false ] || [ "$K8S_READY" = false ] || [ "$RM_READY" = false ] || [ "$RAG_READY" = false ]; then
     echo -e "  ${YELLOW}WARNING: Some services failed to start:${NC}"
     [ "$AGENT_READY" = false ] && echo "    - Agent service (port 8001)"
+    [ "$K8S_READY" = false ] && echo "    - Kubernetes partner agent (port 8002)"
     [ "$RM_READY" = false ] && echo "    - Request manager (port 8000)"
     [ "$RAG_READY" = false ] && echo "    - RAG API (port 8003)"
     echo "  Check logs: docker logs <container-name>"
@@ -293,7 +317,7 @@ echo ""
 echo -e "${YELLOW}Verifying setup...${NC}"
 
 CHECKS_PASSED=0
-CHECKS_TOTAL=6
+CHECKS_TOTAL=7
 
 # Check each service
 for svc in "PostgreSQL:partner-postgres-full:5433" "Keycloak:localhost:9090/health/ready" "OPA:localhost:8181/health"; do
@@ -307,7 +331,7 @@ for svc in "PostgreSQL:partner-postgres-full:5433" "Keycloak:localhost:9090/heal
             CHECKS_PASSED=$((CHECKS_PASSED + 1)) && echo -e "  ${GREEN}OK${NC}  $name" || echo -e "  FAIL  $name"
     fi
 done
-for svc in "Request Manager:8000" "Agent Service:8001" "RAG API:8003"; do
+for svc in "Request Manager:8000" "Agent Service:8001" "K8s Partner Agent:8002" "RAG API:8003"; do
     name="${svc%%:*}"
     port="${svc#*:}"
     curl -sf "http://localhost:$port/health" > /dev/null 2>&1 && \
@@ -339,9 +363,9 @@ echo "Login with one of these test users:"
 echo ""
 echo "  Email                    Password     Departments"
 echo "  ───────────────────────  ───────────  ──────────────────────"
-echo "  carlos@example.com       carlos123    software"
+echo "  carlos@example.com       carlos123    software, kubernetes"
 echo "  luis@example.com         luis123       network"
-echo "  sharon@example.com       sharon123    software, network (admin)"
+echo "  sharon@example.com       sharon123    software, network, kubernetes (admin)"
 echo "  josh@example.com         josh123      (none - access denied)"
 echo ""
 echo "Each user can only chat with agents matching their departments."
@@ -350,6 +374,7 @@ echo ""
 echo "Other Services:"
 echo "  API:        http://localhost:8000    Request Manager"
 echo "  Agent:      http://localhost:8001    Agent Service"
+echo "  K8s Agent:  http://localhost:8002    Kubernetes Partner Agent (remote)"
 echo "  RAG:        http://localhost:8003    Knowledge Base API"
 echo "  Keycloak:   http://localhost:8090    Identity Provider (admin/admin123)"
 echo "  OPA:        http://localhost:8181    Policy Engine"

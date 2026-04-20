@@ -73,14 +73,12 @@ class GeminiClient(BaseLLMClient):
         config = genai.types.GenerateContentConfig(
             temperature=temperature,
             max_output_tokens=max_tokens,
-            system_instruction=system_instruction
+            system_instruction=system_instruction,
         )
 
         # Call new Google GenAI SDK (async)
         response = await self.client.aio.models.generate_content(
-            model=self.model_name,
-            contents=contents,
-            config=config
+            model=self.model_name, contents=contents, config=config
         )
 
         # Extract content
@@ -88,15 +86,21 @@ class GeminiClient(BaseLLMClient):
 
         # Gemini usage metadata
         usage = {
-            "prompt_tokens": response.usage_metadata.prompt_token_count
-            if hasattr(response, "usage_metadata")
-            else 0,
-            "completion_tokens": response.usage_metadata.candidates_token_count
-            if hasattr(response, "usage_metadata")
-            else 0,
-            "total_tokens": response.usage_metadata.total_token_count
-            if hasattr(response, "usage_metadata")
-            else 0,
+            "prompt_tokens": (
+                response.usage_metadata.prompt_token_count
+                if hasattr(response, "usage_metadata")
+                else 0
+            ),
+            "completion_tokens": (
+                response.usage_metadata.candidates_token_count
+                if hasattr(response, "usage_metadata")
+                else 0
+            ),
+            "total_tokens": (
+                response.usage_metadata.total_token_count
+                if hasattr(response, "usage_metadata")
+                else 0
+            ),
         }
 
         logger.debug(

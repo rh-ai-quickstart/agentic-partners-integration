@@ -11,7 +11,6 @@ from a2a.types import (
     UnsupportedOperationError,
 )
 from a2a.utils.errors import ServerError
-
 from agent_service.a2a.executor import SpecialistAgentExecutor
 
 
@@ -40,7 +39,10 @@ def mock_event_queue():
 class TestSpecialistAgentExecutor:
     """Tests for the SpecialistAgentExecutor."""
 
-    @patch("agent_service.a2a.executor.SpecialistAgentExecutor._invoke_specialist", new_callable=AsyncMock)
+    @patch(
+        "agent_service.a2a.executor.SpecialistAgentExecutor._invoke_specialist",
+        new_callable=AsyncMock,
+    )
     @patch("agent_service.a2a.executor.new_task")
     async def test_execute_invokes_specialist(
         self, mock_new_task, mock_invoke, executor, mock_context, mock_event_queue
@@ -91,11 +93,17 @@ class TestSpecialistAgentExecutor:
         await executor.cancel(mock_context, mock_event_queue)
 
     @patch("agent_service.agents.AgentManager")
-    @patch("agent_service.a2a.executor.SpecialistAgentExecutor._query_rag", new_callable=AsyncMock)
+    @patch(
+        "agent_service.a2a.executor.SpecialistAgentExecutor._query_rag",
+        new_callable=AsyncMock,
+    )
     async def test_invoke_specialist_calls_rag_and_agent(
         self, mock_query_rag, mock_agent_manager_cls, executor
     ):
-        mock_query_rag.return_value = ("RAG answer", [{"id": "T-1", "similarity": 0.9, "content": "Fix it"}])
+        mock_query_rag.return_value = (
+            "RAG answer",
+            [{"id": "T-1", "similarity": 0.9, "content": "Fix it"}],
+        )
 
         mock_agent = AsyncMock()
         mock_agent.create_response_with_retry.return_value = ("Solution text", False)
@@ -110,7 +118,9 @@ class TestSpecialistAgentExecutor:
         assert result == "Solution text"
 
     @patch("agent_service.a2a.executor.httpx.AsyncClient")
-    async def test_query_rag_calls_endpoint(self, mock_httpx_cls, executor, monkeypatch):
+    async def test_query_rag_calls_endpoint(
+        self, mock_httpx_cls, executor, monkeypatch
+    ):
         monkeypatch.setenv("RAG_API_ENDPOINT", "http://rag:8080/answer")
 
         mock_response = MagicMock()
@@ -133,7 +143,9 @@ class TestSpecialistAgentExecutor:
         assert sources[0]["id"] == "T-1"
 
     @patch("agent_service.a2a.executor.httpx.AsyncClient")
-    async def test_query_rag_handles_errors(self, mock_httpx_cls, executor, monkeypatch):
+    async def test_query_rag_handles_errors(
+        self, mock_httpx_cls, executor, monkeypatch
+    ):
         monkeypatch.setenv("RAG_API_ENDPOINT", "http://rag:8080/answer")
 
         mock_response = MagicMock()
@@ -149,7 +161,10 @@ class TestSpecialistAgentExecutor:
         with pytest.raises(ServerError):
             await executor._query_rag("app crash")
 
-    @patch("agent_service.a2a.executor.SpecialistAgentExecutor._invoke_specialist", new_callable=AsyncMock)
+    @patch(
+        "agent_service.a2a.executor.SpecialistAgentExecutor._invoke_specialist",
+        new_callable=AsyncMock,
+    )
     @patch("agent_service.a2a.executor.new_task")
     async def test_execute_reraises_server_error(
         self, mock_new_task, mock_invoke, executor, mock_context, mock_event_queue
@@ -166,7 +181,10 @@ class TestSpecialistAgentExecutor:
         with pytest.raises(ServerError):
             await executor.execute(mock_context, mock_event_queue)
 
-    @patch("agent_service.a2a.executor.SpecialistAgentExecutor._invoke_specialist", new_callable=AsyncMock)
+    @patch(
+        "agent_service.a2a.executor.SpecialistAgentExecutor._invoke_specialist",
+        new_callable=AsyncMock,
+    )
     @patch("agent_service.a2a.executor.new_task")
     async def test_execute_wraps_generic_exception_in_server_error(
         self, mock_new_task, mock_invoke, executor, mock_context, mock_event_queue
@@ -184,12 +202,18 @@ class TestSpecialistAgentExecutor:
         assert "Agent execution failed" in str(exc_info.value.error.message)
 
     @patch("agent_service.agents.AgentManager")
-    @patch("agent_service.a2a.executor.SpecialistAgentExecutor._query_rag", new_callable=AsyncMock)
+    @patch(
+        "agent_service.a2a.executor.SpecialistAgentExecutor._query_rag",
+        new_callable=AsyncMock,
+    )
     async def test_invoke_specialist_logs_warning_on_failed_response(
         self, mock_query_rag, mock_agent_manager_cls, executor
     ):
         """Line 174: warning is logged when agent response generation fails."""
-        mock_query_rag.return_value = ("RAG answer", [{"id": "T-1", "similarity": 0.9, "content": "Fix it"}])
+        mock_query_rag.return_value = (
+            "RAG answer",
+            [{"id": "T-1", "similarity": 0.9, "content": "Fix it"}],
+        )
 
         mock_agent = AsyncMock()
         mock_agent.create_response_with_retry.return_value = (

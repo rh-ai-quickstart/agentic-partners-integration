@@ -115,4 +115,3 @@ class OllamaClient(BaseLLMClient):
             Model identifier
         """
         return self.model
-

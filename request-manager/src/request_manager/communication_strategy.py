@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
+import httpx
 from fastapi import HTTPException, status
 from shared_models import SessionResponse, configure_logging
 from shared_models.audit import AuditService
@@ -337,22 +338,69 @@ class DirectHTTPStrategy(CommunicationStrategy):
     """Communication strategy using direct HTTP calls to agents (A2A).
 
     Uses synchronous HTTP calls for agent-to-agent communication.
+    On first use, fetches the agent registry from agent-service to
+    discover per-agent endpoint URLs (supporting remote agents).
     """
 
     def __init__(self) -> None:
-        agent_service_url = os.getenv(
+        self._agent_service_url = os.getenv(
             "AGENT_SERVICE_URL", "http://agent-service:8080"
         )
-        timeout = float(os.getenv("AGENT_TIMEOUT", "120"))
-        # Use EnhancedAgentClient for structured context support
+        self._timeout = float(os.getenv("AGENT_TIMEOUT", "120"))
+        self._registry_fetched = False
+        # Start with no per-agent endpoints; will be populated on first use
         self.agent_client = EnhancedAgentClient(
-            agent_service_url=agent_service_url, timeout=timeout
+            agent_service_url=self._agent_service_url, timeout=self._timeout
         )
         logger.info(
             "Initialized DirectHTTPStrategy with EnhancedAgentClient",
-            agent_service_url=agent_service_url,
-            timeout=timeout,
+            agent_service_url=self._agent_service_url,
+            timeout=self._timeout,
         )
+
+    async def _ensure_registry(self) -> None:
+        """Fetch the agent registry from agent-service if not yet cached.
+
+        Populates ``self.agent_client.agent_endpoints`` with per-agent
+        invoke URLs so remote agents are routed to the correct host.
+        Fetched once and cached for the lifetime of this strategy instance.
+        If the registry call fails, logs a warning and falls back to the
+        default agent-service URL for all agents.
+        """
+        if self._registry_fetched:
+            return
+        self._registry_fetched = True
+
+        registry_url = f"{self._agent_service_url.rstrip('/')}/api/v1/agents/registry"
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(registry_url)
+                resp.raise_for_status()
+                data = resp.json()
+
+            endpoints: Dict[str, str] = {}
+            for name, info in data.get("agents", {}).items():
+                endpoint = info.get("endpoint")
+                if endpoint:
+                    endpoints[name] = endpoint
+
+            if endpoints:
+                self.agent_client.agent_endpoints = endpoints
+                logger.info(
+                    "Agent registry loaded",
+                    agent_count=len(endpoints),
+                    agents=list(endpoints.keys()),
+                )
+            else:
+                logger.info("Agent registry loaded (all agents local)")
+
+        except Exception as e:
+            logger.warning(
+                "Failed to fetch agent registry, using default agent-service URL for all agents",
+                registry_url=registry_url,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
 
     async def send_request(self, normalized_request: NormalizedRequest) -> bool:
         """Send request via direct HTTP call to agent.
@@ -399,6 +447,9 @@ class DirectHTTPStrategy(CommunicationStrategy):
         Returns:
             Final agent response with content
         """
+        # Ensure we have per-agent endpoint URLs for remote agents
+        await self._ensure_registry()
+
         current_agent = target_agent or "routing-agent"
         user_message = normalized_request.content
         transfer_context: Dict[str, Any] = {}
@@ -419,8 +470,7 @@ class DirectHTTPStrategy(CommunicationStrategy):
         )
         # Get conversation history for context extraction
         conversation_history = await self._get_conversation_history(
-            normalized_request.session_id,
-            db
+            normalized_request.session_id, db
         )
 
         # Track previous agent for context optimization
@@ -429,8 +479,8 @@ class DirectHTTPStrategy(CommunicationStrategy):
         # Build user SPIFFE ID for delegation headers on specialist calls.
         # Delegation headers tell agent-service who the user is, enabling
         # defense-in-depth OPA checks at the agent-service level.
-        user_spiffe_for_delegation = (
-            user_spiffe_id or make_spiffe_id("user", user_email)
+        user_spiffe_for_delegation = user_spiffe_id or make_spiffe_id(
+            "user", user_email
         )
 
         # Include departments in transfer_context so routing-agent
@@ -648,9 +698,7 @@ class DirectHTTPStrategy(CommunicationStrategy):
             from shared_models.models import RequestSession
             from sqlalchemy import select
 
-            stmt = select(RequestSession).where(
-                RequestSession.session_id == session_id
-            )
+            stmt = select(RequestSession).where(RequestSession.session_id == session_id)
             result = await db.execute(stmt)
             session = result.scalar_one_or_none()
 
@@ -730,6 +778,7 @@ class UnifiedRequestProcessor:
             )
 
         import time
+
         start_time = time.monotonic()
 
         response = await self.strategy.invoke_agent_with_routing(

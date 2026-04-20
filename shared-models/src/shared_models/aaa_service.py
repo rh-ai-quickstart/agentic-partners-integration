@@ -21,10 +21,7 @@ class AAAService:
     """Service for user management and department-based access control."""
 
     @staticmethod
-    async def get_user_by_email(
-        db: AsyncSession,
-        email: str
-    ) -> Optional[User]:
+    async def get_user_by_email(db: AsyncSession, email: str) -> Optional[User]:
         """Get user by email address."""
         try:
             stmt = select(User).where(User.primary_email == email)
@@ -32,11 +29,7 @@ class AAAService:
             return result.scalar_one_or_none()
 
         except Exception as e:
-            logger.error(
-                "Failed to get user by email",
-                email=email,
-                error=str(e)
-            )
+            logger.error("Failed to get user by email", email=email, error=str(e))
             return None
 
     @staticmethod
@@ -46,7 +39,7 @@ class AAAService:
         role: UserRole = UserRole.USER,
         organization: Optional[str] = None,
         department: Optional[str] = None,
-        departments: Optional[List[str]] = None
+        departments: Optional[List[str]] = None,
     ) -> Optional[User]:
         """Get existing user or create new one.
 
@@ -72,7 +65,7 @@ class AAAService:
                 departments=departments or [],
                 status="active",
                 organization=organization,
-                department=department
+                department=department,
             )
 
             db.add(user)
@@ -80,28 +73,18 @@ class AAAService:
             await db.refresh(user)
 
             logger.info(
-                "Created new user",
-                email=email,
-                role=role,
-                departments=departments
+                "Created new user", email=email, role=role, departments=departments
             )
 
             return user
 
         except Exception as e:
-            logger.error(
-                "Failed to get or create user",
-                email=email,
-                error=str(e)
-            )
+            logger.error("Failed to get or create user", email=email, error=str(e))
             await db.rollback()
             return None
 
     @staticmethod
-    async def get_user_departments(
-        db: AsyncSession,
-        user_email: str
-    ) -> List[str]:
+    async def get_user_departments(db: AsyncSession, user_email: str) -> List[str]:
         """Get user's departments for OPA authorization.
 
         First checks the database user record. If empty, falls back to
@@ -118,9 +101,7 @@ class AAAService:
 
         except Exception as e:
             logger.error(
-                "Failed to get user departments",
-                user_email=user_email,
-                error=str(e)
+                "Failed to get user departments", user_email=user_email, error=str(e)
             )
             return []
 
@@ -131,7 +112,7 @@ class AAAService:
         role: Optional[UserRole] = None,
         departments: Optional[List[str]] = None,
         privileges: Optional[Dict[str, Any]] = None,
-        status: Optional[str] = None
+        status: Optional[str] = None,
     ) -> bool:
         """Update user permissions and department access.
 
@@ -147,7 +128,9 @@ class AAAService:
             user = await AAAService.get_user_by_email(db, user_email)
 
             if not user:
-                logger.error("Cannot update permissions for non-existent user", email=user_email)
+                logger.error(
+                    "Cannot update permissions for non-existent user", email=user_email
+                )
                 return False
 
             if role is not None:
@@ -166,16 +149,14 @@ class AAAService:
                 email=user_email,
                 role=user.role,
                 departments=user.departments,
-                status=user.status
+                status=user.status,
             )
 
             return True
 
         except Exception as e:
             logger.error(
-                "Failed to update user permissions",
-                email=user_email,
-                error=str(e)
+                "Failed to update user permissions", email=user_email, error=str(e)
             )
             await db.rollback()
             return False

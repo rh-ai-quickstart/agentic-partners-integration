@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -61,6 +61,7 @@ class SessionStatus(str, Enum):
 # User Models
 class UserRole(str, Enum):
     """User roles for authorization."""
+
     ADMIN = "admin"
     MANAGER = "manager"
     ENGINEER = "engineer"
@@ -81,17 +82,25 @@ class User(Base, TimestampMixin):  # type: ignore[misc]
     )  # For display/search - unique to prevent duplicates
 
     # Identity
-    spiffe_id = Column(String(255), nullable=True, unique=True)  # SPIFFE workload identity
+    spiffe_id = Column(
+        String(255), nullable=True, unique=True
+    )  # SPIFFE workload identity
     last_login = Column(TIMESTAMP(timezone=True), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False, index=True)
 
     # AAA (Authentication, Authorization, Audit)
     role: Column[UserRole] = Column(
-        SQLEnum(UserRole, name='user_role', values_callable=lambda x: [e.value for e in x]),
-        default=UserRole.USER.value, nullable=False, index=True
+        SQLEnum(
+            UserRole, name="user_role", values_callable=lambda x: [e.value for e in x]
+        ),
+        default=UserRole.USER.value,
+        nullable=False,
+        index=True,
     )
     privileges = Column(JSON, default=dict, nullable=False)  # Fine-grained permissions
-    departments = Column(JSON, default=list, nullable=False)  # Department tags for OPA authorization
+    departments = Column(
+        JSON, default=list, nullable=False
+    )  # Department tags for OPA authorization
     status = Column(String(20), default="active", nullable=False, index=True)
 
     # Organization structure
@@ -138,9 +147,7 @@ class RequestSession(Base, TimestampMixin):  # type: ignore[misc]
 
     # Agent tracking
     current_agent_id = Column(String(255))  # Currently assigned agent
-    conversation_thread_id = Column(
-        String(255)
-    )  # LangGraph conversation thread ID
+    conversation_thread_id = Column(String(255))  # LangGraph conversation thread ID
 
     # Session metadata
     integration_metadata = Column(JSON, default=dict)
@@ -265,7 +272,9 @@ class UserIntegrationMapping(Base, TimestampMixin):  # type: ignore[misc]
     integration_type: Column[IntegrationType] = Column(
         SQLEnum(IntegrationType), nullable=False
     )
-    integration_user_id = Column(String(255), nullable=False)  # Platform-specific user ID
+    integration_user_id = Column(
+        String(255), nullable=False
+    )  # Platform-specific user ID
 
     # Validation metadata
     last_validated_at = Column(TIMESTAMP(timezone=True))
@@ -354,10 +363,7 @@ class NormalizedRequest(BaseModel):
             return IntegrationType(v.upper())
         return v
 
-    class Config:
-        """Pydantic config."""
-
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class AuditEvent(Base):  # type: ignore[misc]

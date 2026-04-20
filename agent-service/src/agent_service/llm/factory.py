@@ -85,9 +85,7 @@ class LLMClientFactory:
         return client
 
     @staticmethod
-    def _create_openai_client(
-        model: Optional[str] = None, **kwargs
-    ) -> OpenAIClient:
+    def _create_openai_client(model: Optional[str] = None, **kwargs) -> OpenAIClient:
         """Create OpenAI client.
 
         Args:
@@ -111,9 +109,7 @@ class LLMClientFactory:
         return OpenAIClient(api_key=api_key, model=model)
 
     @staticmethod
-    def _create_gemini_client(
-        model: Optional[str] = None, **kwargs
-    ) -> GeminiClient:
+    def _create_gemini_client(model: Optional[str] = None, **kwargs) -> GeminiClient:
         """Create Gemini client.
 
         Args:
@@ -137,9 +133,7 @@ class LLMClientFactory:
         return GeminiClient(api_key=api_key, model=model)
 
     @staticmethod
-    def _create_ollama_client(
-        model: Optional[str] = None, **kwargs
-    ) -> OllamaClient:
+    def _create_ollama_client(model: Optional[str] = None, **kwargs) -> OllamaClient:
         """Create Ollama client.
 
         Args:

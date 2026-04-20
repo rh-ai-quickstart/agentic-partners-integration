@@ -13,8 +13,18 @@ from .identity import extract_identity
 
 # Paths that don't require identity (health checks, metrics, etc.)
 SKIP_PATHS = {
-    "/health", "/health/detailed", "/ready", "/metrics", "/openapi.json", "/docs", "/redoc",
-    "/auth/login", "/auth/me", "/auth/refresh", "/auth/config", "/auth/callback",
+    "/health",
+    "/health/detailed",
+    "/ready",
+    "/metrics",
+    "/openapi.json",
+    "/docs",
+    "/redoc",
+    "/auth/login",
+    "/auth/me",
+    "/auth/refresh",
+    "/auth/config",
+    "/auth/callback",
 }
 
 

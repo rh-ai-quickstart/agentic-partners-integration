@@ -33,13 +33,11 @@ def upgrade() -> None:
 
     # Create unique partial index to prevent multiple active sessions per user/integration
     # This uses PostgreSQL's partial index feature (WHERE clause)
-    op.execute(
-        """
+    op.execute("""
         CREATE UNIQUE INDEX idx_one_active_session_per_user_integration
         ON request_sessions (user_id, integration_type)
         WHERE status = 'ACTIVE'
-        """
-    )
+        """)
 
     # Add index on version for faster lookups during optimistic locking
     op.create_index(

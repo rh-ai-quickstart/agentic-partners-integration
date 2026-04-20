@@ -98,11 +98,11 @@ class SpecialistAgentExecutor(AgentExecutor):
         context: RequestContext,
         event_queue: EventQueue,
     ) -> None:
-        if (
-            context.current_task
-            and context.current_task.status.state
-            in {TaskState.completed, TaskState.failed, TaskState.canceled}
-        ):
+        if context.current_task and context.current_task.status.state in {
+            TaskState.completed,
+            TaskState.failed,
+            TaskState.canceled,
+        }:
             return
         raise ServerError(
             UnsupportedOperationError(message="Task cancellation is not supported.")
@@ -196,9 +196,7 @@ The following information was retrieved from the support knowledge base for the 
                 )
 
                 if resp.status_code != 200:
-                    logger.error(
-                        "RAG API returned %s: %s", resp.status_code, resp.text
-                    )
+                    logger.error("RAG API returned %s: %s", resp.status_code, resp.text)
                     raise ServerError(
                         InternalError(
                             message=f"RAG API unavailable (HTTP {resp.status_code})"

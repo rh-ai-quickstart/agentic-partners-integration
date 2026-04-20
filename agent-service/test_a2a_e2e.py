@@ -37,13 +37,12 @@ from a2a.types import (
 )
 from a2a.utils import new_task
 from a2a.utils.errors import ServerError
-from starlette.applications import Starlette
-from starlette.routing import Mount
-
 from agent_service.a2a.agent_cards import (
     create_network_support_card,
     create_software_support_card,
 )
+from starlette.applications import Starlette
+from starlette.routing import Mount
 
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
@@ -76,6 +75,7 @@ class MockSpecialistExecutor(AgentExecutor):
         user_input = context.get_user_input()
         if not user_input:
             from a2a.types import InvalidParamsError
+
             raise ServerError(InvalidParamsError(message="No input"))
 
         task = context.current_task or new_task(context.message)
@@ -97,7 +97,7 @@ class MockSpecialistExecutor(AgentExecutor):
         )
 
         response = (
-            f"[{self._name}] Based on your query \"{user_input[:80]}\", "
+            f'[{self._name}] Based on your query "{user_input[:80]}", '
             f"here is the troubleshooting guidance:\n\n"
             f"1. Check the system logs for related errors\n"
             f"2. Review the configuration files\n"
@@ -120,6 +120,7 @@ class MockSpecialistExecutor(AgentExecutor):
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         from a2a.types import UnsupportedOperationError
+
         raise ServerError(UnsupportedOperationError(message="Not supported"))
 
 
@@ -137,13 +138,19 @@ def build_test_server() -> Starlette:
         task_store=InMemoryTaskStore(),
     )
 
-    sw_app = A2AStarletteApplication(agent_card=sw_card, http_handler=sw_handler).build()
-    nw_app = A2AStarletteApplication(agent_card=nw_card, http_handler=nw_handler).build()
+    sw_app = A2AStarletteApplication(
+        agent_card=sw_card, http_handler=sw_handler
+    ).build()
+    nw_app = A2AStarletteApplication(
+        agent_card=nw_card, http_handler=nw_handler
+    ).build()
 
-    root = Starlette(routes=[
-        Mount("/a2a/software-support", app=sw_app),
-        Mount("/a2a/network-support", app=nw_app),
-    ])
+    root = Starlette(
+        routes=[
+            Mount("/a2a/software-support", app=sw_app),
+            Mount("/a2a/network-support", app=nw_app),
+        ]
+    )
     return root
 
 
@@ -158,25 +165,39 @@ async def test_agent_card(http: httpx.AsyncClient, base_url: str, expected_name:
 
     card = AgentCard(**resp.json())
     record(f"Card name matches", card.name == expected_name, f"got '{card.name}'")
-    record(f"Protocol version 0.3.0", card.protocol_version == "0.3.0", card.protocol_version)
-    record(f"Transport JSONRPC", card.preferred_transport == "JSONRPC", str(card.preferred_transport))
+    record(
+        f"Protocol version 0.3.0",
+        card.protocol_version == "0.3.0",
+        card.protocol_version,
+    )
+    record(
+        f"Transport JSONRPC",
+        card.preferred_transport == "JSONRPC",
+        str(card.preferred_transport),
+    )
     record(f"Has skills", len(card.skills) > 0, f"{len(card.skills)} skills")
-    record(f"Has description", len(card.description) > 50, f"{len(card.description)} chars")
+    record(
+        f"Has description", len(card.description) > 50, f"{len(card.description)} chars"
+    )
     record(f"Capabilities set", card.capabilities is not None, "")
     return card
 
 
-async def test_message_send(http: httpx.AsyncClient, base_url: str, agent_label: str, query: str):
+async def test_message_send(
+    http: httpx.AsyncClient, base_url: str, agent_label: str, query: str
+):
     """Test JSON-RPC message/send (non-streaming)."""
     msg = Message(
         message_id=str(uuid.uuid4()),
         role="user",
         parts=[
             Part(root=TextPart(text=query)),
-            Part(root=DataPart(
-                data={"user_input": query, "context_summary": "E2E test"},
-                metadata={"type": "structured_context", "schema_version": "1.0"},
-            )),
+            Part(
+                root=DataPart(
+                    data={"user_input": query, "context_summary": "E2E test"},
+                    metadata={"type": "structured_context", "schema_version": "1.0"},
+                )
+            ),
         ],
         context_id=f"e2e-session-{uuid.uuid4().hex[:8]}",
     )
@@ -190,7 +211,11 @@ async def test_message_send(http: httpx.AsyncClient, base_url: str, agent_label:
 
     url = base_url.rstrip("/") + "/"
     resp = await http.post(url, json=jsonrpc)
-    record(f"message/send HTTP 200 ({agent_label})", resp.status_code == 200, f"status={resp.status_code}")
+    record(
+        f"message/send HTTP 200 ({agent_label})",
+        resp.status_code == 200,
+        f"status={resp.status_code}",
+    )
 
     body = resp.json()
     record(f"JSONRPC 2.0 response", body.get("jsonrpc") == "2.0", "")
@@ -215,19 +240,32 @@ async def test_message_send(http: httpx.AsyncClient, base_url: str, agent_label:
         text = parts[0].get("text", "")
         record(f"Response is non-empty", len(text) > 20, f"{len(text)} chars")
         has_agent = agent_label.replace(" ", "-").lower().replace(" agent", "")
-        record(f"Response from correct agent", any(kw in text.lower() for kw in [agent_label.split()[0].lower(), "knowledge base"]), f"preview: {text[:80]}...")
+        record(
+            f"Response from correct agent",
+            any(
+                kw in text.lower()
+                for kw in [agent_label.split()[0].lower(), "knowledge base"]
+            ),
+            f"preview: {text[:80]}...",
+        )
 
     context_id = result.get("contextId")
     record(f"context_id propagated", context_id is not None, context_id or "missing")
 
 
-async def test_a2a_client(http: httpx.AsyncClient, base_url: str, agent_label: str, query: str):
+async def test_a2a_client(
+    http: httpx.AsyncClient, base_url: str, agent_label: str, query: str
+):
     """Test using the real A2A SDK client (same client the supervisor uses)."""
     async with httpx.AsyncClient(timeout=30.0) as sdk_http:
         url = base_url.rstrip("/") + "/"
         resolver = A2ACardResolver(httpx_client=sdk_http, base_url=url)
         card = await resolver.get_agent_card()
-        record(f"A2A client card resolution ({agent_label})", card is not None, card.name if card else "failed")
+        record(
+            f"A2A client card resolution ({agent_label})",
+            card is not None,
+            card.name if card else "failed",
+        )
 
         config = A2AClientConfig(
             httpx_client=sdk_http,
@@ -257,14 +295,32 @@ async def test_a2a_client(http: httpx.AsyncClient, base_url: str, agent_label: s
                 task, update = last
                 if task:
                     state = task.status.state if task.status else None
-                    record(f"A2A client task completed", state == TaskState.completed, f"state={state}")
+                    record(
+                        f"A2A client task completed",
+                        state == TaskState.completed,
+                        f"state={state}",
+                    )
                     if task.status and task.status.message:
-                        text_parts = [p.root.text for p in task.status.message.parts if hasattr(p.root, "text")]
+                        text_parts = [
+                            p.root.text
+                            for p in task.status.message.parts
+                            if hasattr(p.root, "text")
+                        ]
                         full_text = " ".join(text_parts)
-                        record(f"A2A client got text response", len(full_text) > 20, f"{len(full_text)} chars")
+                        record(
+                            f"A2A client got text response",
+                            len(full_text) > 20,
+                            f"{len(full_text)} chars",
+                        )
             elif isinstance(last, Message):
-                text_parts = [p.root.text for p in last.parts if hasattr(p.root, "text")]
-                record(f"A2A client got Message", len(text_parts) > 0, f"{len(text_parts)} text parts")
+                text_parts = [
+                    p.root.text for p in last.parts if hasattr(p.root, "text")
+                ]
+                record(
+                    f"A2A client got Message",
+                    len(text_parts) > 0,
+                    f"{len(text_parts)} text parts",
+                )
 
 
 async def run_tests():
@@ -274,7 +330,9 @@ async def run_tests():
     print("=" * 64)
 
     server_app = build_test_server()
-    config = uvicorn.Config(server_app, host="127.0.0.1", port=SERVER_PORT, log_level="error")
+    config = uvicorn.Config(
+        server_app, host="127.0.0.1", port=SERVER_PORT, log_level="error"
+    )
     server = uvicorn.Server(config)
 
     loop = asyncio.get_event_loop()
@@ -292,10 +350,20 @@ async def run_tests():
         await test_agent_card(http, SW_BASE, "Software Support Agent")
 
         print("\n  JSON-RPC message/send:")
-        await test_message_send(http, SW_BASE, "software-support", "My app crashes with a segfault when processing large files")
+        await test_message_send(
+            http,
+            SW_BASE,
+            "software-support",
+            "My app crashes with a segfault when processing large files",
+        )
 
         print("\n  A2A SDK Client (same as supervisor):")
-        await test_a2a_client(http, SW_BASE, "software-support", "Error code 0x80070005 during installation")
+        await test_a2a_client(
+            http,
+            SW_BASE,
+            "software-support",
+            "Error code 0x80070005 during installation",
+        )
 
         # ── Network Support Agent ──
         print(f"\n{'─'*64}")
@@ -306,10 +374,20 @@ async def run_tests():
         await test_agent_card(http, NW_BASE, "Network Support Agent")
 
         print("\n  JSON-RPC message/send:")
-        await test_message_send(http, NW_BASE, "network-support", "My VPN keeps disconnecting every few minutes")
+        await test_message_send(
+            http,
+            NW_BASE,
+            "network-support",
+            "My VPN keeps disconnecting every few minutes",
+        )
 
         print("\n  A2A SDK Client (same as supervisor):")
-        await test_a2a_client(http, NW_BASE, "network-support", "DNS resolution fails for internal domains")
+        await test_a2a_client(
+            http,
+            NW_BASE,
+            "network-support",
+            "DNS resolution fails for internal domains",
+        )
 
     server.should_exit = True
     await server_task

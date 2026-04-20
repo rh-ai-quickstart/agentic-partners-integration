@@ -5,7 +5,7 @@ from typing import Any, Type
 
 from sqlalchemy import Column, MetaData
 from sqlalchemy.dialects.postgresql import TIMESTAMP
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 
 # Define consistent naming convention for constraints
 naming_convention = {

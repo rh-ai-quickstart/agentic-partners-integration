@@ -3,8 +3,8 @@ package partner.authorization
 # User-to-department mappings (fallback for local/mock mode).
 # In production with OIDC/Keycloak, departments come from JWT group claims.
 user_departments_fallback := {
-	"carlos@example.com": ["engineering", "software"],
+	"carlos@example.com": ["engineering", "software", "kubernetes"],
 	"luis@example.com": ["engineering", "network"],
-	"sharon@example.com": ["engineering", "software", "network", "admin"],
+	"sharon@example.com": ["engineering", "software", "network", "kubernetes", "admin"],
 	"josh@example.com": [],
 }

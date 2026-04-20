@@ -58,17 +58,13 @@ def upgrade() -> None:
     try:
         for enum_name, enum_values in enums_to_create:
             values_str = "', '".join(enum_values)
-            connection.execute(
-                sa.text(
-                    f"""
+            connection.execute(sa.text(f"""
                     DO $$ BEGIN
                         IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = '{enum_name}') THEN
                             CREATE TYPE {enum_name} AS ENUM ('{values_str}');
                         END IF;
                     END $$;
-                """
-                )
-            )
+                """))
 
     except Exception:
         import traceback
@@ -467,8 +463,7 @@ def upgrade() -> None:
     )
 
     # Create pg_advisory_lock_held function
-    op.execute(
-        """
+    op.execute("""
         CREATE OR REPLACE FUNCTION pg_advisory_lock_held(key BIGINT)
         RETURNS BOOLEAN
         LANGUAGE plpgsql
@@ -489,8 +484,7 @@ def upgrade() -> None:
             RETURN lock_count > 0;
         END;
         $$;
-    """
-    )
+    """)
 
 
 def downgrade() -> None:

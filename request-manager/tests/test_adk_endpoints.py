@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-
 from request_manager.adk_endpoints import _append_conversation_turn
 
 # ---------------------------------------------------------------------------
@@ -170,7 +169,10 @@ class TestAppendConversationTurn:
 class TestAdkChatEndpoint:
     """Tests for the /adk/chat endpoint."""
 
-    @patch("request_manager.adk_endpoints._append_conversation_turn", new_callable=AsyncMock)
+    @patch(
+        "request_manager.adk_endpoints._append_conversation_turn",
+        new_callable=AsyncMock,
+    )
     @patch("request_manager.adk_endpoints.UnifiedRequestProcessor")
     @patch("request_manager.adk_endpoints.get_communication_strategy")
     @patch("request_manager.adk_endpoints.AAAMiddleware")
@@ -242,7 +244,10 @@ class TestAdkChatEndpoint:
             await adk_chat(request, http_request, db)
         assert exc_info.value.status_code == 401
 
-    @patch("request_manager.adk_endpoints._append_conversation_turn", new_callable=AsyncMock)
+    @patch(
+        "request_manager.adk_endpoints._append_conversation_turn",
+        new_callable=AsyncMock,
+    )
     @patch("request_manager.adk_endpoints.UnifiedRequestProcessor")
     @patch("request_manager.adk_endpoints.get_communication_strategy")
     @patch("request_manager.adk_endpoints.AAAMiddleware")

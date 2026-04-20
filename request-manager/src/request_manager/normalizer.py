@@ -26,8 +26,8 @@ class RequestNormalizer:
         request_id = str(uuid.uuid4())
 
         target_agent_id = None
-        if hasattr(request, 'metadata') and request.metadata:
-            target_agent_id = request.metadata.get('target_agent')
+        if hasattr(request, "metadata") and request.metadata:
+            target_agent_id = request.metadata.get("target_agent")
 
         base_data = {
             "request_id": request_id,

@@ -4,7 +4,6 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from shared_models.models import User, UserRole
 
 

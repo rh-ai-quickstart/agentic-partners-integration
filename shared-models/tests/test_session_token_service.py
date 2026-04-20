@@ -14,9 +14,7 @@ class TestGetTokenCounts:
         mock_result.first.return_value = mock_row
         mock_db_session.execute.return_value = mock_result
 
-        counts = await SessionTokenService.get_token_counts(
-            mock_db_session, "sess-123"
-        )
+        counts = await SessionTokenService.get_token_counts(mock_db_session, "sess-123")
 
         assert counts is not None
         assert counts["total_input_tokens"] == 100
@@ -45,9 +43,7 @@ class TestGetTokenCounts:
         mock_result.first.return_value = mock_row
         mock_db_session.execute.return_value = mock_result
 
-        counts = await SessionTokenService.get_token_counts(
-            mock_db_session, "sess-123"
-        )
+        counts = await SessionTokenService.get_token_counts(mock_db_session, "sess-123")
 
         assert counts is not None
         assert all(v == 0 for v in counts.values())
@@ -55,8 +51,6 @@ class TestGetTokenCounts:
     async def test_handles_exception(self, mock_db_session):
         mock_db_session.execute.side_effect = Exception("db error")
 
-        counts = await SessionTokenService.get_token_counts(
-            mock_db_session, "sess-123"
-        )
+        counts = await SessionTokenService.get_token_counts(mock_db_session, "sess-123")
 
         assert counts is None

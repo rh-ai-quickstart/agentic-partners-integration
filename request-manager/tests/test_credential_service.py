@@ -1,7 +1,6 @@
 """Tests for request_manager.credential_service."""
 
 import pytest
-
 from request_manager.credential_service import CredentialService
 
 

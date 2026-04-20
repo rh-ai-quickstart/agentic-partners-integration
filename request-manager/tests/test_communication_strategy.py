@@ -3,7 +3,6 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from request_manager.communication_strategy import (
     DirectHTTPStrategy,
     UnifiedRequestProcessor,
@@ -48,6 +47,86 @@ class TestDirectHTTPStrategyInit:
 
 
 # ---------------------------------------------------------------------------
+# DirectHTTPStrategy._ensure_registry
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestEnsureRegistry:
+    """Tests for _ensure_registry (agent endpoint discovery)."""
+
+    async def test_fetches_registry_and_populates_endpoints(self):
+        """On first call, fetches registry and sets agent_endpoints."""
+        strategy = DirectHTTPStrategy()
+
+        registry_data = {
+            "agents": {
+                "software-support": {
+                    "endpoint": "http://agent-service:8080/api/v1/agents/software-support/invoke",
+                    "departments": ["software"],
+                    "description": "SW",
+                },
+                "db-support": {
+                    "endpoint": "http://db-agent:9090/api/v1/agents/db-support/invoke",
+                    "departments": ["database"],
+                    "description": "DB",
+                },
+            }
+        }
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = registry_data
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch(
+            "request_manager.communication_strategy.httpx.AsyncClient"
+        ) as mock_httpx:
+            mock_instance = AsyncMock()
+            mock_instance.get = AsyncMock(return_value=mock_resp)
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            mock_httpx.return_value = mock_instance
+
+            await strategy._ensure_registry()
+
+        assert strategy.agent_client.agent_endpoints["db-support"] == (
+            "http://db-agent:9090/api/v1/agents/db-support/invoke"
+        )
+        assert strategy._registry_fetched is True
+
+    async def test_only_fetches_once(self):
+        """Second call is a no-op (cached)."""
+        strategy = DirectHTTPStrategy()
+        strategy._registry_fetched = True
+
+        with patch(
+            "request_manager.communication_strategy.httpx.AsyncClient"
+        ) as mock_httpx:
+            await strategy._ensure_registry()
+            mock_httpx.assert_not_called()
+
+    async def test_handles_registry_failure_gracefully(self):
+        """If registry fetch fails, logs warning but does not raise."""
+        strategy = DirectHTTPStrategy()
+
+        with patch(
+            "request_manager.communication_strategy.httpx.AsyncClient"
+        ) as mock_httpx:
+            mock_instance = AsyncMock()
+            mock_instance.get = AsyncMock(side_effect=Exception("Connection refused"))
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            mock_httpx.return_value = mock_instance
+
+            # Should not raise
+            await strategy._ensure_registry()
+
+        assert strategy._registry_fetched is True
+        assert strategy.agent_client.agent_endpoints == {}
+
+
+# ---------------------------------------------------------------------------
 # DirectHTTPStrategy.invoke_agent_with_routing
 # ---------------------------------------------------------------------------
 
@@ -60,6 +139,7 @@ class TestInvokeAgentWithRouting:
         """Create a DirectHTTPStrategy with a mocked agent_client."""
         strategy = DirectHTTPStrategy()
         strategy.agent_client = AsyncMock()
+        strategy._registry_fetched = True  # Skip registry fetch in tests
         return strategy
 
     async def test_routes_through_routing_agent(self):
@@ -109,15 +189,22 @@ class TestInvokeAgentWithRouting:
         db = AsyncMock()
 
         # Mock _get_conversation_history and OPA
-        with patch.object(
-            strategy, "_get_conversation_history", new_callable=AsyncMock, return_value=[]
-        ), patch(
-            "shared_models.opa_client.check_agent_authorization",
-            new_callable=AsyncMock,
-            return_value=FakeOPADecision(),
-        ), patch(
-            "request_manager.communication_strategy.make_spiffe_id",
-            return_value="spiffe://test/service/request-manager",
+        with (
+            patch.object(
+                strategy,
+                "_get_conversation_history",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "shared_models.opa_client.check_agent_authorization",
+                new_callable=AsyncMock,
+                return_value=FakeOPADecision(),
+            ),
+            patch(
+                "request_manager.communication_strategy.make_spiffe_id",
+                return_value="spiffe://test/service/request-manager",
+            ),
         ):
             result = await strategy.invoke_agent_with_routing(normalized, db)
 
@@ -159,19 +246,29 @@ class TestInvokeAgentWithRouting:
 
         db = AsyncMock()
 
-        with patch.object(
-            strategy, "_get_conversation_history", new_callable=AsyncMock, return_value=[]
-        ), patch(
-            "shared_models.opa_client.check_agent_authorization",
-            new_callable=AsyncMock,
-            return_value=FakeOPADecision(),
-        ), patch(
-            "request_manager.communication_strategy.make_spiffe_id",
-            return_value="spiffe://test/service/request-manager",
+        with (
+            patch.object(
+                strategy,
+                "_get_conversation_history",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "shared_models.opa_client.check_agent_authorization",
+                new_callable=AsyncMock,
+                return_value=FakeOPADecision(),
+            ),
+            patch(
+                "request_manager.communication_strategy.make_spiffe_id",
+                return_value="spiffe://test/service/request-manager",
+            ),
         ):
             result = await strategy.invoke_agent_with_routing(normalized, db)
 
-        assert "access" in result["content"].lower() or "does not have" in result["content"].lower()
+        assert (
+            "access" in result["content"].lower()
+            or "does not have" in result["content"].lower()
+        )
         assert result["metadata"]["blocked_agent"] == "network-support"
 
     async def test_direct_response_without_routing(self):
@@ -191,12 +288,17 @@ class TestInvokeAgentWithRouting:
         normalized.session_id = "sess-3"
         normalized.user_id = "user@example.com"
         normalized.content = "Hello!"
-        normalized.user_context = {"user_context": {"departments": [], "email": "user@example.com"}}
+        normalized.user_context = {
+            "user_context": {"departments": [], "email": "user@example.com"}
+        }
 
         db = AsyncMock()
 
         with patch.object(
-            strategy, "_get_conversation_history", new_callable=AsyncMock, return_value=[]
+            strategy,
+            "_get_conversation_history",
+            new_callable=AsyncMock,
+            return_value=[],
         ):
             result = await strategy.invoke_agent_with_routing(normalized, db)
 
@@ -337,17 +439,23 @@ class TestCreateOrGetSessionShared:
         request.channel_id = None
         request.thread_id = None
 
-        with patch(
-            "shared_models.resolve_canonical_user_id",
-            new_callable=AsyncMock,
-            return_value="canonical-uid",
-        ), patch(
-            "shared_models.BaseSessionManager",
-        ) as mock_bsm, patch(
-            "shared_models.SessionResponse",
-        ) as mock_sr:
+        with (
+            patch(
+                "shared_models.resolve_canonical_user_id",
+                new_callable=AsyncMock,
+                return_value="canonical-uid",
+            ),
+            patch(
+                "shared_models.BaseSessionManager",
+            ) as mock_bsm,
+            patch(
+                "shared_models.SessionResponse",
+            ) as mock_sr,
+        ):
             mock_bsm_instance = AsyncMock()
-            mock_bsm_instance.create_session = AsyncMock(return_value=mock_session_response)
+            mock_bsm_instance.create_session = AsyncMock(
+                return_value=mock_session_response
+            )
             mock_bsm.return_value = mock_bsm_instance
             mock_sr.model_validate.return_value = MagicMock(session_id="new-sess-id")
 
@@ -377,13 +485,16 @@ class TestCreateOrGetSessionShared:
         request.integration_type = "WEB"
         request.metadata = {}
 
-        with patch(
-            "shared_models.resolve_canonical_user_id",
-            new_callable=AsyncMock,
-            return_value="canonical-uid",
-        ), patch(
-            "shared_models.SessionResponse",
-        ) as mock_sr:
+        with (
+            patch(
+                "shared_models.resolve_canonical_user_id",
+                new_callable=AsyncMock,
+                return_value="canonical-uid",
+            ),
+            patch(
+                "shared_models.SessionResponse",
+            ) as mock_sr,
+        ):
             mock_sr.model_validate.return_value = MagicMock(session_id="existing-sess")
             result = await create_or_get_session_shared(request, db)
 
@@ -426,7 +537,8 @@ class TestUnifiedRequestProcessor:
         request.user_id = "user@example.com"
         request.metadata = {}
 
-        db = AsyncMock()
+        db = MagicMock()
+        db.commit = AsyncMock()
 
         # Mock the user lookup (for email replacement)
         mock_result = MagicMock()
@@ -444,14 +556,21 @@ class TestUnifiedRequestProcessor:
         mock_normalized.integration_context = {}
         mock_normalized.target_agent_id = None
 
-        with patch(
-            "request_manager.communication_strategy.RequestNormalizer"
-        ) as mock_normalizer_cls, patch(
-            "request_manager.communication_strategy.get_pod_name", return_value=None,
-        ), patch(
-            "shared_models.models.RequestLog",
+        with (
+            patch(
+                "request_manager.communication_strategy.RequestNormalizer"
+            ) as mock_normalizer_cls,
+            patch(
+                "request_manager.communication_strategy.get_pod_name",
+                return_value=None,
+            ),
+            patch(
+                "shared_models.models.RequestLog",
+            ),
         ):
-            mock_normalizer_cls.return_value.normalize_request.return_value = mock_normalized
+            mock_normalizer_cls.return_value.normalize_request.return_value = (
+                mock_normalized
+            )
 
             result = await processor.process_request_sync(request, db)
 
@@ -634,14 +753,19 @@ class TestCreateOrGetSessionSharedExtended:
         request.integration_type = "WEB"
         request.metadata = {"session_id": "provided-sess-id"}
 
-        with patch(
-            "shared_models.resolve_canonical_user_id",
-            new_callable=AsyncMock,
-            return_value="canonical-uid",
-        ), patch(
-            "shared_models.SessionResponse",
-        ) as mock_sr:
-            mock_sr.model_validate.return_value = MagicMock(session_id="provided-sess-id")
+        with (
+            patch(
+                "shared_models.resolve_canonical_user_id",
+                new_callable=AsyncMock,
+                return_value="canonical-uid",
+            ),
+            patch(
+                "shared_models.SessionResponse",
+            ) as mock_sr,
+        ):
+            mock_sr.model_validate.return_value = MagicMock(
+                session_id="provided-sess-id"
+            )
             result = await create_or_get_session_shared(request, db)
 
         assert result.session_id == "provided-sess-id"
@@ -687,19 +811,27 @@ class TestCreateOrGetSessionSharedExtended:
         mock_session_response = MagicMock()
         mock_session_response.session_id = "new-sess-after-expire"
 
-        with patch(
-            "shared_models.resolve_canonical_user_id",
-            new_callable=AsyncMock,
-            return_value="canonical-uid",
-        ), patch(
-            "shared_models.BaseSessionManager",
-        ) as mock_bsm, patch(
-            "shared_models.SessionResponse",
-        ) as mock_sr:
+        with (
+            patch(
+                "shared_models.resolve_canonical_user_id",
+                new_callable=AsyncMock,
+                return_value="canonical-uid",
+            ),
+            patch(
+                "shared_models.BaseSessionManager",
+            ) as mock_bsm,
+            patch(
+                "shared_models.SessionResponse",
+            ) as mock_sr,
+        ):
             mock_bsm_instance = AsyncMock()
-            mock_bsm_instance.create_session = AsyncMock(return_value=mock_session_response)
+            mock_bsm_instance.create_session = AsyncMock(
+                return_value=mock_session_response
+            )
             mock_bsm.return_value = mock_bsm_instance
-            mock_sr.model_validate.return_value = MagicMock(session_id="new-sess-after-expire")
+            mock_sr.model_validate.return_value = MagicMock(
+                session_id="new-sess-after-expire"
+            )
 
             result = await create_or_get_session_shared(request, db)
 
@@ -738,19 +870,27 @@ class TestCreateOrGetSessionSharedExtended:
         mock_session_response = MagicMock()
         mock_session_response.session_id = "new-sess-fallback"
 
-        with patch(
-            "shared_models.resolve_canonical_user_id",
-            new_callable=AsyncMock,
-            return_value="canonical-uid",
-        ), patch(
-            "shared_models.BaseSessionManager",
-        ) as mock_bsm, patch(
-            "shared_models.SessionResponse",
-        ) as mock_sr:
+        with (
+            patch(
+                "shared_models.resolve_canonical_user_id",
+                new_callable=AsyncMock,
+                return_value="canonical-uid",
+            ),
+            patch(
+                "shared_models.BaseSessionManager",
+            ) as mock_bsm,
+            patch(
+                "shared_models.SessionResponse",
+            ) as mock_sr,
+        ):
             mock_bsm_instance = AsyncMock()
-            mock_bsm_instance.create_session = AsyncMock(return_value=mock_session_response)
+            mock_bsm_instance.create_session = AsyncMock(
+                return_value=mock_session_response
+            )
             mock_bsm.return_value = mock_bsm_instance
-            mock_sr.model_validate.return_value = MagicMock(session_id="new-sess-fallback")
+            mock_sr.model_validate.return_value = MagicMock(
+                session_id="new-sess-fallback"
+            )
 
             result = await create_or_get_session_shared(request, db)
 
@@ -789,19 +929,24 @@ class TestCreateOrGetSessionSharedExtended:
         request.integration_type.value = "WEB"
         request.metadata = {}
 
-        with patch(
-            "shared_models.resolve_canonical_user_id",
-            new_callable=AsyncMock,
-            return_value="canonical-uid",
-        ), patch(
-            "shared_models.SessionResponse",
-        ) as mock_sr, patch(
-            "request_manager.database_utils.cleanup_old_sessions",
-            new_callable=AsyncMock,
-            return_value=1,
-        ) as mock_cleanup, patch(
-            "shared_models.get_enum_value",
-            return_value="WEB",
+        with (
+            patch(
+                "shared_models.resolve_canonical_user_id",
+                new_callable=AsyncMock,
+                return_value="canonical-uid",
+            ),
+            patch(
+                "shared_models.SessionResponse",
+            ) as mock_sr,
+            patch(
+                "request_manager.database_utils.cleanup_old_sessions",
+                new_callable=AsyncMock,
+                return_value=1,
+            ) as mock_cleanup,
+            patch(
+                "shared_models.get_enum_value",
+                return_value="WEB",
+            ),
         ):
             mock_sr.model_validate.return_value = MagicMock(session_id="sess-1")
             result = await create_or_get_session_shared(request, db)
@@ -832,15 +977,19 @@ class TestCreateOrGetSessionSharedExtended:
         request.integration_type = "WEB"
         request.metadata = {}
 
-        with patch(
-            "shared_models.resolve_canonical_user_id",
-            new_callable=AsyncMock,
-            return_value="canonical-uid",
-        ), patch(
-            "shared_models.SessionResponse",
-        ) as mock_sr, patch(
-            "request_manager.communication_strategy._should_filter_sessions_by_integration_type",
-            return_value=True,
+        with (
+            patch(
+                "shared_models.resolve_canonical_user_id",
+                new_callable=AsyncMock,
+                return_value="canonical-uid",
+            ),
+            patch(
+                "shared_models.SessionResponse",
+            ) as mock_sr,
+            patch(
+                "request_manager.communication_strategy._should_filter_sessions_by_integration_type",
+                return_value=True,
+            ),
         ):
             mock_sr.model_validate.return_value = MagicMock(session_id="filtered-sess")
             result = await create_or_get_session_shared(request, db)
@@ -862,9 +1011,7 @@ class TestCreateOrGetSessionSharedExtended:
         refetch_result.scalar_one_or_none.return_value = refetch_session
 
         db = AsyncMock()
-        db.execute = AsyncMock(
-            side_effect=[result_mock, AsyncMock(), refetch_result]
-        )
+        db.execute = AsyncMock(side_effect=[result_mock, AsyncMock(), refetch_result])
 
         request = MagicMock()
         request.user_id = "user@example.com"
@@ -876,19 +1023,27 @@ class TestCreateOrGetSessionSharedExtended:
         mock_session_response = MagicMock()
         mock_session_response.session_id = "web-default-sess"
 
-        with patch(
-            "shared_models.resolve_canonical_user_id",
-            new_callable=AsyncMock,
-            return_value="canonical-uid",
-        ), patch(
-            "shared_models.BaseSessionManager",
-        ) as mock_bsm, patch(
-            "shared_models.SessionResponse",
-        ) as mock_sr:
+        with (
+            patch(
+                "shared_models.resolve_canonical_user_id",
+                new_callable=AsyncMock,
+                return_value="canonical-uid",
+            ),
+            patch(
+                "shared_models.BaseSessionManager",
+            ) as mock_bsm,
+            patch(
+                "shared_models.SessionResponse",
+            ) as mock_sr,
+        ):
             mock_bsm_instance = AsyncMock()
-            mock_bsm_instance.create_session = AsyncMock(return_value=mock_session_response)
+            mock_bsm_instance.create_session = AsyncMock(
+                return_value=mock_session_response
+            )
             mock_bsm.return_value = mock_bsm_instance
-            mock_sr.model_validate.return_value = MagicMock(session_id="web-default-sess")
+            mock_sr.model_validate.return_value = MagicMock(
+                session_id="web-default-sess"
+            )
 
             result = await create_or_get_session_shared(request, db)
 
@@ -916,15 +1071,19 @@ class TestCreateOrGetSessionSharedExtended:
         fallback_session = MagicMock()
         fallback_session.session_id = "fallback-sess"
 
-        with patch(
-            "shared_models.resolve_canonical_user_id",
-            new_callable=AsyncMock,
-            return_value="canonical-uid",
-        ), patch(
-            "shared_models.BaseSessionManager",
-        ) as mock_bsm, patch(
-            "shared_models.SessionResponse",
-        ) as mock_sr:
+        with (
+            patch(
+                "shared_models.resolve_canonical_user_id",
+                new_callable=AsyncMock,
+                return_value="canonical-uid",
+            ),
+            patch(
+                "shared_models.BaseSessionManager",
+            ) as mock_bsm,
+            patch(
+                "shared_models.SessionResponse",
+            ) as mock_sr,
+        ):
             mock_bsm_instance = AsyncMock()
             mock_bsm_instance.create_session = AsyncMock(
                 side_effect=Exception("DB constraint violation")
@@ -957,13 +1116,16 @@ class TestCreateOrGetSessionSharedExtended:
         request.channel_id = None
         request.thread_id = None
 
-        with patch(
-            "shared_models.resolve_canonical_user_id",
-            new_callable=AsyncMock,
-            return_value="canonical-uid",
-        ), patch(
-            "shared_models.BaseSessionManager",
-        ) as mock_bsm:
+        with (
+            patch(
+                "shared_models.resolve_canonical_user_id",
+                new_callable=AsyncMock,
+                return_value="canonical-uid",
+            ),
+            patch(
+                "shared_models.BaseSessionManager",
+            ) as mock_bsm,
+        ):
             mock_bsm_instance = AsyncMock()
             mock_bsm_instance.create_session = AsyncMock(
                 side_effect=Exception("DB down")
@@ -996,6 +1158,7 @@ class TestInvokeAgentWithRoutingExtended:
 
         strategy = DirectHTTPStrategy()
         strategy.agent_client = AsyncMock()
+        strategy._registry_fetched = True
 
         # Every call returns a routing decision, creating an infinite loop
         routing_response = {
@@ -1021,15 +1184,22 @@ class TestInvokeAgentWithRoutingExtended:
 
         db = AsyncMock()
 
-        with patch.object(
-            strategy, "_get_conversation_history", new_callable=AsyncMock, return_value=[]
-        ), patch(
-            "shared_models.opa_client.check_agent_authorization",
-            new_callable=AsyncMock,
-            return_value=FakeOPADecision(),
-        ), patch(
-            "request_manager.communication_strategy.make_spiffe_id",
-            return_value="spiffe://test/service/request-manager",
+        with (
+            patch.object(
+                strategy,
+                "_get_conversation_history",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "shared_models.opa_client.check_agent_authorization",
+                new_callable=AsyncMock,
+                return_value=FakeOPADecision(),
+            ),
+            patch(
+                "request_manager.communication_strategy.make_spiffe_id",
+                return_value="spiffe://test/service/request-manager",
+            ),
         ):
             with pytest.raises(Exception, match="Max routing hops"):
                 await strategy.invoke_agent_with_routing(normalized, db)
@@ -1038,6 +1208,7 @@ class TestInvokeAgentWithRoutingExtended:
         """When target_agent is provided, skip routing-agent (line 400)."""
         strategy = DirectHTTPStrategy()
         strategy.agent_client = AsyncMock()
+        strategy._registry_fetched = True
 
         direct_response = {
             "content": "Direct from specialist.",
@@ -1063,7 +1234,10 @@ class TestInvokeAgentWithRoutingExtended:
         db = AsyncMock()
 
         with patch.object(
-            strategy, "_get_conversation_history", new_callable=AsyncMock, return_value=[]
+            strategy,
+            "_get_conversation_history",
+            new_callable=AsyncMock,
+            return_value=[],
         ):
             result = await strategy.invoke_agent_with_routing(
                 normalized, db, target_agent="software-support"
@@ -1086,6 +1260,7 @@ class TestInvokeAgentWithRoutingExtended:
 
         strategy = DirectHTTPStrategy()
         strategy.agent_client = AsyncMock()
+        strategy._registry_fetched = True
 
         # First call: routing-agent routes to specialist1
         hop1 = {
@@ -1125,15 +1300,22 @@ class TestInvokeAgentWithRoutingExtended:
 
         db = AsyncMock()
 
-        with patch.object(
-            strategy, "_get_conversation_history", new_callable=AsyncMock, return_value=[]
-        ), patch(
-            "shared_models.opa_client.check_agent_authorization",
-            new_callable=AsyncMock,
-            return_value=FakeOPADecision(),
-        ), patch(
-            "request_manager.communication_strategy.make_spiffe_id",
-            return_value="spiffe://test/service/request-manager",
+        with (
+            patch.object(
+                strategy,
+                "_get_conversation_history",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "shared_models.opa_client.check_agent_authorization",
+                new_callable=AsyncMock,
+                return_value=FakeOPADecision(),
+            ),
+            patch(
+                "request_manager.communication_strategy.make_spiffe_id",
+                return_value="spiffe://test/service/request-manager",
+            ),
         ):
             result = await strategy.invoke_agent_with_routing(normalized, db)
 
@@ -1153,6 +1335,7 @@ class TestInvokeAgentWithRoutingExtended:
 
         strategy = DirectHTTPStrategy()
         strategy.agent_client = AsyncMock()
+        strategy._registry_fetched = True
 
         # Routing agent routes to software-support
         routing_response = {
@@ -1187,15 +1370,22 @@ class TestInvokeAgentWithRoutingExtended:
 
         db = AsyncMock()
 
-        with patch.object(
-            strategy, "_get_conversation_history", new_callable=AsyncMock, return_value=[]
-        ), patch(
-            "shared_models.opa_client.check_agent_authorization",
-            new_callable=AsyncMock,
-            return_value=FakeOPADecision(),
-        ), patch(
-            "request_manager.communication_strategy.make_spiffe_id",
-            return_value="spiffe://test/service/request-manager",
+        with (
+            patch.object(
+                strategy,
+                "_get_conversation_history",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "shared_models.opa_client.check_agent_authorization",
+                new_callable=AsyncMock,
+                return_value=FakeOPADecision(),
+            ),
+            patch(
+                "request_manager.communication_strategy.make_spiffe_id",
+                return_value="spiffe://test/service/request-manager",
+            ),
         ):
             result = await strategy.invoke_agent_with_routing(normalized, db)
 
@@ -1219,6 +1409,7 @@ class TestInvokeAgentWithRoutingExtended:
 
         strategy = DirectHTTPStrategy()
         strategy.agent_client = AsyncMock()
+        strategy._registry_fetched = True
 
         routing_response = {
             "content": "",
@@ -1251,15 +1442,22 @@ class TestInvokeAgentWithRoutingExtended:
 
         db = AsyncMock()
 
-        with patch.object(
-            strategy, "_get_conversation_history", new_callable=AsyncMock, return_value=[]
-        ), patch(
-            "shared_models.opa_client.check_agent_authorization",
-            new_callable=AsyncMock,
-            return_value=FakeOPADecision(),
-        ), patch(
-            "request_manager.communication_strategy.make_spiffe_id",
-            return_value="spiffe://test/service/request-manager",
+        with (
+            patch.object(
+                strategy,
+                "_get_conversation_history",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "shared_models.opa_client.check_agent_authorization",
+                new_callable=AsyncMock,
+                return_value=FakeOPADecision(),
+            ),
+            patch(
+                "request_manager.communication_strategy.make_spiffe_id",
+                return_value="spiffe://test/service/request-manager",
+            ),
         ):
             await strategy.invoke_agent_with_routing(normalized, db)
 
@@ -1275,6 +1473,7 @@ class TestInvokeAgentWithRoutingExtended:
         """When target_agent bypasses routing, delegation is included from the start."""
         strategy = DirectHTTPStrategy()
         strategy.agent_client = AsyncMock()
+        strategy._registry_fetched = True
 
         direct_response = {
             "content": "Direct answer.",
@@ -1299,11 +1498,17 @@ class TestInvokeAgentWithRoutingExtended:
 
         db = AsyncMock()
 
-        with patch.object(
-            strategy, "_get_conversation_history", new_callable=AsyncMock, return_value=[]
-        ), patch(
-            "request_manager.communication_strategy.make_spiffe_id",
-            return_value="spiffe://test/user/user",
+        with (
+            patch.object(
+                strategy,
+                "_get_conversation_history",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "request_manager.communication_strategy.make_spiffe_id",
+                return_value="spiffe://test/user/user",
+            ),
         ):
             await strategy.invoke_agent_with_routing(
                 normalized, db, target_agent="software-support"

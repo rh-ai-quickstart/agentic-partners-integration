@@ -1,0 +1,73 @@
+name: "kubernetes-support"
+description: "Handles Kubernetes issues, pod failures, deployment problems, cluster troubleshooting, container orchestration"
+departments: ["kubernetes"]
+endpoint: "http://partner-kubernetes-agent-full:8080/api/v1/agents/kubernetes-support/invoke"
+llm_backend: "gemini"
+llm_model: "gemini-2.5-flash"
+system_message: |
+  You are a Kubernetes support specialist. Help users resolve Kubernetes and container orchestration issues using this approach:
+
+  **Analysis Phase (show your thinking):**
+  1. Identify the Kubernetes resource type and failure mode
+  2. Consider which layer is affected (pod, deployment, service, ingress, node, cluster)
+  3. Think through potential causes (resource limits, image pull errors, config issues, networking)
+
+  **Research Phase:**
+  4. Search knowledge base for similar Kubernetes issues (using RAG)
+  5. Review error patterns and known failure modes
+
+  **Solution Phase:**
+  6. Provide systematic kubectl-based troubleshooting steps
+  7. Explain each diagnostic command and what to look for in the output
+  8. Include YAML snippets for fixes when applicable
+
+  IMPORTANT: Use <thinking> tags to show your reasoning process. This helps users understand your diagnostic approach.
+  Format: <thinking>Your Kubernetes analysis here</thinking>
+  Then provide the troubleshooting steps.
+
+  Always suggest checking: events (kubectl describe), logs (kubectl logs), resource status (kubectl get), and cluster state (kubectl cluster-info).
+
+  Be professional, systematic, and thorough.
+
+sampling_params:
+  strategy:
+    type: "top_p"
+    temperature: 0.7
+    top_p: 0.95
+
+a2a:
+  card_name: "Kubernetes Support Agent"
+  card_description: |
+    Kubernetes support specialist that helps users resolve container
+    orchestration issues including pod failures, deployment problems,
+    service connectivity, ingress configuration, resource limits,
+    and cluster troubleshooting. Uses a RAG-backed knowledge base of
+    Kubernetes support tickets to provide grounded troubleshooting
+    with systematic diagnostic approaches.
+  skills:
+    - id: kubernetes_troubleshooting
+      name: "Kubernetes Troubleshooting"
+      description: |
+        Diagnoses and resolves Kubernetes issues including pod
+        CrashLoopBackOff, ImagePullBackOff, OOMKilled, deployment
+        rollout failures, service discovery problems, and node
+        scheduling issues. Provides kubectl commands and YAML fixes.
+      tags: ["kubernetes", "pods", "deployments", "containers", "k8s", "troubleshooting"]
+      examples:
+        - "My pods are in CrashLoopBackOff status"
+        - "Deployment rollout is stuck and not progressing"
+        - "Pod keeps getting OOMKilled"
+        - "Service is not routing traffic to my pods"
+        - "How do I debug a pod that won't start?"
+    - id: kubernetes_configuration
+      name: "Kubernetes Configuration & Best Practices"
+      description: |
+        Assists with Kubernetes resource configuration, YAML manifests,
+        resource limits, health checks, and deployment strategies.
+        Provides best practices for production workloads.
+      tags: ["configuration", "YAML", "resources", "limits", "probes", "helm"]
+      examples:
+        - "How do I set resource limits for my deployment?"
+        - "What liveness and readiness probes should I use?"
+        - "How do I configure horizontal pod autoscaling?"
+        - "My HPA is not scaling up"

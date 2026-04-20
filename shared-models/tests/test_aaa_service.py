@@ -45,9 +45,7 @@ class TestGetOrCreateUser:
     async def test_returns_existing_user(self, mock_get, mock_db_session, mock_user):
         mock_get.return_value = mock_user
 
-        user = await AAAService.get_or_create_user(
-            mock_db_session, "test@example.com"
-        )
+        user = await AAAService.get_or_create_user(mock_db_session, "test@example.com")
 
         assert user is mock_user
         mock_db_session.add.assert_not_called()
@@ -76,9 +74,7 @@ class TestGetOrCreateUser:
         mock_get.return_value = None
         mock_db_session.commit.side_effect = Exception("db error")
 
-        user = await AAAService.get_or_create_user(
-            mock_db_session, "new@example.com"
-        )
+        user = await AAAService.get_or_create_user(mock_db_session, "new@example.com")
 
         assert user is None
         mock_db_session.rollback.assert_called_once()
@@ -88,7 +84,9 @@ class TestGetUserDepartments:
     """Tests for AAAService.get_user_departments()."""
 
     @patch.object(AAAService, "get_user_by_email")
-    async def test_returns_departments_from_db(self, mock_get, mock_db_session, mock_user):
+    async def test_returns_departments_from_db(
+        self, mock_get, mock_db_session, mock_user
+    ):
         mock_user.departments = ["software", "engineering"]
         mock_get.return_value = mock_user
 
@@ -100,7 +98,9 @@ class TestGetUserDepartments:
 
     @patch("shared_models.aaa_service.get_user_departments_from_opa")
     @patch.object(AAAService, "get_user_by_email")
-    async def test_falls_back_to_opa(self, mock_get, mock_opa, mock_db_session, mock_user):
+    async def test_falls_back_to_opa(
+        self, mock_get, mock_opa, mock_db_session, mock_user
+    ):
         mock_user.departments = []
         mock_get.return_value = mock_user
         mock_opa.return_value = ["hr", "finance"]
@@ -159,9 +159,7 @@ class TestUpdateUserPermissions:
         mock_db_session.commit.assert_called_once()
 
     @patch.object(AAAService, "get_user_by_email")
-    async def test_returns_false_for_nonexistent_user(
-        self, mock_get, mock_db_session
-    ):
+    async def test_returns_false_for_nonexistent_user(self, mock_get, mock_db_session):
         mock_get.return_value = None
 
         result = await AAAService.update_user_permissions(
@@ -190,7 +188,9 @@ class TestUpdateUserPermissions:
         assert mock_user.status == "suspended"
 
     @patch.object(AAAService, "get_user_by_email")
-    async def test_returns_false_on_exception(self, mock_get, mock_db_session, mock_user):
+    async def test_returns_false_on_exception(
+        self, mock_get, mock_db_session, mock_user
+    ):
         mock_get.return_value = mock_user
         mock_db_session.commit.side_effect = Exception("db error")
 

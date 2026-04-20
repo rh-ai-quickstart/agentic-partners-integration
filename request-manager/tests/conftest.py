@@ -11,6 +11,7 @@ import pytest_asyncio
 # Database fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def mock_db_session():
     """Provide an AsyncMock of sqlalchemy.ext.asyncio.AsyncSession."""
@@ -26,6 +27,7 @@ def mock_db_session():
 # ---------------------------------------------------------------------------
 # Model fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def mock_user():
@@ -101,6 +103,7 @@ def mock_request_log():
 # ---------------------------------------------------------------------------
 # Environment variable fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def env_keycloak(monkeypatch):

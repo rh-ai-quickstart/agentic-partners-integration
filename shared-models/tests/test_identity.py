@@ -14,21 +14,15 @@ class TestWorkloadIdentity:
     """Tests for WorkloadIdentity dataclass."""
 
     def test_entity_type_parses_user(self):
-        wid = WorkloadIdentity(
-            spiffe_id="spiffe://example.com/user/alice"
-        )
+        wid = WorkloadIdentity(spiffe_id="spiffe://example.com/user/alice")
         assert wid.entity_type == "user"
 
     def test_entity_type_parses_service(self):
-        wid = WorkloadIdentity(
-            spiffe_id="spiffe://example.com/service/request-manager"
-        )
+        wid = WorkloadIdentity(spiffe_id="spiffe://example.com/service/request-manager")
         assert wid.entity_type == "service"
 
     def test_entity_type_parses_agent(self):
-        wid = WorkloadIdentity(
-            spiffe_id="spiffe://example.com/agent/software-support"
-        )
+        wid = WorkloadIdentity(spiffe_id="spiffe://example.com/agent/software-support")
         assert wid.entity_type == "agent"
 
     def test_entity_type_single_path_segment(self):
@@ -43,21 +37,15 @@ class TestWorkloadIdentity:
         assert wid.entity_type == "unknown"
 
     def test_name_extracts_last_segment(self):
-        wid = WorkloadIdentity(
-            spiffe_id="spiffe://example.com/user/alice"
-        )
+        wid = WorkloadIdentity(spiffe_id="spiffe://example.com/user/alice")
         assert wid.name == "alice"
 
     def test_name_extracts_service_name(self):
-        wid = WorkloadIdentity(
-            spiffe_id="spiffe://example.com/service/request-manager"
-        )
+        wid = WorkloadIdentity(spiffe_id="spiffe://example.com/service/request-manager")
         assert wid.name == "request-manager"
 
     def test_trailing_slash_handled(self):
-        wid = WorkloadIdentity(
-            spiffe_id="spiffe://example.com/user/bob/"
-        )
+        wid = WorkloadIdentity(spiffe_id="spiffe://example.com/user/bob/")
         assert wid.entity_type == "user"
         assert wid.name == "bob"
 
@@ -189,7 +177,10 @@ class TestOutboundIdentityHeaders:
     @patch("shared_models.identity.TRUST_DOMAIN", "test.example.com")
     def test_mock_mode_sets_spiffe_header(self):
         headers = outbound_identity_headers("request-manager")
-        assert headers["X-SPIFFE-ID"] == "spiffe://test.example.com/service/request-manager"
+        assert (
+            headers["X-SPIFFE-ID"]
+            == "spiffe://test.example.com/service/request-manager"
+        )
 
     @patch("shared_models.identity.MOCK_SPIFFE", False)
     def test_real_mode_no_spiffe_header(self):
@@ -212,7 +203,9 @@ class TestOutboundIdentityHeaders:
             "request-manager",
             delegation_agent="spiffe://test.example.com/agent/support",
         )
-        assert headers["X-Delegation-Agent"] == "spiffe://test.example.com/agent/support"
+        assert (
+            headers["X-Delegation-Agent"] == "spiffe://test.example.com/agent/support"
+        )
 
     @patch("shared_models.identity.MOCK_SPIFFE", True)
     @patch("shared_models.identity.TRUST_DOMAIN", "test.example.com")

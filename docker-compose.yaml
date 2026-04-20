@@ -110,6 +110,34 @@ services:
       timeout: 5s
       retries: 5
 
+  # Kubernetes Partner Agent (standalone remote agent)
+  kubernetes-agent:
+    build:
+      context: .
+      dockerfile: kubernetes-partner-agent/Containerfile
+    container_name: partner-kubernetes-agent-adk
+    environment:
+      - LLM_BACKEND=gemini
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GEMINI_MODEL=gemini-2.5-flash
+      - LOG_LEVEL=INFO
+      - RAG_API_ENDPOINT=http://rag-api:8080/answer
+    ports:
+      - "8002:8080"
+    networks:
+      partner-agent-network:
+        aliases:
+          - kubernetes-agent
+          - partner-kubernetes-agent-full
+    depends_on:
+      rag-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # Agent Service
   agent-service:
     build:
@@ -136,6 +164,8 @@ services:
       rag-api:
         condition: service_healthy
       opa:
+        condition: service_healthy
+      kubernetes-agent:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]

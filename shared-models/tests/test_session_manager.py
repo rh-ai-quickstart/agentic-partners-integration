@@ -3,11 +3,10 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy.exc import IntegrityError
-
 from shared_models.models import IntegrationType, SessionStatus
 from shared_models.session_manager import BaseSessionManager
 from shared_models.session_schemas import SessionCreate
+from sqlalchemy.exc import IntegrityError
 
 
 def _make_mock_session_row():
@@ -187,9 +186,7 @@ class TestUpdateSession:
         with patch(
             "shared_models.session_manager.SessionResponse.model_validate"
         ) as mock_validate:
-            mock_validate.return_value = MagicMock(
-                session_id="sess-123", version=1
-            )
+            mock_validate.return_value = MagicMock(session_id="sess-123", version=1)
             result = await manager.update_session(
                 "sess-123",
                 agent_id="agent-1",

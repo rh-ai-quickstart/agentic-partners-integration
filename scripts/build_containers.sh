@@ -23,6 +23,7 @@ if command -v uv &> /dev/null && [ "$USE_PIP_INSTALL" != "true" ]; then
     echo "Regenerating uv.lock files..."
     (cd "$PROJECT_ROOT/agent-service" && uv lock --quiet)
     (cd "$PROJECT_ROOT/request-manager" && uv lock --quiet)
+    (cd "$PROJECT_ROOT/kubernetes-partner-agent" && uv lock --quiet)
     echo "  Lock files up to date"
     echo ""
 fi
@@ -53,6 +54,13 @@ docker build \
     -t partner-pf-chat-ui:${IMAGE_TAG} \
     -f pf-chat-ui/Containerfile \
     pf-chat-ui
+
+echo ""
+echo "Building kubernetes-partner-agent..."
+docker build \
+    -t partner-kubernetes-agent:${IMAGE_TAG} \
+    -f kubernetes-partner-agent/Containerfile \
+    .
 
 echo ""
 echo "Building RAG service..."

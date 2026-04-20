@@ -27,6 +27,21 @@ test_delegation_carlos_software_support if {
 	"software" in result.effective_departments
 }
 
+# Test: Delegated access — Carlos (kubernetes dept) can use kubernetes-support
+test_delegation_carlos_kubernetes_support if {
+	result := authorization.decision with input as {
+		"caller_spiffe_id": "spiffe://partner.example.com/service/request-manager",
+		"agent_name": "kubernetes-support",
+		"delegation": {
+			"user_spiffe_id": "spiffe://partner.example.com/user/carlos",
+			"agent_spiffe_id": "spiffe://partner.example.com/agent/kubernetes-support",
+			"user_departments": ["engineering", "software", "kubernetes"],
+		},
+	}
+	result.allow == true
+	"kubernetes" in result.effective_departments
+}
+
 # Test: Delegated access denied — Carlos cannot use network-support
 test_delegation_carlos_network_denied if {
 	result := authorization.decision with input as {

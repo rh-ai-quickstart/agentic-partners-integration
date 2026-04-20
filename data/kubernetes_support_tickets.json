@@ -1,0 +1,206 @@
+[
+  {
+    "id": "K8S-TICKET-001",
+    "content": "Issue: Pods stuck in CrashLoopBackOff\n\nSymptoms:\n- Pod status: CrashLoopBackOff\n- Container restarts increasing rapidly\n- Application logs show OOM errors before crash\n- Restart count exceeds 50 within 1 hour\n\nRoot Cause:\nMemory limit set to 256Mi but application requires 512Mi under load. JVM heap not configured to respect container limits.\n\nSolution:\nIncrease memory limits and configure JVM to respect cgroup limits.\n\nSteps to Resolve:\n1. Check pod events: kubectl describe pod <pod-name>\n2. Check container logs: kubectl logs <pod-name> --previous\n3. Verify resource usage: kubectl top pod <pod-name>\n4. Update deployment YAML:\n   resources:\n     requests:\n       memory: \"512Mi\"\n     limits:\n       memory: \"1Gi\"\n5. For JVM apps, add: JAVA_OPTS=-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0\n6. Apply changes: kubectl apply -f deployment.yaml\n7. Verify pod stability: kubectl get pods -w\n\nPrevention:\n- Always set memory requests equal to limits for JVM workloads\n- Use vertical pod autoscaler for right-sizing\n- Implement proper health checks\n\nStatus: Resolved\nResolution Time: 30 minutes",
+    "metadata": {
+      "ticket_id": "K8S-TICKET-001",
+      "category": "kubernetes",
+      "subcategory": "pod-crash",
+      "resource_type": "Pod",
+      "error_type": "CrashLoopBackOff",
+      "severity": "high",
+      "status": "resolved",
+      "created_date": "2026-01-15",
+      "resolved_date": "2026-01-15",
+      "affected_users": 12,
+      "resolution_type": "config-change"
+    }
+  },
+  {
+    "id": "K8S-TICKET-002",
+    "content": "Issue: ImagePullBackOff on new deployment\n\nSymptoms:\n- Pod status: ImagePullBackOff\n- Events show: Failed to pull image, ErrImagePull\n- Error: unauthorized: authentication required\n- New deployment after container registry migration\n\nRoot Cause:\nImage pull secret expired after container registry migration. The imagePullSecrets reference in the deployment pointed to an outdated Secret.\n\nSolution:\nRecreate the image pull secret with updated registry credentials.\n\nSteps to Resolve:\n1. Check pod events: kubectl describe pod <pod-name>\n2. Verify image name and tag: kubectl get deployment <name> -o jsonpath='{.spec.template.spec.containers[0].image}'\n3. Check existing secrets: kubectl get secrets\n4. Delete old secret: kubectl delete secret regcred\n5. Create new secret:\n   kubectl create secret docker-registry regcred \\\n     --docker-server=registry.example.com \\\n     --docker-username=<user> \\\n     --docker-password=<token>\n6. Verify deployment references the secret:\n   spec.template.spec.imagePullSecrets:\n     - name: regcred\n7. Rollout restart: kubectl rollout restart deployment <name>\n8. Watch pods come up: kubectl get pods -w\n\nPrevention:\n- Automate registry credential rotation\n- Use workload identity federation instead of static secrets\n- Set up alerts for imagePullBackOff events\n\nStatus: Resolved\nResolution Time: 20 minutes",
+    "metadata": {
+      "ticket_id": "K8S-TICKET-002",
+      "category": "kubernetes",
+      "subcategory": "image-pull",
+      "resource_type": "Pod",
+      "error_type": "ImagePullBackOff",
+      "severity": "high",
+      "status": "resolved",
+      "created_date": "2026-02-03",
+      "resolved_date": "2026-02-03",
+      "affected_users": 25,
+      "resolution_type": "secret-update"
+    }
+  },
+  {
+    "id": "K8S-TICKET-003",
+    "content": "Issue: Deployment rollout stuck at 1/3 replicas\n\nSymptoms:\n- kubectl rollout status shows 'Waiting for deployment to finish: 1 of 3 updated replicas are available'\n- New pods pending for over 10 minutes\n- Old pods still running\n- kubectl describe pod shows: 0/5 nodes are available: 5 Insufficient cpu\n\nRoot Cause:\nCPU requests set too high (2 cores per pod) with only 5 nodes having 4 cores each. Existing workloads consuming available CPU. The deployment's resource requests exceeded cluster capacity.\n\nSolution:\nRight-size CPU requests and add cluster autoscaler or additional nodes.\n\nSteps to Resolve:\n1. Check rollout status: kubectl rollout status deployment/<name>\n2. Check pending pods: kubectl get pods | grep Pending\n3. Describe pending pod: kubectl describe pod <pending-pod>\n4. Check node resources: kubectl describe nodes | grep -A 5 'Allocated resources'\n5. Check cluster capacity: kubectl top nodes\n6. Option A - Reduce CPU requests:\n   resources:\n     requests:\n       cpu: \"500m\"\n     limits:\n       cpu: \"1000m\"\n7. Option B - Scale cluster: add nodes via cloud provider\n8. Apply changes and verify: kubectl apply -f deployment.yaml\n9. Monitor rollout: kubectl rollout status deployment/<name>\n\nPrevention:\n- Enable cluster autoscaler\n- Set pod disruption budgets\n- Use resource quotas per namespace\n\nStatus: Resolved\nResolution Time: 45 minutes",
+    "metadata": {
+      "ticket_id": "K8S-TICKET-003",
+      "category": "kubernetes",
+      "subcategory": "deployment",
+      "resource_type": "Deployment",
+      "error_type": "InsufficientCPU",
+      "severity": "high",
+      "status": "resolved",
+      "created_date": "2026-01-22",
+      "resolved_date": "2026-01-22",
+      "affected_users": 50,
+      "resolution_type": "resource-adjustment"
+    }
+  },
+  {
+    "id": "K8S-TICKET-004",
+    "content": "Issue: Service not routing traffic to pods\n\nSymptoms:\n- curl to ClusterIP service returns 'connection refused'\n- Pods are running and healthy\n- kubectl get endpoints shows no endpoints\n- Service selector does not match pod labels\n\nRoot Cause:\nLabel mismatch between Service selector and Pod labels. Service used selector app: my-app but pods had label app: myapp (without hyphen).\n\nSolution:\nFix label selector to match pod labels.\n\nSteps to Resolve:\n1. Check service endpoints: kubectl get endpoints <service-name>\n2. Get service selector: kubectl get svc <service-name> -o jsonpath='{.spec.selector}'\n3. Get pod labels: kubectl get pods --show-labels\n4. Compare selectors with labels to find mismatch\n5. Fix the service selector OR pod labels:\n   kubectl patch svc <service-name> -p '{\"spec\":{\"selector\":{\"app\":\"myapp\"}}}'\n6. Verify endpoints populated: kubectl get endpoints <service-name>\n7. Test connectivity: kubectl exec <test-pod> -- curl <service-name>:<port>\n\nPrevention:\n- Use Helm charts or Kustomize to generate labels consistently\n- Add label validation to CI/CD pipeline\n- Use kubectl diff before applying changes\n\nStatus: Resolved\nResolution Time: 15 minutes",
+    "metadata": {
+      "ticket_id": "K8S-TICKET-004",
+      "category": "kubernetes",
+      "subcategory": "service",
+      "resource_type": "Service",
+      "error_type": "NoEndpoints",
+      "severity": "critical",
+      "status": "resolved",
+      "created_date": "2026-02-10",
+      "resolved_date": "2026-02-10",
+      "affected_users": 100,
+      "resolution_type": "label-fix"
+    }
+  },
+  {
+    "id": "K8S-TICKET-005",
+    "content": "Issue: Pod OOMKilled repeatedly under load\n\nSymptoms:\n- Pod terminated with reason: OOMKilled (exit code 137)\n- Memory usage spikes during batch processing\n- kubectl describe pod shows lastState: terminated, reason: OOMKilled\n- Node memory not exhausted (issue is container-level)\n\nRoot Cause:\nPython application processing large CSV files loads entire file into memory. Memory limit of 512Mi exceeded during peak processing.\n\nSolution:\nIncrease memory limits and refactor application to use streaming/chunked processing.\n\nSteps to Resolve:\n1. Confirm OOMKill: kubectl describe pod <pod-name> | grep -A 3 'Last State'\n2. Check memory usage history: kubectl top pod <pod-name> --containers\n3. Check memory limit: kubectl get pod <pod-name> -o jsonpath='{.spec.containers[0].resources.limits.memory}'\n4. Increase memory limit as immediate fix:\n   resources:\n     requests:\n       memory: \"1Gi\"\n     limits:\n       memory: \"2Gi\"\n5. Apply: kubectl apply -f deployment.yaml\n6. Long-term: refactor to stream large files instead of loading into memory\n7. Set up memory alerts: create PrometheusRule for container_memory_working_set_bytes > 80% of limit\n\nPrevention:\n- Load test with production-sized data before deploying\n- Use VPA (Vertical Pod Autoscaler) for right-sizing\n- Implement circuit breakers for memory-intensive operations\n\nStatus: Resolved\nResolution Time: 1 hour",
+    "metadata": {
+      "ticket_id": "K8S-TICKET-005",
+      "category": "kubernetes",
+      "subcategory": "oom",
+      "resource_type": "Pod",
+      "error_type": "OOMKilled",
+      "severity": "high",
+      "status": "resolved",
+      "created_date": "2026-03-01",
+      "resolved_date": "2026-03-01",
+      "affected_users": 8,
+      "resolution_type": "resource-increase"
+    }
+  },
+  {
+    "id": "K8S-TICKET-006",
+    "content": "Issue: Ingress returns 502 Bad Gateway\n\nSymptoms:\n- External requests to ingress URL return HTTP 502\n- Backend pods are running\n- kubectl logs on ingress controller shows 'upstream connect error or disconnect'\n- Service port mismatch suspected\n\nRoot Cause:\nIngress backend service port (80) did not match the container port (8080). The service was configured with port: 80, targetPort: 80 but the container listens on 8080.\n\nSolution:\nFix the service targetPort to match container port.\n\nSteps to Resolve:\n1. Check ingress backend: kubectl describe ingress <ingress-name>\n2. Verify service port mapping: kubectl get svc <service-name> -o yaml\n3. Check container port: kubectl get pod <pod-name> -o jsonpath='{.spec.containers[0].ports[0].containerPort}'\n4. Fix service targetPort:\n   spec:\n     ports:\n       - port: 80\n         targetPort: 8080\n         protocol: TCP\n5. Apply: kubectl apply -f service.yaml\n6. Wait for ingress controller to pick up changes (may take 30-60s)\n7. Test: curl -v https://your-app.example.com/health\n8. Check ingress controller logs for successful upstream connection\n\nPrevention:\n- Document port conventions (containerPort = targetPort)\n- Use named ports in both Deployment and Service\n- Add connectivity checks in CI/CD pipeline\n\nStatus: Resolved\nResolution Time: 25 minutes",
+    "metadata": {
+      "ticket_id": "K8S-TICKET-006",
+      "category": "kubernetes",
+      "subcategory": "ingress",
+      "resource_type": "Ingress",
+      "error_type": "502BadGateway",
+      "severity": "critical",
+      "status": "resolved",
+      "created_date": "2026-02-15",
+      "resolved_date": "2026-02-15",
+      "affected_users": 200,
+      "resolution_type": "port-fix"
+    }
+  },
+  {
+    "id": "K8S-TICKET-007",
+    "content": "Issue: HPA not scaling pods up despite high CPU\n\nSymptoms:\n- CPU utilization at 90% per pod\n- HPA shows current: 90%, target: 50%\n- HPA status: 'unable to fetch metrics from resource metrics API'\n- Replica count stays at minimum\n\nRoot Cause:\nMetrics Server not installed in the cluster. HPA requires metrics-server to read pod CPU/memory usage.\n\nSolution:\nInstall metrics-server and verify HPA can read metrics.\n\nSteps to Resolve:\n1. Check HPA status: kubectl describe hpa <hpa-name>\n2. Check metrics-server: kubectl get deployment metrics-server -n kube-system\n3. If missing, install metrics-server:\n   kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml\n4. For self-signed clusters, add: --kubelet-insecure-tls to metrics-server args\n5. Wait for metrics-server to be ready: kubectl get pods -n kube-system | grep metrics\n6. Verify metrics: kubectl top pods\n7. Check HPA responds: kubectl get hpa <hpa-name>\n8. Verify scaling: watch kubectl get pods\n\nPrevention:\n- Include metrics-server in cluster bootstrap scripts\n- Monitor HPA status conditions in alerting\n- Test autoscaling before production launch\n\nStatus: Resolved\nResolution Time: 20 minutes",
+    "metadata": {
+      "ticket_id": "K8S-TICKET-007",
+      "category": "kubernetes",
+      "subcategory": "autoscaling",
+      "resource_type": "HPA",
+      "error_type": "MetricsUnavailable",
+      "severity": "medium",
+      "status": "resolved",
+      "created_date": "2026-01-28",
+      "resolved_date": "2026-01-28",
+      "affected_users": 15,
+      "resolution_type": "component-install"
+    }
+  },
+  {
+    "id": "K8S-TICKET-008",
+    "content": "Issue: PersistentVolumeClaim stuck in Pending state\n\nSymptoms:\n- PVC status: Pending\n- Pod using the PVC also stuck in Pending\n- Events show: 'no persistent volumes available for this claim'\n- StorageClass exists but no PVs provisioned\n\nRoot Cause:\nStorageClass provisioner (ebs.csi.aws.com) not installed. The EBS CSI driver was not deployed after cluster upgrade.\n\nSolution:\nInstall the EBS CSI driver and verify dynamic provisioning.\n\nSteps to Resolve:\n1. Check PVC status: kubectl describe pvc <pvc-name>\n2. Check StorageClass: kubectl get storageclass\n3. Verify provisioner is running: kubectl get pods -n kube-system | grep ebs\n4. Install EBS CSI driver:\n   helm repo add aws-ebs-csi-driver https://kubernetes-sigs.github.io/aws-ebs-csi-driver\n   helm install aws-ebs-csi-driver aws-ebs-csi-driver/aws-ebs-csi-driver -n kube-system\n5. Verify driver pods are running: kubectl get pods -n kube-system | grep ebs\n6. Check PVC transitions to Bound: kubectl get pvc <pvc-name> -w\n7. Verify pod starts: kubectl get pods -w\n\nPrevention:\n- Include storage driver in cluster bootstrap\n- Test PVC creation in smoke tests\n- Document required cluster add-ons\n\nStatus: Resolved\nResolution Time: 35 minutes",
+    "metadata": {
+      "ticket_id": "K8S-TICKET-008",
+      "category": "kubernetes",
+      "subcategory": "storage",
+      "resource_type": "PersistentVolumeClaim",
+      "error_type": "PVCPending",
+      "severity": "high",
+      "status": "resolved",
+      "created_date": "2026-02-20",
+      "resolved_date": "2026-02-20",
+      "affected_users": 30,
+      "resolution_type": "driver-install"
+    }
+  },
+  {
+    "id": "K8S-TICKET-009",
+    "content": "Issue: Pod readiness probe failing causing service disruption\n\nSymptoms:\n- Pod running but not Ready (0/1)\n- kubectl describe shows: Readiness probe failed: HTTP probe failed with statuscode: 503\n- Application slow to initialize, takes 60 seconds\n- Default probe: initialDelaySeconds=10, periodSeconds=10, failureThreshold=3\n\nRoot Cause:\nReadiness probe starts checking too early. Application needs 60 seconds to warm up (load caches, establish DB connections) but probe starts at 10 seconds and fails 3 times before the app is ready, then Kubernetes removes the pod from service endpoints.\n\nSolution:\nIncrease initialDelaySeconds and add startup probe for slow-starting containers.\n\nSteps to Resolve:\n1. Check probe configuration: kubectl get pod <pod-name> -o yaml | grep -A 10 readinessProbe\n2. Check application startup time from logs: kubectl logs <pod-name> | grep 'started'\n3. Add a startup probe (K8s 1.20+):\n   startupProbe:\n     httpGet:\n       path: /health\n       port: 8080\n     failureThreshold: 30\n     periodSeconds: 5\n4. Adjust readiness probe:\n   readinessProbe:\n     httpGet:\n       path: /ready\n       port: 8080\n     initialDelaySeconds: 5\n     periodSeconds: 10\n     failureThreshold: 3\n5. Apply: kubectl apply -f deployment.yaml\n6. Verify pods become ready: kubectl get pods -w\n\nPrevention:\n- Always use startup probes for apps that take > 10s to initialize\n- Separate /health (liveness) from /ready (readiness) endpoints\n- Load test startup time before setting probe values\n\nStatus: Resolved\nResolution Time: 20 minutes",
+    "metadata": {
+      "ticket_id": "K8S-TICKET-009",
+      "category": "kubernetes",
+      "subcategory": "probes",
+      "resource_type": "Pod",
+      "error_type": "ReadinessProbeFailure",
+      "severity": "medium",
+      "status": "resolved",
+      "created_date": "2026-03-05",
+      "resolved_date": "2026-03-05",
+      "affected_users": 20,
+      "resolution_type": "probe-config"
+    }
+  },
+  {
+    "id": "K8S-TICKET-010",
+    "content": "Issue: DNS resolution failing inside pods\n\nSymptoms:\n- Application errors: 'Name or service not known'\n- nslookup fails inside pod: kubectl exec <pod> -- nslookup kubernetes.default\n- CoreDNS pods running but intermittent failures\n- ndots:5 in /etc/resolv.conf causing excessive DNS queries\n\nRoot Cause:\nCoreDNS running with only 1 replica on a 10-node cluster. Under load, the single CoreDNS pod becomes overwhelmed. Also, default ndots:5 causes full FQDN lookups to try 5 search domains first.\n\nSolution:\nScale CoreDNS and optimize DNS configuration.\n\nSteps to Resolve:\n1. Check CoreDNS status: kubectl get pods -n kube-system -l k8s-app=kube-dns\n2. Check CoreDNS logs: kubectl logs -n kube-system -l k8s-app=kube-dns --tail=100\n3. Scale CoreDNS: kubectl scale deployment coredns -n kube-system --replicas=3\n4. Add DNS autoscaler:\n   kubectl apply -f https://raw.githubusercontent.com/kubernetes/kubernetes/master/cluster/addons/dns-horizontal-autoscaler/dns-horizontal-autoscaler.yaml\n5. For application pods, reduce ndots in deployment:\n   spec:\n     template:\n       spec:\n         dnsConfig:\n           options:\n             - name: ndots\n               value: \"2\"\n6. Use FQDNs in application config (e.g., service.namespace.svc.cluster.local)\n7. Verify: kubectl exec <pod> -- nslookup kubernetes.default\n\nPrevention:\n- Scale CoreDNS proportionally to cluster size\n- Use DNS autoscaler\n- Set ndots to 2 for external-heavy workloads\n\nStatus: Resolved\nResolution Time: 30 minutes",
+    "metadata": {
+      "ticket_id": "K8S-TICKET-010",
+      "category": "kubernetes",
+      "subcategory": "dns",
+      "resource_type": "CoreDNS",
+      "error_type": "DNSResolutionFailure",
+      "severity": "critical",
+      "status": "resolved",
+      "created_date": "2026-02-25",
+      "resolved_date": "2026-02-25",
+      "affected_users": 150,
+      "resolution_type": "scale-up"
+    }
+  },
+  {
+    "id": "K8S-TICKET-011",
+    "content": "Issue: Node NotReady after kernel upgrade\n\nSymptoms:\n- kubectl get nodes shows node in NotReady status\n- kubelet service failed to start after node reboot\n- journalctl shows: 'failed to run Kubelet: running with swap on is not supported'\n- Swap was enabled after OS upgrade\n\nRoot Cause:\nKernel upgrade re-enabled swap partition. Kubelet refuses to start when swap is active (default behavior).\n\nSolution:\nDisable swap and restart kubelet.\n\nSteps to Resolve:\n1. SSH to affected node\n2. Check swap status: free -h (shows swap usage)\n3. Disable swap immediately: sudo swapoff -a\n4. Disable swap permanently: comment out swap line in /etc/fstab\n5. Restart kubelet: sudo systemctl restart kubelet\n6. Verify node status: kubectl get nodes\n7. Check node conditions: kubectl describe node <node-name>\n8. Verify workloads scheduled: kubectl get pods -o wide | grep <node-name>\n\nPrevention:\n- Add swap disable to node provisioning scripts\n- Use immutable node images (e.g., Bottlerocket, Flatcar)\n- Monitor kubelet status with node-problem-detector\n\nStatus: Resolved\nResolution Time: 15 minutes",
+    "metadata": {
+      "ticket_id": "K8S-TICKET-011",
+      "category": "kubernetes",
+      "subcategory": "node",
+      "resource_type": "Node",
+      "error_type": "NodeNotReady",
+      "severity": "critical",
+      "status": "resolved",
+      "created_date": "2026-03-10",
+      "resolved_date": "2026-03-10",
+      "affected_users": 75,
+      "resolution_type": "node-fix"
+    }
+  },
+  {
+    "id": "K8S-TICKET-012",
+    "content": "Issue: ConfigMap changes not reflected in running pods\n\nSymptoms:\n- Updated ConfigMap via kubectl apply\n- Pod still using old configuration values\n- No error messages in pod logs\n- ConfigMap mounted as volume but changes not visible\n\nRoot Cause:\nConfigMap mounted as environment variables (envFrom) which are set at pod creation time and not updated dynamically. Volume-mounted ConfigMaps do auto-update but with up to 60 second delay.\n\nSolution:\nRestart pods to pick up ConfigMap changes, or switch to volume mounts with file watching.\n\nSteps to Resolve:\n1. Verify ConfigMap updated: kubectl get configmap <name> -o yaml\n2. Check how ConfigMap is consumed:\n   - envFrom: requires pod restart\n   - volumeMount: auto-updates after kubelet sync period (default 60s)\n3. For envFrom: rolling restart:\n   kubectl rollout restart deployment <deployment-name>\n4. For volume mounts: wait 60s then verify:\n   kubectl exec <pod-name> -- cat /config/key\n5. Best approach: use a hash annotation to trigger rollout on ConfigMap change:\n   metadata:\n     annotations:\n       configmap-hash: {{ sha256 of configmap data }}\n6. Verify new values: kubectl exec <pod-name> -- env | grep <KEY>\n\nPrevention:\n- Use Reloader operator to auto-restart on ConfigMap changes\n- Prefer volume mounts over envFrom for dynamic config\n- Version ConfigMaps (configmap-v2) for immutable updates\n\nStatus: Resolved\nResolution Time: 10 minutes",
+    "metadata": {
+      "ticket_id": "K8S-TICKET-012",
+      "category": "kubernetes",
+      "subcategory": "configmap",
+      "resource_type": "ConfigMap",
+      "error_type": "StaleConfig",
+      "severity": "low",
+      "status": "resolved",
+      "created_date": "2026-02-28",
+      "resolved_date": "2026-02-28",
+      "affected_users": 5,
+      "resolution_type": "restart"
+    }
+  }
+]

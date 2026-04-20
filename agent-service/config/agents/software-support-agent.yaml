@@ -1,4 +1,6 @@
 name: "software-support"
+description: "Handles software issues, bugs, errors, crashes, application problems, error codes"
+departments: ["software"]
 llm_backend: "gemini"  # Options: openai, gemini, ollama
 llm_model: "gemini-2.5-flash"  # Model name for the selected backend
 system_message: |
@@ -29,3 +31,38 @@ sampling_params:
     type: "top_p"
     temperature: 0.7
     top_p: 0.95
+
+a2a:
+  card_name: "Software Support Agent"
+  card_description: |
+    Software support specialist that helps users resolve software issues
+    including bugs, crashes, errors, installation problems, and application
+    failures. Uses a RAG-backed knowledge base of support tickets to provide
+    grounded troubleshooting guidance with structured analysis, research,
+    and solution phases.
+  skills:
+    - id: software_troubleshooting
+      name: "Software Troubleshooting"
+      description: |
+        Diagnoses and resolves software issues including application crashes,
+        error codes, installation failures, configuration problems, and
+        unexpected behavior. Searches a knowledge base of historical support
+        tickets for similar issues and proven solutions.
+      tags: ["software", "bugs", "errors", "crashes", "troubleshooting"]
+      examples:
+        - "My application keeps crashing with a segmentation fault"
+        - "I'm getting error code 0x80070005 during installation"
+        - "The software won't start after the latest update"
+        - "How do I fix a dependency conflict in my Python environment?"
+        - "Application hangs when processing large files"
+    - id: software_installation
+      name: "Software Installation & Configuration"
+      description: |
+        Assists with software installation, setup, and configuration issues.
+        Provides step-by-step guidance for resolving installation blockers,
+        dependency issues, and environment setup problems.
+      tags: ["installation", "configuration", "setup", "dependencies"]
+      examples:
+        - "How do I install this package on Ubuntu?"
+        - "Installation fails with missing dependency errors"
+        - "How do I configure the application for production use?"

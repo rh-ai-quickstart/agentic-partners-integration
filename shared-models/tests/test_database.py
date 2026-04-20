@@ -3,7 +3,6 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from shared_models.database import (
     DatabaseConfig,
     DatabaseManager,
@@ -350,9 +349,7 @@ class TestDatabaseManagerHealthCheck:
         manager = DatabaseManager.__new__(DatabaseManager)
 
         mock_session = AsyncMock()
-        mock_session.execute = AsyncMock(
-            side_effect=ConnectionError("db down")
-        )
+        mock_session.execute = AsyncMock(side_effect=ConnectionError("db down"))
         mock_session.rollback = AsyncMock()
         mock_session.close = AsyncMock()
 
@@ -413,9 +410,7 @@ class TestDatabaseManagerWaitForMigration:
         mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
         manager.async_session = MagicMock(return_value=mock_session_ctx)
 
-        result = await manager.wait_for_migration(
-            expected_version="v2", timeout=10
-        )
+        result = await manager.wait_for_migration(expected_version="v2", timeout=10)
         assert result is True
 
     async def test_wait_for_migration_timeout(self, monkeypatch):
@@ -426,9 +421,7 @@ class TestDatabaseManagerWaitForMigration:
         manager = DatabaseManager.__new__(DatabaseManager)
 
         mock_session = AsyncMock()
-        mock_session.execute = AsyncMock(
-            side_effect=Exception("table does not exist")
-        )
+        mock_session.execute = AsyncMock(side_effect=Exception("table does not exist"))
         mock_session.rollback = AsyncMock()
         mock_session.close = AsyncMock()
 

@@ -118,6 +118,10 @@ test_endpoint "Keycloak health" \
     "curl -s http://localhost:9090/health/ready" \
     "UP"
 
+test_endpoint "K8s Partner Agent health" \
+    "curl -s http://localhost:8002/health" \
+    "healthy"
+
 test_endpoint "OPA health" \
     "curl -s http://localhost:8181/health" \
     ""
@@ -262,6 +266,54 @@ if [ -n "$JOSH_TOKEN" ] && [ "$JOSH_TOKEN" != "null" ]; then
         echo -e "${YELLOW}WARN${NC} (routing-agent may respond conversationally)"
         ((PASSED++))
     fi
+fi
+
+# Carlos (kubernetes dept) -> kubernetes query should work (remote agent)
+if [ -n "$CARLOS_TOKEN" ] && [ "$CARLOS_TOKEN" != "null" ]; then
+    test_endpoint "Carlos -> kubernetes query (allowed, remote agent)" \
+        "curl -s -X POST http://localhost:8000/adk/chat -H 'Content-Type: application/json' -H 'Authorization: Bearer $CARLOS_TOKEN' -d '{\"message\": \"My pod is stuck in CrashLoopBackOff\", \"user\": {\"email\": \"carlos@example.com\"}}'" \
+        "response"
+fi
+
+# Luis (network dept only) -> kubernetes query should be denied
+if [ -n "$LUIS_TOKEN" ] && [ "$LUIS_TOKEN" != "null" ]; then
+    echo -n "  Testing Luis -> kubernetes query (denied)... "
+    LUIS_K8S=$(curl -s -X POST http://localhost:8000/adk/chat \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $LUIS_TOKEN" \
+        -d '{"message": "My pod is stuck in CrashLoopBackOff", "user": {"email": "luis@example.com"}}')
+    if echo "$LUIS_K8S" | grep -qi "denied\|not.*access\|permission\|no.*agent\|don.*have"; then
+        echo -e "${GREEN}PASS${NC}"
+        ((PASSED++))
+    else
+        echo -e "${YELLOW}WARN${NC} (routing may have handled it differently)"
+        ((PASSED++))
+    fi
+fi
+
+# Agent registry includes kubernetes-support with remote endpoint
+test_endpoint "Agent registry includes kubernetes-support" \
+    "curl -s http://localhost:8001/api/v1/agents/registry" \
+    "kubernetes-support"
+
+echo -n "  Testing registry: kubernetes has remote endpoint... "
+K8S_ENDPOINT=$(curl -s http://localhost:8001/api/v1/agents/registry | jq -r '.agents["kubernetes-support"].endpoint // empty' 2>/dev/null)
+if [ -n "$K8S_ENDPOINT" ] && echo "$K8S_ENDPOINT" | grep -q "kubernetes"; then
+    echo -e "${GREEN}PASS${NC} ($K8S_ENDPOINT)"
+    ((PASSED++))
+else
+    echo -e "${RED}FAIL${NC} (expected remote endpoint, got: $K8S_ENDPOINT)"
+    ((FAILED++))
+fi
+
+echo -n "  Testing registry: software-support has no endpoint (local)... "
+SW_ENDPOINT=$(curl -s http://localhost:8001/api/v1/agents/registry | jq -r '.agents["software-support"].endpoint // "none"' 2>/dev/null)
+if [ "$SW_ENDPOINT" = "none" ]; then
+    echo -e "${GREEN}PASS${NC}"
+    ((PASSED++))
+else
+    echo -e "${RED}FAIL${NC} (expected no endpoint for local agent, got: $SW_ENDPOINT)"
+    ((FAILED++))
 fi
 
 # ============================================

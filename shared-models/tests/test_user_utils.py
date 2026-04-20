@@ -4,7 +4,6 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from shared_models.user_utils import (
     _ensure_email_mapping,
     get_or_create_canonical_user,
@@ -69,16 +68,12 @@ class TestResolveCanonicalUserId:
             await resolve_canonical_user_id("test@example.com")
 
     @patch("shared_models.user_utils.get_or_create_canonical_user")
-    async def test_email_input_with_db(
-        self, mock_get_or_create, mock_db_session
-    ):
+    async def test_email_input_with_db(self, mock_get_or_create, mock_db_session):
         """Email input with db should resolve via get_or_create_canonical_user."""
         expected_uid = str(uuid.uuid4())
         mock_get_or_create.return_value = expected_uid
 
-        result = await resolve_canonical_user_id(
-            "test@example.com", db=mock_db_session
-        )
+        result = await resolve_canonical_user_id("test@example.com", db=mock_db_session)
 
         assert result == expected_uid
         mock_get_or_create.assert_called_once_with("test@example.com", mock_db_session)
@@ -133,9 +128,7 @@ class TestResolveCanonicalUserId:
         mock_get_or_create.side_effect = RuntimeError("lookup failed")
 
         with pytest.raises(RuntimeError, match="lookup failed"):
-            await resolve_canonical_user_id(
-                "fail@example.com", db=mock_db_session
-            )
+            await resolve_canonical_user_id("fail@example.com", db=mock_db_session)
 
     @patch("shared_models.user_utils.get_or_create_canonical_user")
     async def test_email_with_integration_type(
@@ -302,14 +295,12 @@ class TestGetOrCreateCanonicalUser:
             side_effect=[
                 mock_result_no_mapping,
                 mock_result_no_user,
-                mock_result_found,      # retry lookup
-                mock_ensure_result,     # _ensure_email_mapping select
+                mock_result_found,  # retry lookup
+                mock_ensure_result,  # _ensure_email_mapping select
             ]
         )
 
-        result = await get_or_create_canonical_user(
-            "race@example.com", mock_db_session
-        )
+        result = await get_or_create_canonical_user("race@example.com", mock_db_session)
         assert result == uid
 
     async def test_non_constraint_error_reraises(self, mock_db_session):
@@ -323,9 +314,7 @@ class TestGetOrCreateCanonicalUser:
         mock_result_no_user.scalar_one_or_none.return_value = None
 
         # flush raises non-constraint error
-        mock_db_session.flush = AsyncMock(
-            side_effect=RuntimeError("unexpected error")
-        )
+        mock_db_session.flush = AsyncMock(side_effect=RuntimeError("unexpected error"))
 
         mock_db_session.execute = AsyncMock(
             side_effect=[mock_result_no_mapping, mock_result_no_user]

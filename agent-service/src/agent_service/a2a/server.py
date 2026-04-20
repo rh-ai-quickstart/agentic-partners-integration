@@ -1,34 +1,35 @@
 """A2A server setup for partner specialist agents.
 
-Creates two A2A Starlette sub-applications (one per specialist agent)
-that can be mounted on the main FastAPI app.
+Dynamically discovers specialist agents from YAML configs and creates
+an A2A Starlette sub-application for each one.  Adding a new agent
+YAML with departments and an 'a2a' block is sufficient — no code
+changes required.
 """
 
 import logging
 import os
+from typing import Any
 
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
 from starlette.applications import Starlette
 
-from .agent_cards import create_network_support_card, create_software_support_card
+from .agent_cards import create_agent_card
 from .executor import SpecialistAgentExecutor
 
 logger = logging.getLogger(__name__)
 
 
-def _build_a2a_app(agent_name: str, base_url: str) -> Starlette:
-    """Build a standalone A2A Starlette app for one specialist agent."""
-    card_factory = {
-        "software-support": create_software_support_card,
-        "network-support": create_network_support_card,
-    }
+def _build_a2a_app(agent_name: str, config: dict[str, Any], base_url: str) -> Starlette:
+    """Build a standalone A2A Starlette app for one specialist agent.
 
-    if agent_name not in card_factory:
-        raise ValueError(f"Unknown agent: {agent_name}")
-
-    agent_card = card_factory[agent_name](base_url)
+    Args:
+        agent_name: Agent identifier (e.g. "software-support")
+        config: The agent's full YAML config dict (used for card generation)
+        base_url: Base URL where this agent's A2A endpoint is served
+    """
+    agent_card = create_agent_card(agent_name, config, base_url)
 
     handler = DefaultRequestHandler(
         agent_executor=SpecialistAgentExecutor(agent_name),
@@ -43,21 +44,21 @@ def _build_a2a_app(agent_name: str, base_url: str) -> Starlette:
     return a2a_app.build()
 
 
-def get_software_support_a2a_app() -> Starlette:
-    """Build the Software Support A2A sub-application."""
-    base_url = os.getenv(
-        "SOFTWARE_SUPPORT_A2A_URL",
-        "http://localhost:8080/a2a/software-support/",
-    )
-    logger.info("Building A2A app for software-support at %s", base_url)
-    return _build_a2a_app("software-support", base_url)
+def get_a2a_app(agent_name: str, config: dict[str, Any]) -> Starlette:
+    """Build an A2A sub-application for a specialist agent.
 
+    The base URL is read from the environment variable
+    ``<AGENT_NAME>_A2A_URL`` (uppercased, hyphens replaced with
+    underscores), falling back to localhost.
 
-def get_network_support_a2a_app() -> Starlette:
-    """Build the Network Support A2A sub-application."""
+    Args:
+        agent_name: Agent identifier (e.g. "software-support")
+        config: The agent's full YAML config dict
+    """
+    env_key = agent_name.upper().replace("-", "_") + "_A2A_URL"
     base_url = os.getenv(
-        "NETWORK_SUPPORT_A2A_URL",
-        "http://localhost:8080/a2a/network-support/",
+        env_key,
+        f"http://localhost:8080/a2a/{agent_name}/",
     )
-    logger.info("Building A2A app for network-support at %s", base_url)
-    return _build_a2a_app("network-support", base_url)
+    logger.info("Building A2A app for %s at %s", agent_name, base_url)
+    return _build_a2a_app(agent_name, config, base_url)

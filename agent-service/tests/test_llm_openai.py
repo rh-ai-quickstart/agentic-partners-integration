@@ -3,7 +3,6 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from agent_service.llm.base import LLMMessage, LLMResponse
 
 
@@ -47,11 +46,15 @@ class TestOpenAIClient:
             LLMMessage(role="user", content="Hello"),
         ]
 
-        result = await client.create_completion(messages, temperature=0.3, max_tokens=100)
+        result = await client.create_completion(
+            messages, temperature=0.3, max_tokens=100
+        )
 
         # Verify API call
         mock_async_openai.return_value.chat.completions.create.assert_awaited_once()
-        call_kwargs = mock_async_openai.return_value.chat.completions.create.call_args.kwargs
+        call_kwargs = (
+            mock_async_openai.return_value.chat.completions.create.call_args.kwargs
+        )
         assert call_kwargs["model"] == "gpt-4"
         assert call_kwargs["temperature"] == 0.3
         assert call_kwargs["max_tokens"] == 100

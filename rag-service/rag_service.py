@@ -21,7 +21,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from google import genai
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Column, DateTime, Integer, String, Text, select, func
+from sqlalchemy import Column, DateTime, Integer, String, Text, func, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
@@ -30,7 +30,9 @@ logger = structlog.get_logger()
 
 # Configuration from environment
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:pass@postgres:5432/partner_agent")
+DATABASE_URL = os.getenv(
+    "DATABASE_URL", "postgresql+asyncpg://user:pass@postgres:5432/partner_agent"
+)
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "models/gemini-embedding-001")
 LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.5-flash")
 EMBEDDING_DIM = 3072  # Google Gemini embedding-001 dimension (updated from 768)
@@ -45,7 +47,7 @@ if not GOOGLE_API_KEY:
 logger.info(
     "Initializing RAG service with Google GenAI",
     model=LLM_MODEL,
-    api_key_prefix=GOOGLE_API_KEY[:10] if GOOGLE_API_KEY else "NOT_SET"
+    api_key_prefix=GOOGLE_API_KEY[:10] if GOOGLE_API_KEY else "NOT_SET",
 )
 genai_client = genai.Client(api_key=GOOGLE_API_KEY)
 logger.info("Google GenAI client initialized successfully")
@@ -56,6 +58,7 @@ Base = declarative_base()
 
 class KnowledgeDocument(Base):
     """Model for knowledge documents stored in PostgreSQL."""
+
     __tablename__ = "knowledge_documents"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -64,8 +67,15 @@ class KnowledgeDocument(Base):
     content = Column(Text, nullable=False)
     metadata_ = Column("metadata", JSONB, nullable=True)
     embedding = Column(Vector(EMBEDDING_DIM), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
 
 
 # Database engine and session
@@ -78,10 +88,7 @@ def _generate_embedding_sync(text: str) -> np.ndarray:
     Synchronous helper for generating embeddings.
     Use generate_embedding() from async contexts.
     """
-    response = genai_client.models.embed_content(
-        model=EMBEDDING_MODEL,
-        contents=text
-    )
+    response = genai_client.models.embed_content(model=EMBEDDING_MODEL, contents=text)
     if not response.embeddings or not response.embeddings[0].values:
         raise ValueError(f"Empty embedding response for text: {text[:50]}...")
     return np.array(response.embeddings[0].values)
@@ -102,7 +109,11 @@ async def generate_embedding(text: str) -> np.ndarray:
         # Run synchronous API call in thread pool to avoid blocking event loop
         embedding = await asyncio.to_thread(_generate_embedding_sync, text)
         elapsed = time.time() - start_time
-        logger.info("Generated embedding", duration_ms=int(elapsed * 1000), text_preview=text[:50])
+        logger.info(
+            "Generated embedding",
+            duration_ms=int(elapsed * 1000),
+            text_preview=text[:50],
+        )
         return embedding
     except Exception as e:
         logger.error("Error generating embedding", error=str(e), text_preview=text[:50])
@@ -114,7 +125,7 @@ async def search_knowledge_base(
     session: AsyncSession,
     collection_name: str = "support_tickets",
     num_results: int = 3,
-    min_similarity: float = 0.0
+    min_similarity: float = 0.0,
 ) -> List[Dict[str, Any]]:
     """
     Search the knowledge base for relevant documents using pgvector similarity search.
@@ -138,7 +149,9 @@ async def search_knowledge_base(
         stmt = (
             select(
                 KnowledgeDocument,
-                (1 - KnowledgeDocument.embedding.cosine_distance(query_embedding)).label("similarity")
+                (
+                    1 - KnowledgeDocument.embedding.cosine_distance(query_embedding)
+                ).label("similarity"),
             )
             .where(KnowledgeDocument.knowledge_base == collection_name)
             .where(KnowledgeDocument.embedding.isnot(None))
@@ -154,15 +167,21 @@ async def search_knowledge_base(
         for doc, similarity in rows:
             # Filter by minimum similarity
             if similarity >= min_similarity:
-                documents.append({
-                    "id": doc.document_id,
-                    "content": doc.content,
-                    "metadata": doc.metadata_ or {},
-                    "similarity": float(similarity),
-                    "distance": float(1 - similarity)
-                })
+                documents.append(
+                    {
+                        "id": doc.document_id,
+                        "content": doc.content,
+                        "metadata": doc.metadata_ or {},
+                        "similarity": float(similarity),
+                        "distance": float(1 - similarity),
+                    }
+                )
 
-        logger.info("Knowledge base search complete", result_count=len(documents), query_preview=query[:50])
+        logger.info(
+            "Knowledge base search complete",
+            result_count=len(documents),
+            query_preview=query[:50],
+        )
         return documents
 
     except Exception:
@@ -178,8 +197,8 @@ def _generate_answer_sync(query: str, context_docs: List[Dict[str, Any]]) -> str
     # Build context from retrieved documents
     context_parts = []
     for i, doc in enumerate(context_docs):
-        metadata = doc.get('metadata', {})
-        similarity = doc.get('similarity', 0)
+        metadata = doc.get("metadata", {})
+        similarity = doc.get("similarity", 0)
 
         context_parts.append(
             f"[Document {i+1}] (Relevance: {similarity:.2f})\n"
@@ -208,10 +227,7 @@ Instructions:
 Answer:"""
 
     # Generate response using new Google GenAI SDK
-    response = genai_client.models.generate_content(
-        model=LLM_MODEL,
-        contents=prompt
-    )
+    response = genai_client.models.generate_content(model=LLM_MODEL, contents=prompt)
 
     return response.text.strip()
 
@@ -232,7 +248,11 @@ async def generate_answer(query: str, context_docs: List[Dict[str, Any]]) -> str
         # Run synchronous API call in thread pool to avoid blocking event loop
         answer = await asyncio.to_thread(_generate_answer_sync, query, context_docs)
         elapsed = time.time() - start_time
-        logger.info("Generated answer", duration_ms=int(elapsed * 1000), query_preview=query[:50])
+        logger.info(
+            "Generated answer",
+            duration_ms=int(elapsed * 1000),
+            query_preview=query[:50],
+        )
         return answer
 
     except Exception as e:
@@ -249,20 +269,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Initialize database engine
     engine = create_async_engine(
-        DATABASE_URL,
-        echo=False,
-        pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=10
+        DATABASE_URL, echo=False, pool_pre_ping=True, pool_size=5, max_overflow=10
     )
 
     async_session_maker = async_sessionmaker(
-        engine,
-        class_=AsyncSession,
-        expire_on_commit=False
+        engine, class_=AsyncSession, expire_on_commit=False
     )
 
-    logger.info("Database connection initialized", database_url=DATABASE_URL.split('@')[-1])
+    logger.info(
+        "Database connection initialized", database_url=DATABASE_URL.split("@")[-1]
+    )
     logger.info("RAG API Service ready")
 
     yield
@@ -292,8 +308,8 @@ async def root():
         "endpoints": {
             "/answer": "POST - Query the RAG knowledge base",
             "/health": "GET - Health check",
-            "/stats": "GET - Knowledge base statistics"
-        }
+            "/stats": "GET - Knowledge base statistics",
+        },
     }
 
 
@@ -303,19 +319,18 @@ async def health():
     try:
         # Check database connection
         async with async_session_maker() as session:
-            result = await session.execute(select(func.count()).select_from(KnowledgeDocument))
+            result = await session.execute(
+                select(func.count()).select_from(KnowledgeDocument)
+            )
             total_docs = result.scalar()
 
         return {
             "status": "healthy",
             "service": "rag-api",
             "version": "1.0.0",
-            "database": {
-                "type": "postgresql+pgvector",
-                "total_documents": total_docs
-            },
+            "database": {"type": "postgresql+pgvector", "total_documents": total_docs},
             "llm_model": LLM_MODEL,
-            "embedding_model": EMBEDDING_MODEL
+            "embedding_model": EMBEDDING_MODEL,
         }
     except Exception as e:
         logger.error("Health check failed", error=str(e))
@@ -323,8 +338,8 @@ async def health():
             status_code=503,
             content={
                 "status": "unhealthy",
-                "error": "Service dependencies unavailable"
-            }
+                "error": "Service dependencies unavailable",
+            },
         )
 
 
@@ -334,29 +349,26 @@ async def stats():
     try:
         async with async_session_maker() as session:
             # Get total documents
-            result = await session.execute(select(func.count()).select_from(KnowledgeDocument))
+            result = await session.execute(
+                select(func.count()).select_from(KnowledgeDocument)
+            )
             total_docs = result.scalar()
 
             # Get documents per knowledge base
-            stmt = (
-                select(
-                    KnowledgeDocument.knowledge_base,
-                    func.count(KnowledgeDocument.id).label("count")
-                )
-                .group_by(KnowledgeDocument.knowledge_base)
-            )
+            stmt = select(
+                KnowledgeDocument.knowledge_base,
+                func.count(KnowledgeDocument.id).label("count"),
+            ).group_by(KnowledgeDocument.knowledge_base)
             result = await session.execute(stmt)
-            kb_stats = [{"knowledge_base": kb, "count": count} for kb, count in result.all()]
+            kb_stats = [
+                {"knowledge_base": kb, "count": count} for kb, count in result.all()
+            ]
 
-        return {
-            "total_documents": total_docs,
-            "knowledge_bases": kb_stats
-        }
+        return {"total_documents": total_docs, "knowledge_bases": kb_stats}
     except Exception as e:
         logger.error("Error getting stats", error=str(e))
         return JSONResponse(
-            status_code=500,
-            content={"error": "Failed to retrieve statistics"}
+            status_code=500, content={"error": "Failed to retrieve statistics"}
         )
 
 
@@ -394,19 +406,24 @@ async def answer(request: Request):
     """
     try:
         body = await request.json()
-        logger.info("Received RAG query", query_preview=body.get("user_query", "")[:100])
+        logger.info(
+            "Received RAG query", query_preview=body.get("user_query", "")[:100]
+        )
 
         user_query = body.get("user_query", "")
         num_sources = body.get("num_sources", 3)
         only_high_similarity = body.get("only_high_similarity_nodes", False)
         collection_name = body.get("collection", "support_tickets")
-        min_similarity = body.get("min_similarity", 0.7 if only_high_similarity else 0.0)
-        generate_llm_answer = body.get("generate_answer", False)  # Default: only return sources
+        min_similarity = body.get(
+            "min_similarity", 0.7 if only_high_similarity else 0.0
+        )
+        generate_llm_answer = body.get(
+            "generate_answer", False
+        )  # Default: only return sources
 
         if not user_query:
             return JSONResponse(
-                status_code=400,
-                content={"error": "user_query is required"}
+                status_code=400, content={"error": "user_query is required"}
             )
 
         # Search knowledge base
@@ -417,10 +434,14 @@ async def answer(request: Request):
                 session=session,
                 collection_name=collection_name,
                 num_results=num_sources,
-                min_similarity=min_similarity
+                min_similarity=min_similarity,
             )
         search_elapsed = time.time() - search_start
-        logger.info("Search complete", duration_ms=int(search_elapsed * 1000), doc_count=len(documents))
+        logger.info(
+            "Search complete",
+            duration_ms=int(search_elapsed * 1000),
+            doc_count=len(documents),
+        )
 
         # Generate answer only if requested (optional, as agent service has its own LLM)
         if generate_llm_answer:
@@ -443,7 +464,7 @@ async def answer(request: Request):
                     "id": doc["id"],
                     "content": doc["content"][:500],  # Truncate for response
                     "similarity": doc["similarity"],
-                    "metadata": doc["metadata"]
+                    "metadata": doc["metadata"],
                 }
                 for doc in documents
             ],
@@ -451,8 +472,8 @@ async def answer(request: Request):
                 "num_sources": len(documents),
                 "collection": collection_name,
                 "min_similarity": min_similarity,
-                "query_length": len(user_query)
-            }
+                "query_length": len(user_query),
+            },
         }
 
         logger.info("Returning answer", source_count=len(documents))
@@ -464,8 +485,8 @@ async def answer(request: Request):
             status_code=500,
             content={
                 "error": "Internal server error",
-                "response": "An error occurred processing your query. Please try again."
-            }
+                "response": "An error occurred processing your query. Please try again.",
+            },
         )
 
 
@@ -473,7 +494,7 @@ if __name__ == "__main__":
     logger.info(
         "Starting RAG API Service",
         url="http://0.0.0.0:8080",
-        database_url=DATABASE_URL.split('@')[-1],
+        database_url=DATABASE_URL.split("@")[-1],
         llm_model=LLM_MODEL,
         embedding_model=EMBEDDING_MODEL,
     )

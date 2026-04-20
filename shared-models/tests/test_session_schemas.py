@@ -2,7 +2,6 @@
 
 import pytest
 from pydantic import ValidationError
-
 from shared_models.models import IntegrationType, SessionStatus
 from shared_models.session_schemas import SessionCreate, SessionResponse
 
