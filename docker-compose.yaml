@@ -110,16 +110,16 @@ services:
       timeout: 5s
       retries: 5
 
-  # Kubernetes Partner Agent (standalone remote agent)
+  # Kubernetes Partner Agent (standalone remote agent — uses OpenAI SDK via Gemini)
   kubernetes-agent:
     build:
       context: .
       dockerfile: kubernetes-partner-agent/Containerfile
     container_name: partner-kubernetes-agent-adk
     environment:
-      - LLM_BACKEND=gemini
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      - GEMINI_MODEL=gemini-2.5-flash
+      - OPENAI_API_KEY=${GOOGLE_API_KEY}
+      - OPENAI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+      - OPENAI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
       - LOG_LEVEL=INFO
       - RAG_API_ENDPOINT=http://rag-api:8080/answer
     ports:

@@ -107,13 +107,21 @@ def decode_token(authorization: str) -> dict:
 def _extract_departments(payload: dict) -> list[str]:
     """Extract departments from Keycloak token claims.
 
-    Keycloak stores realm roles in realm_access.roles.
-    We filter to only our department roles (engineering, software, network, admin).
+    Prefers the ``groups`` claim (set via Keycloak group mapper).
+    Falls back to ``realm_access.roles`` with Keycloak system roles excluded.
     """
-    known_departments = {"engineering", "software", "network", "admin"}
+    groups = payload.get("groups")
+    if groups:
+        return [g.strip("/") for g in groups if g]
+
+    keycloak_system_roles = {
+        "default-roles-partner-agent",
+        "offline_access",
+        "uma_authorization",
+    }
     realm_access = payload.get("realm_access", {})
     roles = realm_access.get("roles", [])
-    return [r for r in roles if r in known_departments]
+    return [r for r in roles if r not in keycloak_system_roles]
 
 
 # ── Request/Response Models ──────────────────────────────────────────────────
@@ -219,6 +227,11 @@ async def login(
         email=email,
         departments=departments,
     )
+    # Sync departments from JWT on every login
+    if user and user.departments != departments:
+        await AAAService.update_user_permissions(
+            db, email, departments=departments
+        )
     role = user.role.value if user.role else "user"
 
     logger.info("Login successful", user=email, departments=departments)

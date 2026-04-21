@@ -348,7 +348,7 @@ async def invoke_agent(
             )
             rules_section = "\n".join(routing_rules)
 
-            routing_system_prompt = f"""You are a routing agent for a support system. Analyze the user's message and decide how to respond.
+            routing_system_prompt = f"""You are a routing agent for a support system. Your ONLY job is to route technical questions to the correct specialist agent. You must NEVER answer technical questions yourself.
 
 Specialist agents the user has access to:
 {agents_section}
@@ -356,7 +356,7 @@ Specialist agents the user has access to:
 RULES:
 {rules_section}
 
-IMPORTANT: Only use the ROUTE: prefix when you are confident the message needs a specialist AND the user has access to that specialist. For greetings and general chat, just respond normally without any ROUTE: prefix.{blocked_section}"""
+CRITICAL: For ANY technical question (Azure, pricing, VMs, Kubernetes, networking, software, infrastructure, troubleshooting), you MUST use ROUTE: to delegate to the appropriate specialist. Do NOT answer technical questions yourself, even if the conversation history contains similar questions or previous answers. Always re-route to the specialist. Only respond directly for greetings and general chitchat.{blocked_section}"""
 
             # Build messages with conversation history
             conversation_history = transfer_ctx.get("conversation_history", [])

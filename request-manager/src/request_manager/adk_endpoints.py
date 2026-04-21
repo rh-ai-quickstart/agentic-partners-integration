@@ -6,6 +6,9 @@ Provides Google Agent Development Kit (ADK) compatible endpoints for web UI inte
 
 from typing import Any, Dict, List, Optional
 
+import os
+
+import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
@@ -107,9 +110,12 @@ async def adk_chat(
             session_id=request.session_id,
         )
 
-        # Get user context with departments for OPA authorization
+        # Get user context; override departments with JWT (authoritative source)
+        from .auth_endpoints import _extract_departments
+
         user_context = await AAAMiddleware.get_user_context(db, user_email)
-        departments = user_context.get("departments", [])
+        departments = _extract_departments(payload)
+        user_context["departments"] = departments
 
         logger.info("User departments", user=user_email, departments=departments)
 
@@ -463,6 +469,26 @@ async def adk_audit_events(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get audit events: {str(e)}",
+        )
+
+
+@router.get("/agents")
+async def adk_agents() -> Dict[str, Any]:
+    """Return the agent registry from agent-service for UI discovery."""
+    agent_service_url = os.getenv(
+        "AGENT_SERVICE_URL", "http://agent-service:8080"
+    )
+    registry_url = f"{agent_service_url.rstrip('/')}/api/v1/agents/registry"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(registry_url)
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        logger.error("Failed to fetch agent registry", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Agent registry unavailable",
         )
 
 

@@ -166,14 +166,14 @@ echo "  Migrations complete"
 echo ""
 echo -e "${YELLOW}Starting services...${NC}"
 
-# Kubernetes Partner Agent (standalone remote agent)
+# Kubernetes Partner Agent (standalone remote agent — uses OpenAI SDK)
 docker rm -f partner-kubernetes-agent-full 2>/dev/null || true
 docker run -d \
     --name partner-kubernetes-agent-full \
     --network partner-agent-network \
-    -e LLM_BACKEND=gemini \
-    -e GOOGLE_API_KEY="${GOOGLE_API_KEY}" \
-    -e GEMINI_MODEL=gemini-2.5-flash \
+    -e OPENAI_API_KEY="${GOOGLE_API_KEY}" \
+    -e OPENAI_BASE_URL="https://generativelanguage.googleapis.com/v1beta/openai/" \
+    -e OPENAI_MODEL="${GEMINI_MODEL:-gemini-2.5-flash}" \
     -e LOG_LEVEL=INFO \
     -e RAG_API_ENDPOINT=http://partner-rag-api-full:8080/answer \
     -p 8002:8080 \

@@ -18,14 +18,14 @@ class TestExtractDepartments:
     """Tests for the _extract_departments helper."""
 
     def test_filters_known_departments(self):
-        """Only recognised department names should be returned."""
+        """All non-system roles should be returned as departments."""
         payload = {
             "realm_access": {
-                "roles": ["engineering", "software", "network", "admin", "unknown-role"]
+                "roles": ["engineering", "software", "network", "admin", "kubernetes", "azure"]
             }
         }
         result = _extract_departments(payload)
-        assert sorted(result) == ["admin", "engineering", "network", "software"]
+        assert sorted(result) == ["admin", "azure", "engineering", "kubernetes", "network", "software"]
 
     def test_empty_roles(self):
         """An empty roles list should produce an empty result."""
@@ -42,9 +42,26 @@ class TestExtractDepartments:
         assert _extract_departments(payload) == []
 
     def test_no_known_departments(self):
-        """When no roles match known departments, return empty list."""
+        """Non-system roles are returned as departments."""
         payload = {"realm_access": {"roles": ["viewer", "editor"]}}
-        assert _extract_departments(payload) == []
+        assert sorted(_extract_departments(payload)) == ["editor", "viewer"]
+
+    def test_excludes_keycloak_system_roles(self):
+        """Keycloak system roles should be filtered out."""
+        payload = {
+            "realm_access": {
+                "roles": ["software", "default-roles-partner-agent", "offline_access", "uma_authorization"]
+            }
+        }
+        assert _extract_departments(payload) == ["software"]
+
+    def test_prefers_groups_claim(self):
+        """When groups claim is present, use it instead of realm_access."""
+        payload = {
+            "groups": ["software", "kubernetes", "azure"],
+            "realm_access": {"roles": ["software"]},
+        }
+        assert sorted(_extract_departments(payload)) == ["azure", "kubernetes", "software"]
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +166,9 @@ class TestLoginEndpoint:
         mock_user = MagicMock()
         mock_user.role = MagicMock()
         mock_user.role.value = "engineer"
+        mock_user.departments = ["engineering"]
         mock_aaa.get_or_create_user = AsyncMock(return_value=mock_user)
+        mock_aaa.update_user_permissions = AsyncMock()
 
         db = AsyncMock()
         req = LoginRequest(email="user@example.com", password="secret")
@@ -499,7 +518,9 @@ class TestLoginEndpointExtended:
 
         mock_user = MagicMock()
         mock_user.role = None  # No role
+        mock_user.departments = []
         mock_aaa.get_or_create_user = AsyncMock(return_value=mock_user)
+        mock_aaa.update_user_permissions = AsyncMock()
 
         db = AsyncMock()
         req = LoginRequest(email="user@example.com", password="pass")

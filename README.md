@@ -101,6 +101,59 @@ flowchart TB
 6. The LLM generates a response that references specific tickets and known fixes
 7. Everything is logged -- who asked, what they asked, which agent answered, how long it took
 
+### Agent Orchestration
+
+```mermaid
+flowchart LR
+    users["👥 Users"]
+
+    subgraph frontend[" RH Web Frontend "]
+        ui["PatternFly\nChat UI"]
+    end
+
+    subgraph orchestrator[" Orchestrator Layer "]
+        adk["Google ADK\n(Self-hosted)\n\nRequest Manager\n+ OPA + Keycloak"]
+    end
+
+    llm_main["🧠 LLM\n(Gemini 2.5 Flash)"]
+
+    subgraph agents[" Domain-based Agents "]
+        sw["Software\nSupport Agent"]
+        nw["Network\nSupport Agent"]
+        k8s["Kubernetes\nSupport Agent"]
+        aro["ARO Support\nAgent"]
+    end
+
+    llm_sw["LLM"]
+    llm_nw["LLM"]
+    llm_k8s["LLM"]
+    llm_aro["LLM"]
+
+    users --> ui
+    ui --> adk
+    adk --> llm_main
+
+    adk -->|A2A| sw
+    adk -->|A2A| nw
+    adk -->|A2A| k8s
+    adk -->|A2A| aro
+
+    sw --- llm_sw
+    nw --- llm_nw
+    k8s --- llm_k8s
+    aro --- llm_aro
+
+    style frontend fill:#e3f2fd,stroke:#1565c0
+    style orchestrator fill:#fff3e0,stroke:#e65100
+    style agents fill:#e8f5e9,stroke:#2e7d32
+    style sw fill:#e8f5e9,stroke:#2e7d32
+    style nw fill:#e8f5e9,stroke:#2e7d32
+    style k8s fill:#e8eaf6,stroke:#283593
+    style aro fill:#e8eaf6,stroke:#283593
+```
+
+The orchestrator uses Google ADK to classify user intent via a routing agent, then delegates to the right specialist over A2A (Agent-to-Agent HTTP). Local agents (Software, Network) run in-process; partner agents (Kubernetes, ARO -- shown in blue) run as separate containers with their own LLM connections.
+
 ## Quick Start
 
 ```bash

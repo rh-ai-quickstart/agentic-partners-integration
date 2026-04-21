@@ -11,9 +11,7 @@ dependencies = [
     "uvicorn[standard]>=0.24.0",
     "pydantic>=2.5.0",
     "httpx>=0.25.0",
-    "structlog>=23.2.0",
     "openai>=1.30.0",
-    "google-genai>=0.3.0",
     "pyyaml>=6.0.0",
     "a2a-sdk[http-server]",
 ]
