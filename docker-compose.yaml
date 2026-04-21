@@ -138,6 +138,57 @@ services:
       timeout: 5s
       retries: 5
 
+  # Azure MCP Server (HTTP-to-stdio proxy + Azure MCP binary)
+  azure-mcp-server:
+    build:
+      context: .
+      dockerfile: azure-mcp-server/Containerfile
+    container_name: partner-azure-mcp-server
+    env_file:
+      - ./azure-mcp-server/.env
+    environment:
+      - LOG_LEVEL=INFO
+    ports:
+      - "5008:8080"
+    networks:
+      partner-agent-network:
+        aliases:
+          - azure-mcp-server
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ARO Partner Agent (standalone remote agent — uses OpenAI SDK + MCP)
+  aro-agent:
+    build:
+      context: .
+      dockerfile: aro-partner-agent/Containerfile
+    container_name: partner-aro-agent-adk
+    environment:
+      - OPENAI_API_KEY=${GOOGLE_API_KEY}
+      - OPENAI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+      - OPENAI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - MCP_SERVER_URL=http://azure-mcp-server:8080/
+      - LOG_LEVEL=INFO
+    ports:
+      - "8004:8080"
+    networks:
+      partner-agent-network:
+        aliases:
+          - aro-agent
+          - partner-aro-agent-full
+    depends_on:
+      azure-mcp-server:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # Agent Service
   agent-service:
     build:
@@ -166,6 +217,8 @@ services:
       opa:
         condition: service_healthy
       kubernetes-agent:
+        condition: service_healthy
+      aro-agent:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]

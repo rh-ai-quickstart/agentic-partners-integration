@@ -24,6 +24,7 @@ if command -v uv &> /dev/null && [ "$USE_PIP_INSTALL" != "true" ]; then
     (cd "$PROJECT_ROOT/agent-service" && uv lock --quiet)
     (cd "$PROJECT_ROOT/request-manager" && uv lock --quiet)
     (cd "$PROJECT_ROOT/kubernetes-partner-agent" && uv lock --quiet)
+    (cd "$PROJECT_ROOT/aro-partner-agent" && uv lock --quiet)
     echo "  Lock files up to date"
     echo ""
 fi
@@ -60,6 +61,20 @@ echo "Building kubernetes-partner-agent..."
 docker build \
     -t partner-kubernetes-agent:${IMAGE_TAG} \
     -f kubernetes-partner-agent/Containerfile \
+    .
+
+echo ""
+echo "Building azure-mcp-server..."
+docker build \
+    -t partner-azure-mcp-server:${IMAGE_TAG} \
+    -f azure-mcp-server/Containerfile \
+    .
+
+echo ""
+echo "Building aro-partner-agent..."
+docker build \
+    -t partner-aro-agent:${IMAGE_TAG} \
+    -f aro-partner-agent/Containerfile \
     .
 
 echo ""

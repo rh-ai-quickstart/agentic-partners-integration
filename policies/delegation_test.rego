@@ -138,3 +138,32 @@ test_delegation_luis_software_denied if {
 	}
 	result.allow == false
 }
+
+# Test: Delegated access — Carlos (azure dept) can use aro-support
+test_delegation_carlos_aro_support if {
+	result := authorization.decision with input as {
+		"caller_spiffe_id": "spiffe://partner.example.com/service/request-manager",
+		"agent_name": "aro-support",
+		"delegation": {
+			"user_spiffe_id": "spiffe://partner.example.com/user/carlos",
+			"agent_spiffe_id": "spiffe://partner.example.com/agent/aro-support",
+			"user_departments": ["engineering", "software", "kubernetes", "azure"],
+		},
+	}
+	result.allow == true
+	"azure" in result.effective_departments
+}
+
+# Test: Delegated access denied — Luis cannot use aro-support
+test_delegation_luis_aro_denied if {
+	result := authorization.decision with input as {
+		"caller_spiffe_id": "spiffe://partner.example.com/service/request-manager",
+		"agent_name": "aro-support",
+		"delegation": {
+			"user_spiffe_id": "spiffe://partner.example.com/user/luis",
+			"agent_spiffe_id": "spiffe://partner.example.com/agent/aro-support",
+			"user_departments": ["engineering", "network"],
+		},
+	}
+	result.allow == false
+}

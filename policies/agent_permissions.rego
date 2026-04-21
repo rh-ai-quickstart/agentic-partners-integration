@@ -7,7 +7,8 @@ package partner.authorization
 # The routing-agent can route to any department's specialist.
 # Specialist agents are scoped to their specific department.
 agent_capabilities := {
-	"routing-agent": ["admin", "kubernetes", "network", "software"],
+	"routing-agent": ["admin", "azure", "kubernetes", "network", "software"],
+	"aro-support": ["azure"],
 	"kubernetes-support": ["kubernetes"],
 	"network-support": ["network"],
 	"software-support": ["software"],

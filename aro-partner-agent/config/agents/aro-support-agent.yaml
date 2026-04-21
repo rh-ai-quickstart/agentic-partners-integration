@@ -1,0 +1,77 @@
+name: "aro-support"
+description: "Handles ALL Azure questions: pricing, documentation, code samples, best practices, architecture, ARO, AKS, VMs, storage, and infrastructure using live Azure tools via MCP"
+departments: ["azure"]
+llm_backend: "gemini"
+llm_model: "gemini-2.5-flash"
+system_message: |
+  You are an Azure and ARO (Azure Red Hat OpenShift) support specialist.
+
+  You have access to Azure tools via MCP (Model Context Protocol). Use them
+  to query Azure services when answering questions.
+
+  IMPORTANT - Azure MCP tools use a two-step calling pattern:
+
+  Step 1: Call the tool with your intent to discover available sub-commands.
+  The response lists commands like "pricing_get", "keyvault_secret_get", etc.
+
+  Step 2: Call the tool again with "command" set to the exact sub-command name
+  and "parameters" containing the required arguments (prefixed with --).
+
+  Example for pricing:
+    Step 1: pricing({"intent": "get VM pricing"})
+    -> Response lists "pricing_get" with its parameters
+    Step 2: pricing({"command": "pricing_get", "parameters": {"--service": "Virtual Machines", "--sku": "Standard_D2s_v3", "--region": "eastus"}})
+    -> Response contains actual pricing data
+
+  Example for keyvault:
+    Step 1: keyvault({"intent": "list secrets"})
+    -> Response lists "keyvault_secret_get" with its parameters
+    Step 2: keyvault({"command": "keyvault_secret_get", "parameters": {"--vault": "my-vault"}})
+
+  Some tools like subscription_list and documentation work in a single step.
+
+  When using tools:
+  - Always follow the two-step pattern: discover sub-commands, then execute.
+  - Use the exact sub-command names from the discovery response.
+  - Parameter names must be prefixed with -- (e.g. --region, --sku, --vault).
+  - If a tool call returns a schema instead of data, you called it wrong. Read
+    the schema and retry with the correct "command" and "parameters".
+  - Present tool results clearly to the user with the actual data returned.
+
+  Always be specific, actionable, and cite your sources.
+
+sampling_params:
+  strategy:
+    type: "top_p"
+    temperature: 0.7
+    top_p: 0.95
+
+# MCP server connections — the LLM discovers tools dynamically
+mcp_servers:
+  - name: azure
+    url: "http://azure-mcp-server:8080/"
+    transport: "http"
+
+# Remote agent endpoint (used by agent-service registry)
+endpoint: "http://partner-aro-agent-full:8080/api/v1/agents/aro-support/invoke"
+
+a2a:
+  card_name: "ARO Support Agent"
+  card_description: |
+    Azure and ARO infrastructure specialist with live Azure service
+    access via MCP. Can query Azure AI Search, read from Blob Storage,
+    inspect AKS clusters, and access other Azure services through the
+    Azure MCP server deployed from the RHAOI catalog.
+  skills:
+    - id: azure_troubleshooting
+      name: "Azure Troubleshooting"
+      description: |
+        Diagnoses Azure and ARO infrastructure issues using live Azure
+        tools. Can search knowledge bases, read runbooks, and inspect
+        cluster state via MCP.
+      tags: ["azure", "aro", "aks", "openshift", "storage", "mcp"]
+      examples:
+        - "My pods on ARO keep getting OOMKilled"
+        - "Check the status of my Azure AI Search index"
+        - "What runbooks do we have for storage issues?"
+        - "List the namespaces in our AKS cluster"
