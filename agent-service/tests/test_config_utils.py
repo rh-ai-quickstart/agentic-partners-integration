@@ -1,6 +1,7 @@
 """Tests for agent_service.config_utils."""
 
 import pytest
+
 from agent_service.config_utils import (
     load_config_from_path,
     load_yaml,

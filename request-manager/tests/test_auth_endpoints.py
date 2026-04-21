@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+
 from request_manager.auth_endpoints import (
     _extract_departments,
     decode_token,
@@ -441,6 +442,7 @@ class TestDecodeKeycloakJwt:
     def test_raises_on_invalid_token(self, mock_get_client):
         """Raises PyJWTError for invalid tokens."""
         import jwt as pyjwt
+
         from request_manager.auth_endpoints import _decode_keycloak_jwt
 
         mock_client = MagicMock()
@@ -468,6 +470,7 @@ class TestLoginEndpointExtended:
     ):
         """When Keycloak token validation fails, raise 401 (lines 160-161)."""
         import jwt as pyjwt
+
         from request_manager.auth_endpoints import LoginRequest, login
 
         mock_response = MagicMock()
@@ -543,6 +546,7 @@ class TestMeEndpointExtended:
     async def test_me_expired_token(self, mock_decode, mock_aaa):
         """Expired token raises 401 (lines 193-194)."""
         import jwt as pyjwt
+
         from request_manager.auth_endpoints import me
 
         mock_decode.side_effect = pyjwt.ExpiredSignatureError()
@@ -558,6 +562,7 @@ class TestMeEndpointExtended:
     async def test_me_invalid_token(self, mock_decode, mock_aaa):
         """Invalid JWT raises 401 (lines 195-196)."""
         import jwt as pyjwt
+
         from request_manager.auth_endpoints import me
 
         mock_decode.side_effect = pyjwt.PyJWTError("bad signature")

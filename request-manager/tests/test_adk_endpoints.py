@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+
 from request_manager.adk_endpoints import _append_conversation_turn
 
 # ---------------------------------------------------------------------------

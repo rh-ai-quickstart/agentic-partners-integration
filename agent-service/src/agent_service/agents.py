@@ -9,8 +9,9 @@ import os
 from typing import Any, Dict, Optional
 
 import yaml
-from agent_service.llm import LLMClientFactory, LLMMessage
 from shared_models import configure_logging
+
+from agent_service.llm import LLMClientFactory, LLMMessage
 
 from .config_utils import load_config_from_path, resolve_agent_service_path
 

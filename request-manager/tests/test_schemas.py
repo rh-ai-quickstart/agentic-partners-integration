@@ -2,8 +2,9 @@
 
 import pytest
 from pydantic import ValidationError
-from request_manager.schemas import BaseRequest, HealthCheck, WebRequest
 from shared_models.models import IntegrationType
+
+from request_manager.schemas import BaseRequest, HealthCheck, WebRequest
 
 
 class TestBaseRequest:

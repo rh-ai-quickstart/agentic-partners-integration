@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from agent_service.llm.base import InstrumentedLLMClient
 from agent_service.llm.factory import LLMClientFactory
 

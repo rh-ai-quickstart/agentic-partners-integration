@@ -37,12 +37,13 @@ from a2a.types import (
 )
 from a2a.utils import new_task
 from a2a.utils.errors import ServerError
+from starlette.applications import Starlette
+from starlette.routing import Mount
+
 from agent_service.a2a.agent_cards import (
     create_network_support_card,
     create_software_support_card,
 )
-from starlette.applications import Starlette
-from starlette.routing import Mount
 
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)

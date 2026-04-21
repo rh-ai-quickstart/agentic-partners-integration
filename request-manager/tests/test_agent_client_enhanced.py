@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+
 from request_manager.agent_client_enhanced import EnhancedAgentClient
 
 

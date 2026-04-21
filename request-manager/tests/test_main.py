@@ -344,6 +344,7 @@ class TestExceptionHandlersExtended:
         """HTTPException handler returns ErrorResponse format (lines 214-223)."""
         # Add a temporary route that raises HTTPException
         from fastapi import HTTPException as FastAPIHTTPException
+
         from request_manager.main import app
 
         @app.get("/test-http-error")

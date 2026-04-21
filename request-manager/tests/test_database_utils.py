@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from request_manager.database_utils import (
     cleanup_old_sessions,
     create_request_log_entry_unified,

@@ -3,6 +3,7 @@
 import time
 
 import pytest
+
 from agent_service.token_counter import TokenCounter, TokenStats, TokenUsage
 
 

@@ -31,10 +31,11 @@ from a2a.types import (
 )
 from a2a.utils import new_task
 from a2a.utils.errors import ServerError
-from agent_service.a2a.agent_cards import create_agent_card
-from agent_service.agents import AgentManager
 from starlette.applications import Starlette
 from starlette.routing import Mount
+
+from agent_service.a2a.agent_cards import create_agent_card
+from agent_service.agents import AgentManager
 
 logging.basicConfig(
     level=logging.INFO,

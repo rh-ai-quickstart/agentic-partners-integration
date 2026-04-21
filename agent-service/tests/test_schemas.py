@@ -1,8 +1,9 @@
 """Tests for agent_service.schemas."""
 
 import pytest
-from agent_service.schemas import AgentInvokeRequest, AgentInvokeResponse
 from pydantic import ValidationError
+
+from agent_service.schemas import AgentInvokeRequest, AgentInvokeResponse
 
 
 class TestAgentInvokeRequest:

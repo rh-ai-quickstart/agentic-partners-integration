@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from request_manager.communication_strategy import (
     DirectHTTPStrategy,
     UnifiedRequestProcessor,
