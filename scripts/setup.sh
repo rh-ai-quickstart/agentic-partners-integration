@@ -180,6 +180,38 @@ docker run -d \
     partner-kubernetes-agent:latest
 echo "  Kubernetes partner agent starting..."
 
+# Azure MCP Server (HTTP-to-stdio proxy + Azure MCP binary)
+AZURE_MCP_ENV="$PROJECT_ROOT/azure-mcp-server/.env"
+if [ -f "$AZURE_MCP_ENV" ]; then
+    docker rm -f partner-azure-mcp-server 2>/dev/null || true
+    docker run -d \
+        --name partner-azure-mcp-server \
+        --network partner-agent-network \
+        --env-file "$AZURE_MCP_ENV" \
+        -e LOG_LEVEL=INFO \
+        -p 5008:8080 \
+        partner-azure-mcp-server:latest
+    echo "  Azure MCP server starting..."
+    MCP_URL="http://partner-azure-mcp-server:8080/"
+else
+    echo -e "${YELLOW}  Skipping Azure MCP server (no azure-mcp-server/.env found)${NC}"
+    MCP_URL=""
+fi
+
+# ARO Partner Agent (standalone remote agent — uses OpenAI SDK + MCP)
+docker rm -f partner-aro-agent-full 2>/dev/null || true
+docker run -d \
+    --name partner-aro-agent-full \
+    --network partner-agent-network \
+    -e OPENAI_API_KEY="${GOOGLE_API_KEY}" \
+    -e OPENAI_BASE_URL="https://generativelanguage.googleapis.com/v1beta/openai/" \
+    -e OPENAI_MODEL="${GEMINI_MODEL:-gemini-2.5-flash}" \
+    -e MCP_SERVER_URL="${MCP_URL}" \
+    -e LOG_LEVEL=INFO \
+    -p 8004:8080 \
+    partner-aro-agent:latest
+echo "  ARO partner agent starting..."
+
 # Agent Service
 docker rm -f partner-agent-service-full 2>/dev/null || true
 docker run -d \
@@ -239,6 +271,7 @@ echo "  RAG API starting..."
 echo "  Waiting for services to be ready..."
 AGENT_READY=false
 K8S_READY=false
+ARO_READY=false
 RM_READY=false
 RAG_READY=false
 for i in {1..60}; do
@@ -250,6 +283,10 @@ for i in {1..60}; do
         echo "  Kubernetes partner agent ready"
         K8S_READY=true
     fi
+    if [ "$ARO_READY" = false ] && curl -sf http://localhost:8004/health > /dev/null 2>&1; then
+        echo "  ARO partner agent ready"
+        ARO_READY=true
+    fi
     if [ "$RM_READY" = false ] && curl -sf http://localhost:8000/health > /dev/null 2>&1; then
         echo "  Request manager ready"
         RM_READY=true
@@ -258,16 +295,17 @@ for i in {1..60}; do
         echo "  RAG API ready"
         RAG_READY=true
     fi
-    if [ "$AGENT_READY" = true ] && [ "$K8S_READY" = true ] && [ "$RM_READY" = true ] && [ "$RAG_READY" = true ]; then
+    if [ "$AGENT_READY" = true ] && [ "$K8S_READY" = true ] && [ "$ARO_READY" = true ] && [ "$RM_READY" = true ] && [ "$RAG_READY" = true ]; then
         break
     fi
     sleep 2
 done
 
-if [ "$AGENT_READY" = false ] || [ "$K8S_READY" = false ] || [ "$RM_READY" = false ] || [ "$RAG_READY" = false ]; then
+if [ "$AGENT_READY" = false ] || [ "$K8S_READY" = false ] || [ "$ARO_READY" = false ] || [ "$RM_READY" = false ] || [ "$RAG_READY" = false ]; then
     echo -e "  ${YELLOW}WARNING: Some services failed to start:${NC}"
     [ "$AGENT_READY" = false ] && echo "    - Agent service (port 8001)"
     [ "$K8S_READY" = false ] && echo "    - Kubernetes partner agent (port 8002)"
+    [ "$ARO_READY" = false ] && echo "    - ARO partner agent (port 8004)"
     [ "$RM_READY" = false ] && echo "    - Request manager (port 8000)"
     [ "$RAG_READY" = false ] && echo "    - RAG API (port 8003)"
     echo "  Check logs: docker logs <container-name>"
@@ -317,7 +355,7 @@ echo ""
 echo -e "${YELLOW}Verifying setup...${NC}"
 
 CHECKS_PASSED=0
-CHECKS_TOTAL=7
+CHECKS_TOTAL=8
 
 # Check each service
 for svc in "PostgreSQL:partner-postgres-full:5433" "Keycloak:localhost:9090/health/ready" "OPA:localhost:8181/health"; do
@@ -331,7 +369,7 @@ for svc in "PostgreSQL:partner-postgres-full:5433" "Keycloak:localhost:9090/heal
             CHECKS_PASSED=$((CHECKS_PASSED + 1)) && echo -e "  ${GREEN}OK${NC}  $name" || echo -e "  FAIL  $name"
     fi
 done
-for svc in "Request Manager:8000" "Agent Service:8001" "K8s Partner Agent:8002" "RAG API:8003"; do
+for svc in "Request Manager:8000" "Agent Service:8001" "K8s Partner Agent:8002" "RAG API:8003" "ARO Partner Agent:8004"; do
     name="${svc%%:*}"
     port="${svc#*:}"
     curl -sf "http://localhost:$port/health" > /dev/null 2>&1 && \
@@ -363,9 +401,9 @@ echo "Login with one of these test users:"
 echo ""
 echo "  Email                    Password     Departments"
 echo "  ───────────────────────  ───────────  ──────────────────────"
-echo "  carlos@example.com       carlos123    software, kubernetes"
+echo "  carlos@example.com       carlos123    software, kubernetes, azure"
 echo "  luis@example.com         luis123       network"
-echo "  sharon@example.com       sharon123    software, network, kubernetes (admin)"
+echo "  sharon@example.com       sharon123    software, network, kubernetes, azure (admin)"
 echo "  josh@example.com         josh123      (none - access denied)"
 echo ""
 echo "Each user can only chat with agents matching their departments."
@@ -375,6 +413,8 @@ echo "Other Services:"
 echo "  API:        http://localhost:8000    Request Manager"
 echo "  Agent:      http://localhost:8001    Agent Service"
 echo "  K8s Agent:  http://localhost:8002    Kubernetes Partner Agent (remote)"
+echo "  ARO Agent:  http://localhost:8004    ARO Partner Agent (remote, MCP)"
+echo "  Azure MCP:  http://localhost:5008    Azure MCP Server (if configured)"
 echo "  RAG:        http://localhost:8003    Knowledge Base API"
 echo "  Keycloak:   http://localhost:8090    Identity Provider (admin/admin123)"
 echo "  OPA:        http://localhost:8181    Policy Engine"

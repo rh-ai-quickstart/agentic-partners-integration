@@ -33,6 +33,10 @@
         "description": "Kubernetes department"
       },
       {
+        "name": "azure",
+        "description": "Azure and ARO department"
+      },
+      {
         "name": "admin",
         "description": "Administration department"
       }
@@ -60,6 +64,11 @@
       "realmRoles": ["kubernetes"]
     },
     {
+      "name": "azure",
+      "path": "/azure",
+      "realmRoles": ["azure"]
+    },
+    {
       "name": "admin",
       "path": "/admin",
       "realmRoles": ["admin"]
@@ -80,8 +89,8 @@
           "temporary": false
         }
       ],
-      "realmRoles": ["engineering", "software", "kubernetes"],
-      "groups": ["/engineering", "/software", "/kubernetes"]
+      "realmRoles": ["engineering", "software", "kubernetes", "azure"],
+      "groups": ["/engineering", "/software", "/kubernetes", "/azure"]
     },
     {
       "username": "luis",
@@ -114,8 +123,8 @@
           "temporary": false
         }
       ],
-      "realmRoles": ["engineering", "software", "network", "kubernetes", "admin"],
-      "groups": ["/engineering", "/software", "/network", "/kubernetes", "/admin"]
+      "realmRoles": ["engineering", "software", "network", "kubernetes", "azure", "admin"],
+      "groups": ["/engineering", "/software", "/network", "/kubernetes", "/azure", "/admin"]
     },
     {
       "username": "josh",

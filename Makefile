@@ -21,6 +21,8 @@ help:
 	@echo "  test-request-manager     - Run request-manager unit tests"
 	@echo "  test-agent-service       - Run agent-service unit tests"
 	@echo "  test-k8s-partner         - Run kubernetes-partner-agent unit tests"
+	@echo "  test-aro-partner         - Run aro-partner-agent unit tests"
+	@echo "  test-azure-mcp           - Run azure-mcp-server proxy tests"
 	@echo "  test-coverage            - Run all unit tests with coverage report"
 	@echo ""
 	@echo "Development:"
@@ -29,6 +31,7 @@ help:
 	@echo "  install-agent-service    - Install agent-service dependencies"
 	@echo "  install-request-manager  - Install request-manager dependencies"
 	@echo "  install-k8s-partner      - Install kubernetes-partner-agent dependencies"
+	@echo "  install-aro-partner      - Install aro-partner-agent dependencies"
 	@echo "  reinstall                - Force reinstall all dependencies"
 	@echo ""
 	@echo "Code Quality:"
@@ -38,6 +41,7 @@ help:
 	@echo "  lint-agent-service       - Run mypy on agent-service"
 	@echo "  lint-request-manager     - Run mypy on request-manager"
 	@echo "  lint-k8s-partner         - Run mypy on kubernetes-partner-agent"
+	@echo "  lint-aro-partner         - Run mypy on aro-partner-agent"
 	@echo ""
 	@echo "Lockfile Management:"
 	@echo "  check-lockfiles          - Check if all uv.lock files are up-to-date"
@@ -67,13 +71,13 @@ sync-agents:
 .PHONY: stop
 stop:
 	@echo "Stopping all containers..."
-	@docker stop partner-pf-chat-ui partner-request-manager-full partner-agent-service-full partner-kubernetes-agent-full partner-rag-api-full partner-postgres-full partner-keycloak-full partner-opa-full 2>/dev/null || true
+	@docker stop partner-pf-chat-ui partner-request-manager-full partner-agent-service-full partner-kubernetes-agent-full partner-aro-agent-full partner-azure-mcp-server partner-rag-api-full partner-postgres-full partner-keycloak-full partner-opa-full 2>/dev/null || true
 	@echo "All containers stopped."
 
 .PHONY: clean
 clean: stop
 	@echo "Removing containers..."
-	@docker rm partner-pf-chat-ui partner-request-manager-full partner-agent-service-full partner-kubernetes-agent-full partner-rag-api-full partner-postgres-full partner-keycloak-full partner-opa-full 2>/dev/null || true
+	@docker rm partner-pf-chat-ui partner-request-manager-full partner-agent-service-full partner-kubernetes-agent-full partner-aro-agent-full partner-azure-mcp-server partner-rag-api-full partner-postgres-full partner-keycloak-full partner-opa-full 2>/dev/null || true
 	@echo "Removing network..."
 	@docker network rm partner-agent-network 2>/dev/null || true
 	@echo "Clean complete."
@@ -87,7 +91,7 @@ test: test-unit
 	@bash scripts/test.sh
 
 .PHONY: test-unit
-test-unit: test-shared-models test-request-manager test-agent-service test-k8s-partner
+test-unit: test-shared-models test-request-manager test-agent-service test-k8s-partner test-aro-partner test-azure-mcp
 	@echo "All unit tests completed."
 
 .PHONY: test-shared-models
@@ -110,6 +114,16 @@ test-k8s-partner:
 	@echo "Running kubernetes-partner-agent tests..."
 	@cd kubernetes-partner-agent && uv run python -m pytest tests/
 
+.PHONY: test-aro-partner
+test-aro-partner:
+	@echo "Running aro-partner-agent tests..."
+	@cd aro-partner-agent && uv run python -m pytest tests/
+
+.PHONY: test-azure-mcp
+test-azure-mcp:
+	@echo "Running azure-mcp-server tests..."
+	@cd aro-partner-agent && PYTHONPATH=../azure-mcp-server:$$PYTHONPATH uv run python -m pytest ../azure-mcp-server/tests/ --override-ini="asyncio_mode=auto"
+
 .PHONY: test-coverage
 test-coverage:
 	@echo "Running all unit tests with coverage..."
@@ -126,6 +140,9 @@ test-coverage:
 	@echo "=== kubernetes-partner-agent ==="
 	@cd kubernetes-partner-agent && uv run python -m pytest tests/ --cov=kubernetes_agent --cov-report=term-missing -q
 	@echo ""
+	@echo "=== aro-partner-agent ==="
+	@cd aro-partner-agent && uv run python -m pytest tests/ --cov=aro_agent --cov-report=term-missing -q
+	@echo ""
 	@echo "Coverage report complete."
 
 # ============================================================
@@ -133,7 +150,7 @@ test-coverage:
 # ============================================================
 
 .PHONY: install
-install: install-shared-models install-agent-service install-request-manager install-k8s-partner
+install: install-shared-models install-agent-service install-request-manager install-k8s-partner install-aro-partner
 	@echo "All dependencies installed."
 
 .PHONY: install-shared-models
@@ -156,6 +173,11 @@ install-k8s-partner:
 	@echo "Installing kubernetes-partner-agent dependencies..."
 	@cd kubernetes-partner-agent && uv sync
 
+.PHONY: install-aro-partner
+install-aro-partner:
+	@echo "Installing aro-partner-agent dependencies..."
+	@cd aro-partner-agent && uv sync
+
 .PHONY: reinstall
 reinstall:
 	@echo "Force reinstalling all dependencies..."
@@ -163,6 +185,7 @@ reinstall:
 	@cd agent-service && uv sync --reinstall
 	@cd request-manager && uv sync --reinstall
 	@cd kubernetes-partner-agent && uv sync --reinstall
+	@cd aro-partner-agent && uv sync --reinstall
 	@echo "All dependencies reinstalled."
 
 # ============================================================
@@ -187,7 +210,7 @@ format:
 	@echo "Formatting complete."
 
 .PHONY: lint
-lint: format lint-global lint-shared-models lint-agent-service lint-request-manager lint-k8s-partner
+lint: format lint-global lint-shared-models lint-agent-service lint-request-manager lint-k8s-partner lint-aro-partner
 	@echo "All linting completed."
 
 .PHONY: lint-global
@@ -213,11 +236,15 @@ lint-request-manager:
 lint-k8s-partner:
 	$(call lint_mypy,kubernetes-partner-agent)
 
+.PHONY: lint-aro-partner
+lint-aro-partner:
+	$(call lint_mypy,aro-partner-agent)
+
 # ============================================================
 # Lockfile Management
 # ============================================================
 
-LOCKFILE_DIRS := shared-models agent-service request-manager kubernetes-partner-agent
+LOCKFILE_DIRS := shared-models agent-service request-manager kubernetes-partner-agent aro-partner-agent
 
 .PHONY: check-lockfiles
 check-lockfiles:
