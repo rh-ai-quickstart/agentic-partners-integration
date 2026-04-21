@@ -4,11 +4,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Union
 
-from shared_models import configure_logging
-from shared_models.models import RequestSession, SessionStatus
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from shared_models import configure_logging
+from shared_models.models import RequestSession, SessionStatus
 
 from .session_schemas import SessionCreate, SessionResponse
 from .utils import get_enum_value

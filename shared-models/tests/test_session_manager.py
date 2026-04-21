@@ -3,10 +3,11 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.exc import IntegrityError
+
 from shared_models.models import IntegrationType, SessionStatus
 from shared_models.session_manager import BaseSessionManager
 from shared_models.session_schemas import SessionCreate
-from sqlalchemy.exc import IntegrityError
 
 
 def _make_mock_session_row():
