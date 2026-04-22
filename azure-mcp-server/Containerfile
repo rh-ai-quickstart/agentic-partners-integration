@@ -27,8 +27,11 @@ COPY --from=mcp-binary /mcp-server/ /mcp-server/
 # Install Python dependencies for the proxy
 RUN pip install --no-cache-dir aiohttp mcp
 
-# Copy the proxy script
+# Copy the proxy script and az CLI shim
 COPY azure-mcp-server/mcp_proxy.py /mcp-server/mcp_proxy.py
+COPY azure-mcp-server/az_shim.py /usr/local/bin/az_shim.py
+RUN chmod +x /usr/local/bin/az_shim.py && \
+    ln -s /usr/local/bin/az_shim.py /usr/local/bin/az
 
 # .NET runtime needs writable dirs
 RUN mkdir -p /tmp/.net /tmp/.cache /tmp/.aspnet && \
@@ -42,6 +45,7 @@ USER 1001
 ENV HOME=/tmp
 ENV XDG_CACHE_HOME=/tmp/.cache
 ENV DOTNET_BUNDLE_EXTRACT_BASE_DIR=/tmp/.net
+ENV AZURE_CONFIG_DIR=/tmp/.azure
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8080
 

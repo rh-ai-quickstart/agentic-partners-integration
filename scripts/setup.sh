@@ -181,20 +181,31 @@ docker run -d \
 echo "  Kubernetes partner agent starting..."
 
 # Azure MCP Server (HTTP-to-stdio proxy + Azure MCP binary)
+# Uses host Azure CLI credentials (az login) mounted read-only into the container.
+# Falls back to SP env vars from azure-mcp-server/.env if present.
+AZURE_CLI_DIR="${HOME}/.azure"
 AZURE_MCP_ENV="$PROJECT_ROOT/azure-mcp-server/.env"
-if [ -f "$AZURE_MCP_ENV" ]; then
+if [ -d "$AZURE_CLI_DIR" ] || [ -f "$AZURE_MCP_ENV" ]; then
     docker rm -f partner-azure-mcp-server 2>/dev/null || true
-    docker run -d \
-        --name partner-azure-mcp-server \
-        --network partner-agent-network \
-        --env-file "$AZURE_MCP_ENV" \
-        -e LOG_LEVEL=INFO \
-        -p 5008:8080 \
-        partner-azure-mcp-server:latest
+    MCP_RUN_ARGS=(
+        -d
+        --name partner-azure-mcp-server
+        --network partner-agent-network
+        -e LOG_LEVEL=INFO
+        -p 5008:8080
+    )
+    if [ -d "$AZURE_CLI_DIR" ]; then
+        echo "  Using Azure CLI credentials from ~/.azure"
+        MCP_RUN_ARGS+=(-v "${AZURE_CLI_DIR}:/tmp/.azure:ro" --user "$(id -u)")
+    fi
+    if [ -f "$AZURE_MCP_ENV" ]; then
+        MCP_RUN_ARGS+=(--env-file "$AZURE_MCP_ENV")
+    fi
+    docker run "${MCP_RUN_ARGS[@]}" partner-azure-mcp-server:latest
     echo "  Azure MCP server starting..."
     MCP_URL="http://partner-azure-mcp-server:8080/"
 else
-    echo -e "${YELLOW}  Skipping Azure MCP server (no azure-mcp-server/.env found)${NC}"
+    echo -e "${YELLOW}  Skipping Azure MCP server (no ~/.azure dir and no azure-mcp-server/.env found)${NC}"
     MCP_URL=""
 fi
 

@@ -373,7 +373,7 @@ class TestAROAgentMultipleToolCalls:
         self, mock_openai_cls, mock_mcp_cls, mock_agent_config
     ):
         """LLM keeps calling tools until MAX_TOOL_ROUNDS is hit."""
-        from aro_agent.agent import AROAgent, MAX_TOOL_ROUNDS
+        from aro_agent.agent import MAX_TOOL_ROUNDS, AROAgent
         from aro_agent.mcp_client import MCPToolResult
 
         tc = _mock_tool_call("tc1", "search_index", '{"query": "loop"}')

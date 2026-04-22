@@ -144,10 +144,11 @@ services:
       context: .
       dockerfile: azure-mcp-server/Containerfile
     container_name: partner-azure-mcp-server
-    env_file:
-      - ./azure-mcp-server/.env
     environment:
       - LOG_LEVEL=INFO
+      - AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:-}
+    volumes:
+      - ${HOME}/.azure:/tmp/.azure:ro
     ports:
       - "5008:8080"
     networks:
