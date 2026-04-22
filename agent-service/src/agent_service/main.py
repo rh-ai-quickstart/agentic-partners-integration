@@ -343,8 +343,12 @@ async def invoke_agent(
                 f"{next_rule}. If unclear, ask clarifying questions to determine the right specialist."
             )
             routing_rules.append(
-                f"{next_rule + 1}. Use conversation history to understand follow-up questions. "
-                "If the user references something from earlier, use that context."
+                f"{next_rule + 1}. FOLLOW-UP ROUTING: Check the conversation history carefully. "
+                "If the user's message is a follow-up to a previous specialist interaction "
+                "(e.g. \"Yes\", \"Do it\", \"Check all of them\", \"Tell me more\", \"What about X?\"), "
+                "you MUST route to the SAME specialist that handled the previous turn. "
+                "Look at the conversation history to identify which agent was last active "
+                "and use ROUTE: to send the follow-up there. NEVER answer a follow-up yourself."
             )
             rules_section = "\n".join(routing_rules)
 
@@ -356,18 +360,24 @@ Specialist agents the user has access to:
 RULES:
 {rules_section}
 
-CRITICAL: For ANY technical question (Azure, pricing, VMs, Kubernetes, networking, software, infrastructure, troubleshooting), you MUST use ROUTE: to delegate to the appropriate specialist. Do NOT answer technical questions yourself, even if the conversation history contains similar questions or previous answers. Always re-route to the specialist. Only respond directly for greetings and general chitchat.{blocked_section}"""
+CRITICAL: For ANY technical question (Azure, pricing, VMs, Kubernetes, networking, software, infrastructure, troubleshooting), you MUST use ROUTE: to delegate to the appropriate specialist. Do NOT answer technical questions yourself, even if the conversation history contains similar questions or previous answers. Always re-route to the specialist. Only respond directly for greetings and general chitchat.
+
+FOLLOW-UP CRITICAL: When the user sends a short reply like "Yes", "Sure", "Do it", "Check all of them", "Go ahead", or any confirmation/continuation of a previous specialist conversation, you MUST re-route to the same specialist. Look at the last assistant message in the conversation history — if it came from a specialist agent, route the follow-up there.{blocked_section}"""
 
             # Build messages with conversation history
             conversation_history = transfer_ctx.get("conversation_history", [])
             messages = [
                 {"role": "system", "content": routing_system_prompt},
             ]
-            # Add prior conversation turns for context
+            # Add prior conversation turns for context, including agent attribution
             for turn in conversation_history[-20:]:
                 role = turn.get("role", "user")
                 if role in ("user", "assistant"):
-                    messages.append({"role": role, "content": turn.get("content", "")})
+                    content = turn.get("content", "")
+                    agent_attr = turn.get("agent")
+                    if role == "assistant" and agent_attr:
+                        content = f"[Agent: {agent_attr}] {content}"
+                    messages.append({"role": role, "content": content})
             # Add current user message
             messages.append({"role": "user", "content": request.message})
 

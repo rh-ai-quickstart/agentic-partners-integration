@@ -654,11 +654,29 @@ class DirectHTTPStrategy(CommunicationStrategy):
                         service="request-manager",
                     )
 
+                # Persist the handling agent on the session so follow-up
+                # messages route directly to the same specialist.
+                handling_agent = response.get("agent_id", current_agent)
+                if handling_agent and handling_agent != "routing-agent":
+                    try:
+                        from shared_models.session_manager import SessionManager
+
+                        sm = SessionManager(db)
+                        await sm.update_session(
+                            normalized_request.session_id,
+                            agent_id=handling_agent,
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to persist current_agent_id on session",
+                            error=str(e),
+                        )
+
                 # Format response for compatibility with existing code
                 return {
                     "request_id": normalized_request.request_id,
                     "session_id": normalized_request.session_id,
-                    "agent_id": response.get("agent_id", current_agent),
+                    "agent_id": handling_agent,
                     "content": response.get("content", ""),
                     "metadata": response.get("metadata", {}),
                     "processing_time_ms": 0,  # Not tracked in direct HTTP
