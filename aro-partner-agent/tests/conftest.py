@@ -8,10 +8,10 @@ def mock_agent_config():
     """Sample ARO agent configuration dict."""
     return {
         "name": "aro-support",
-        "description": "Handles Azure and ARO infrastructure issues",
+        "description": "Azure infrastructure support agent — troubleshoots ARO, AKS, VMs, storage, networking, and telemetry issues",
         "departments": ["azure"],
         "llm_model": "gemini-2.5-flash",
-        "system_message": "You are an Azure and ARO support specialist.",
+        "system_message": "You are an Azure infrastructure support agent specializing in troubleshooting and diagnostics.",
         "sampling_params": {
             "strategy": {
                 "type": "top_p",
@@ -47,10 +47,10 @@ def mock_agent_config_no_mcp():
     """ARO agent configuration without MCP servers."""
     return {
         "name": "aro-support",
-        "description": "Handles Azure and ARO infrastructure issues",
+        "description": "Azure infrastructure support agent — troubleshoots ARO, AKS, VMs, storage, networking, and telemetry issues",
         "departments": ["azure"],
         "llm_model": "gemini-2.5-flash",
-        "system_message": "You are an Azure and ARO support specialist.",
+        "system_message": "You are an Azure infrastructure support agent specializing in troubleshooting and diagnostics.",
         "sampling_params": {
             "strategy": {
                 "type": "top_p",
