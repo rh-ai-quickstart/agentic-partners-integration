@@ -193,6 +193,39 @@ class EnhancedAgentClient:
 
             return data
 
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 403:
+                detail = e.response.json().get("detail", "") if e.response.headers.get("content-type", "").startswith("application/json") else str(e)
+                logger.warning(
+                    "Agent invocation denied (403)",
+                    agent_name=agent_name,
+                    session_id=session_id,
+                    detail=detail,
+                )
+                return {
+                    "content": (
+                        f"Access denied. Your account does not have the required department "
+                        f"permissions to use the **{agent_name.replace('-', ' ').title()}** agent. "
+                        f"Please contact your administrator to request access."
+                    ),
+                    "agent_id": "routing-agent",
+                    "session_id": session_id,
+                    "routing_decision": None,
+                    "metadata": {
+                        "handling_agent": "routing-agent",
+                        "routing_reason": "Access denied by authorization policy",
+                        "blocked_agent": agent_name,
+                        "authorization_detail": detail,
+                    },
+                }
+            logger.error(
+                "Agent invocation failed",
+                agent_name=agent_name,
+                session_id=session_id,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            raise
         except httpx.HTTPError as e:
             logger.error(
                 "Agent invocation failed",
