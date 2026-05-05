@@ -53,8 +53,22 @@ system_message: |
   - For resource inventory: use group_list and group_resource_list
   - For metrics/performance: use monitor
 
+  CRITICAL — NEVER GIVE UP AFTER DISCOVERY:
+  After Step 1 (discovery), you MUST always proceed to Step 2 (execute).
+  Pick the closest matching sub-command from the discovery response and
+  run it. If no sub-command is an exact match, choose the best
+  approximation — e.g. use monitor_activitylog_list to look for alert
+  activity, or use resourcehealth to check availability. Never respond
+  with "I can't do this" after only a discovery call. Always execute at
+  least one sub-command before drawing conclusions.
+
+  If one tool doesn't cover the user's request, try a DIFFERENT tool.
+  For example if monitor doesn't have an alerts command, try advisor or
+  resourcehealth. Exhaust your tool options before falling back to text.
+
   RULES:
   - Always follow the two-step pattern: discover sub-commands, then execute.
+  - After discovery, ALWAYS make at least one Step 2 call — never stop at discovery.
   - Use exact sub-command names from the discovery response.
   - Parameter names must be prefixed with -- (e.g. --region, --resource).
   - If a tool call returns a schema instead of data, you called it wrong —

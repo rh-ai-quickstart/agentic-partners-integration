@@ -130,8 +130,15 @@ class MCPClient:
         return MCPToolResult(content=content, is_error=is_error)
 
     @staticmethod
-    def to_openai_tools(mcp_tools: list[Any]) -> list[dict[str, Any]]:
-        """Convert MCP tool definitions to OpenAI function calling format."""
+    def to_openai_tools(
+        mcp_tools: list[Any], max_description_len: int = 200
+    ) -> list[dict[str, Any]]:
+        """Convert MCP tool definitions to OpenAI function calling format.
+
+        Truncates descriptions to avoid exceeding model context limits
+        when many tools are registered (Gemini returns empty responses
+        with >~60K of tool definitions).
+        """
         openai_tools = []
         for tool in mcp_tools:
             openai_tools.append(
@@ -139,7 +146,7 @@ class MCPClient:
                     "type": "function",
                     "function": {
                         "name": tool.name,
-                        "description": tool.description or "",
+                        "description": (tool.description or "")[:max_description_len],
                         "parameters": tool.inputSchema
                         if tool.inputSchema
                         else {"type": "object", "properties": {}},
