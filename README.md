@@ -203,32 +203,15 @@ All services run as containers. One command (`make setup`) builds and starts eve
 | [Development](docs/development.md) | Makefile targets, building, testing, Docker Compose |
 | [Production Recommendations](docs/production.md) | Scaling guidance for pgvector, PostgreSQL, Keycloak, OPA, LLM, and more |
 
-## ARO Agent — Azure MCP Server Integration (`aro` branch)
+## Extended Use Cases (Feature Branches)
 
-The `aro` branch extends this framework with an additional A2A partner agent: the **ARO Support Agent**. This agent demonstrates how to integrate an external MCP (Model Context Protocol) server — specifically [Microsoft's Azure MCP Server](https://github.com/microsoft/mcp/tree/main/servers/Azure.Mcp.Server) — as a tool-calling backend for a domain-specialist agent.
+New partner agents and integrations are developed in dedicated branches. Each branch adds a self-contained A2A agent that plugs into the orchestrator without modifying the core framework — demonstrating how teams can independently build, test, and iterate on new use cases.
 
-Unlike the in-process Software and Network agents that rely on RAG over a local knowledge base, the ARO agent connects to a live Azure MCP server exposing 40+ tools across Azure services (AKS, Storage, Cosmos DB, Key Vault, Monitor, etc.). The LLM dynamically discovers available tools, decides which to invoke based on the user's question, and executes them via the MCP protocol to inspect real infrastructure state before generating a grounded response.
+| Branch | Agent | Description |
+|--------|-------|-------------|
+| [`aro`](https://github.com/rh-ai-quickstart/agentic-partners-integration/tree/aro) | ARO Support Agent | Azure infrastructure troubleshooting via MCP tool calling |
 
-```mermaid
-flowchart LR
-    RM[Request Manager] -->|A2A HTTP| ARO[ARO Agent]
-    ARO -->|tool definitions + calls| LLM[LLM]
-    ARO -->|MCP protocol| MCP[Azure MCP Server]
-    MCP --> Azure[Azure Services<br/>AKS, Storage,<br/>Cosmos DB, ...]
-
-    style ARO fill:#e8eaf6,stroke:#283593
-    style MCP fill:#e3f2fd,stroke:#1565c0
-```
-
-**Key characteristics:**
-
-- **Fully independent black box** — shares no code with the other agents. It uses the OpenAI SDK directly, runs as its own container, and communicates with the orchestrator solely through the A2A HTTP contract (`POST /api/v1/agents/aro-support/invoke`).
-- **MCP tool-calling loop** — fetches tool definitions from the Azure MCP server at runtime, passes them to the LLM, executes any requested tool calls, and feeds results back until the LLM produces a final answer.
-- **Configurable tool filter** — limits which of the 110 Azure MCP tools the LLM sees (e.g., only `search`, `storage`, `container`, `cosmos`, `monitor`) to keep context windows manageable.
-- **Multiple deployment options** — the Azure MCP server can run via npm locally, as a container, or deployed from the Red Hat AI on OpenShift catalog.
-- **Graceful degradation** — if no MCP server is configured, the agent falls back to answering from LLM knowledge alone.
-
-To try it out, switch to the `aro` branch and see [`aro-partner-agent/README.md`](aro-partner-agent/README.md) for setup instructions.
+To explore a use case, check out its branch and refer to the agent's own README for setup and usage instructions. Each agent is a fully independent black box — it communicates with the orchestrator solely through the A2A HTTP contract and can be written in any language or framework.
 
 ## Why This Matters
 
