@@ -22,9 +22,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          version: "latest"
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -39,16 +37,45 @@ jobs:
           cd ../kubernetes-partner-agent && uv sync --quiet
 
       - name: Run shared-models tests
-        run: cd shared-models && uv run python -m pytest tests/ --cov=shared_models --cov-report=term-missing --cov-fail-under=97 -q
+        run: cd shared-models && uv run python -m pytest tests/ --cov=shared_models --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=97 -q
 
       - name: Run agent-service tests
-        run: cd agent-service && uv run python -m pytest tests/ --cov=agent_service --cov-report=term-missing --cov-fail-under=99 -q
+        run: cd agent-service && uv run python -m pytest tests/ --cov=agent_service --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=99 -q
 
       - name: Run request-manager tests
-        run: cd request-manager && uv run python -m pytest tests/ --cov=request_manager --cov-report=term-missing --cov-fail-under=97 -q
+        run: cd request-manager && uv run python -m pytest tests/ --cov=request_manager --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=97 -q
 
       - name: Run kubernetes-partner-agent tests
-        run: cd kubernetes-partner-agent && uv run python -m pytest tests/ --cov=kubernetes_agent --cov-report=term-missing --cov-fail-under=97 -q
+        run: cd kubernetes-partner-agent && uv run python -m pytest tests/ --cov=kubernetes_agent --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=97 -q
+
+      - name: Run agent-service A2A protocol E2E
+        run: cd agent-service && uv run python test_a2a_e2e.py
+
+      - name: Run kubernetes-partner-agent A2A protocol E2E
+        run: cd kubernetes-partner-agent && uv run python test_a2a_e2e.py
+
+      - name: Generate coverage badges
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          mkdir -p .badges
+          for pkg in shared-models agent-service request-manager kubernetes-partner-agent; do
+            if [ -f "$pkg/coverage.json" ]; then
+              pct=$(python3 -c "import json; d=json.load(open('$pkg/coverage.json')); print(int(d['totals']['percent_covered_display']))")
+              if [ "$pct" -ge 95 ]; then color="brightgreen";
+              elif [ "$pct" -ge 90 ]; then color="green";
+              elif [ "$pct" -ge 80 ]; then color="yellow";
+              else color="red"; fi
+              echo "{\"schemaVersion\":1,\"label\":\"$pkg\",\"message\":\"${pct}%\",\"color\":\"$color\"}" > .badges/${pkg}-coverage.json
+            fi
+          done
+
+      - name: Push coverage badges
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .badges/*.json
+          git diff --cached --quiet || git commit -m "ci: update coverage badges [skip ci]" && git push
 
   lint:
     name: Lint
@@ -58,9 +85,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          version: "latest"
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -96,9 +121,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          version: "latest"
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
       - name: Set up Python
         uses: actions/setup-python@v5
