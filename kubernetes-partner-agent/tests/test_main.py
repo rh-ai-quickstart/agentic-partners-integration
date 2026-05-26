@@ -141,6 +141,132 @@ class TestInvokeEndpoint:
         )
         assert response.status_code == 422
 
+    @patch("kubernetes_agent.main.KubernetesAgent")
+    @patch("kubernetes_agent.main.httpx.AsyncClient")
+    async def test_invoke_rag_non_200_still_responds(
+        self, mock_httpx, mock_agent_cls, client
+    ):
+        """When RAG returns non-200, agent proceeds without RAG context."""
+        mock_agent = MagicMock()
+        mock_agent.create_response_with_retry = AsyncMock(
+            return_value=("Generic K8s advice", False)
+        )
+        mock_agent_cls.return_value = mock_agent
+
+        mock_rag_response = MagicMock()
+        mock_rag_response.status_code = 503
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.post.return_value = mock_rag_response
+        mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+        mock_client_instance.__aexit__ = AsyncMock(return_value=None)
+        mock_httpx.return_value = mock_client_instance
+
+        response = client.post(
+            "/api/v1/agents/kubernetes-support/invoke",
+            json={
+                "session_id": "test-session",
+                "user_id": "user@example.com",
+                "message": "What is a DaemonSet?",
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["metadata"]["rag_used"] is False
+
+    @patch("kubernetes_agent.main.KubernetesAgent")
+    @patch("kubernetes_agent.main.httpx.AsyncClient")
+    async def test_invoke_response_gen_failed(
+        self, mock_httpx, mock_agent_cls, client
+    ):
+        """When LLM response generation fails, still returns 200 with default."""
+        mock_agent = MagicMock()
+        mock_agent.create_response_with_retry = AsyncMock(
+            return_value=(
+                "I apologize, but I'm having difficulty generating a response right now. Please try again.",
+                True,
+            )
+        )
+        mock_agent_cls.return_value = mock_agent
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.post.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"response": "", "sources": []}),
+        )
+        mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+        mock_client_instance.__aexit__ = AsyncMock(return_value=None)
+        mock_httpx.return_value = mock_client_instance
+
+        response = client.post(
+            "/api/v1/agents/kubernetes-support/invoke",
+            json={
+                "session_id": "test-session",
+                "user_id": "user@example.com",
+                "message": "Help with pods",
+            },
+        )
+
+        assert response.status_code == 200
+        assert "apologize" in response.json()["content"].lower()
+
+    @patch("kubernetes_agent.main.KubernetesAgent")
+    async def test_invoke_agent_exception_returns_500(
+        self, mock_agent_cls, client
+    ):
+        """Unexpected exception in invoke returns 500."""
+        mock_agent_cls.side_effect = RuntimeError("Config loading failed")
+
+        response = client.post(
+            "/api/v1/agents/kubernetes-support/invoke",
+            json={
+                "session_id": "test-session",
+                "user_id": "user@example.com",
+                "message": "Help",
+            },
+        )
+
+        assert response.status_code == 500
+
+    @patch("kubernetes_agent.main.KubernetesAgent")
+    @patch("kubernetes_agent.main.httpx.AsyncClient")
+    async def test_invoke_with_conversation_history(
+        self, mock_httpx, mock_agent_cls, client
+    ):
+        """transfer_context with conversation_history is used."""
+        mock_agent = MagicMock()
+        mock_agent.create_response_with_retry = AsyncMock(
+            return_value=("Continuing from before...", False)
+        )
+        mock_agent_cls.return_value = mock_agent
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.post.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"response": "", "sources": []}),
+        )
+        mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+        mock_client_instance.__aexit__ = AsyncMock(return_value=None)
+        mock_httpx.return_value = mock_client_instance
+
+        response = client.post(
+            "/api/v1/agents/kubernetes-support/invoke",
+            json={
+                "session_id": "test-session",
+                "user_id": "user@example.com",
+                "message": "Follow-up question",
+                "transfer_context": {
+                    "conversation_history": [
+                        {"role": "user", "content": "First question"},
+                        {"role": "assistant", "content": "First answer"},
+                    ]
+                },
+            },
+        )
+
+        assert response.status_code == 200
+
 
 class TestAgentCard:
     def test_a2a_card_generation(self, mock_agent_config):

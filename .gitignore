@@ -213,6 +213,9 @@ evaluations/results/deep_eval_results/*.json
 # Local planning / scratch
 misc/
 
+# Blog drafts (local only)
+blog*/
+
 # Os specific files
 .DS_Store
 *.iml

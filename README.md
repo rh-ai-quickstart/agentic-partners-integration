@@ -1,5 +1,7 @@
 # Partner Agent Integration Framework
 
+[![CI](https://github.com/rh-ai-quickstart/agentic-partners-integration/actions/workflows/ci.yaml/badge.svg)](https://github.com/rh-ai-quickstart/agentic-partners-integration/actions/workflows/ci.yaml)
+
 AI-powered partner support that routes users to the right expert, every time.
 
 > **Based on** the [IT Self-Service Agent Quickstart](https://github.com/rh-ai-quickstart/it-self-service-agent) by Red Hat AI -- adapted into a standalone POC focused on partner support with Google Gemini, PatternFly UI, and simplified A2A HTTP communication.
@@ -212,6 +214,47 @@ New partner agents and integrations are developed in dedicated branches. Each br
 | [`aro`](https://github.com/rh-ai-quickstart/agentic-partners-integration/tree/aro) | ARO Support Agent | Azure infrastructure troubleshooting via MCP tool calling |
 
 To explore a use case, check out its branch and refer to the agent's own README for setup and usage instructions. Each agent is a fully independent black box — it communicates with the orchestrator solely through the A2A HTTP contract and can be written in any language or framework.
+
+## CI / Test Coverage
+
+Every push and pull request triggers a full CI pipeline. Tests must pass before merge.
+
+### Unit Tests (Backend)
+
+| Service | Tests | Coverage | Threshold |
+|---------|-------|----------|-----------|
+| **shared-models** | 234 | 99% | 97% min |
+| **agent-service** | 150 | 99% | 99% min |
+| **request-manager** | 222 | 97% | 97% min |
+| **kubernetes-partner-agent** | 31 | 98% | 97% min |
+
+All backend services are tested with pytest, coverage enforced via `--cov-fail-under`. The CI fails if any package drops below its threshold.
+
+### Policy Tests
+
+OPA/Rego authorization policies have dedicated unit tests covering department-based delegation, permission intersection, and service-to-service trust.
+
+### Functional / E2E Tests
+
+A full-stack E2E suite (`scripts/test.sh`) runs against Docker Compose after unit tests pass. It validates:
+
+- Infrastructure health (PostgreSQL, Keycloak, OPA, RAG API, all agent services)
+- Keycloak authentication (login, JWT validation, password rejection)
+- OPA authorization (department-based access control across all test users)
+- RAG knowledge base (semantic search returns relevant tickets)
+- A2A routing (agent registry, remote agent delegation, local agent fallback)
+- End-to-end workflow (login -> classify -> authorize -> invoke -> response)
+- Database state (migrations, schema correctness)
+
+### Frontend
+
+The Web UI (`pf-chat-ui`) is a static PatternFly 6 interface served by nginx. It contains no application logic beyond HTTP calls to the request-manager API. Frontend correctness is validated through the E2E tests which exercise the full user flow (authentication, chat, agent routing) against the running stack.
+
+### Lint & Type Checks
+
+- **isort** — import ordering enforced across all packages
+- **mypy** — strict type checking (advisory, does not block merge)
+- **Lockfiles** — `uv lock --check` ensures dependency lockfiles are in sync
 
 ## Why This Matters
 

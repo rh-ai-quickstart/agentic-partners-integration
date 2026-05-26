@@ -36,15 +36,19 @@ jobs:
           cd shared-models && uv sync --quiet
           cd ../agent-service && uv sync --quiet
           cd ../request-manager && uv sync --quiet
+          cd ../kubernetes-partner-agent && uv sync --quiet
 
       - name: Run shared-models tests
-        run: cd shared-models && uv run python -m pytest tests/ --cov=shared_models --cov-report=term-missing -q
+        run: cd shared-models && uv run python -m pytest tests/ --cov=shared_models --cov-report=term-missing --cov-fail-under=97 -q
 
       - name: Run agent-service tests
-        run: cd agent-service && uv run python -m pytest tests/ --cov=agent_service --cov-report=term-missing -q
+        run: cd agent-service && uv run python -m pytest tests/ --cov=agent_service --cov-report=term-missing --cov-fail-under=99 -q
 
       - name: Run request-manager tests
-        run: cd request-manager && uv run python -m pytest tests/ --cov=request_manager --cov-report=term-missing -q
+        run: cd request-manager && uv run python -m pytest tests/ --cov=request_manager --cov-report=term-missing --cov-fail-under=97 -q
+
+      - name: Run kubernetes-partner-agent tests
+        run: cd kubernetes-partner-agent && uv run python -m pytest tests/ --cov=kubernetes_agent --cov-report=term-missing --cov-fail-under=97 -q
 
   lint:
     name: Lint
@@ -68,18 +72,21 @@ jobs:
           cd shared-models && uv sync --quiet
           cd ../agent-service && uv sync --quiet
           cd ../request-manager && uv sync --quiet
+          cd ../kubernetes-partner-agent && uv sync --quiet
 
       - name: Check formatting (isort)
         run: |
           cd shared-models && uv run --with isort isort --check-only --diff --skip .venv --skip alembic .
           cd ../agent-service && uv run --with isort isort --check-only --diff --skip .venv .
           cd ../request-manager && uv run --with isort isort --check-only --diff --skip .venv .
+          cd ../kubernetes-partner-agent && uv run --with isort isort --check-only --diff --skip .venv .
 
       - name: Type check (mypy)
         run: |
           cd shared-models && uv run --with mypy mypy --strict . || true
           cd ../agent-service && uv run --with mypy mypy --strict . || true
           cd ../request-manager && uv run --with mypy mypy --strict . || true
+          cd ../kubernetes-partner-agent && uv run --with mypy mypy --strict . || true
 
   lockfiles:
     name: Check Lockfiles
@@ -103,6 +110,7 @@ jobs:
           cd shared-models && uv lock --check
           cd ../agent-service && uv lock --check
           cd ../request-manager && uv lock --check
+          cd ../kubernetes-partner-agent && uv lock --check
 
   opa-tests:
     name: OPA Policy Tests
