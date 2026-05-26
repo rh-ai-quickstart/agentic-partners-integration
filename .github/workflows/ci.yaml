@@ -17,6 +17,8 @@ jobs:
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -54,10 +56,10 @@ jobs:
       - name: Run kubernetes-partner-agent A2A protocol E2E
         run: cd kubernetes-partner-agent && uv run python test_a2a_e2e.py
 
-      - name: Generate coverage badges
+      - name: Generate and publish coverage badges
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
-          mkdir -p .badges
+          mkdir -p badges
           for pkg in shared-models agent-service request-manager kubernetes-partner-agent; do
             if [ -f "$pkg/coverage.json" ]; then
               pct=$(python3 -c "import json; d=json.load(open('$pkg/coverage.json')); print(int(d['totals']['percent_covered_display']))")
@@ -65,17 +67,19 @@ jobs:
               elif [ "$pct" -ge 90 ]; then color="green";
               elif [ "$pct" -ge 80 ]; then color="yellow";
               else color="red"; fi
-              echo "{\"schemaVersion\":1,\"label\":\"$pkg\",\"message\":\"${pct}%\",\"color\":\"$color\"}" > .badges/${pkg}-coverage.json
+              echo "{\"schemaVersion\":1,\"label\":\"$pkg\",\"message\":\"${pct}%\",\"color\":\"$color\"}" > badges/${pkg}-coverage.json
             fi
           done
 
-      - name: Push coverage badges
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add .badges/*.json
-          git diff --cached --quiet || git commit -m "ci: update coverage badges [skip ci]" && git push
+
+          git checkout --orphan gh-pages-tmp
+          git rm -rf . > /dev/null 2>&1 || true
+          cp -r badges/* .
+          git add *.json
+          git commit -m "Update coverage badges" --allow-empty
+          git push origin HEAD:gh-pages --force
 
   lint:
     name: Lint
