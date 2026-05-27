@@ -11,6 +11,23 @@ Unlike the in-process Software and Network agents that rely on RAG over a local 
 ```mermaid
 flowchart LR
     User["User asks:\n'My pods are OOMKilled'"]
+    Agent["ARO Agent\nconnects to Azure\nvia MCP"]
+    Investigate["AI investigates:\n1. Check cluster metrics\n2. Read memory limits\n3. Correlate peak traffic"]
+    Answer["Specific answer:\n'Pods use 240Mi of 256Mi limit.\nSpikes at 14:00 UTC.\nIncrease to 512Mi.'"]
+
+    User --> Agent --> Investigate --> Answer
+
+    style User fill:#e3f2fd,stroke:#1565c0
+    style Agent fill:#e8eaf6,stroke:#283593
+    style Investigate fill:#fff3e0,stroke:#e65100
+    style Answer fill:#e8f5e9,stroke:#2e7d32
+```
+
+The answer references **real data** the agent just pulled from Azure — no hallucination, no generic advice. The user can verify every claim by checking the same metrics themselves.
+
+```mermaid
+flowchart LR
+    User["User asks:\n'My pods are OOMKilled'"]
     RM[Request Manager]
     ARO[ARO Agent]
     LLM[LLM]
@@ -61,6 +78,51 @@ sequenceDiagram
 7. If no MCP server is configured, the agent answers using LLM knowledge only
 
 ## Where It Fits in the Architecture
+
+The ARO agent plugs into the existing multi-agent ecosystem through the same contract used by knowledge-based agents. From the user's perspective, nothing changes — they ask a question and get an answer. Behind the scenes, different agents use fundamentally different approaches to find that answer:
+
+```mermaid
+flowchart LR
+    users["Users"]
+
+    subgraph frontend[" Web Frontend "]
+        ui["Chat UI"]
+    end
+
+    subgraph orchestrator[" Orchestrator "]
+        adk["Request Manager\n+ Policy Engine\n+ Identity Provider"]
+    end
+
+    subgraph rag_agents[" Knowledge-based Agents "]
+        sw["Software\nSupport"]
+        nw["Network\nSupport"]
+    end
+
+    subgraph mcp_agents[" Live Infrastructure Agents "]
+        k8s["Kubernetes\nSupport"]
+        aro["ARO\nSupport"]
+    end
+
+    kb["Knowledge\nBase"]
+    cloud["Live Cloud\nInfrastructure"]
+
+    users --> ui --> adk
+    adk --> sw & nw
+    adk --> k8s & aro
+    sw & nw -->|search tickets| kb
+    k8s & aro -->|inspect systems| cloud
+
+    style frontend fill:#e3f2fd,stroke:#1565c0
+    style orchestrator fill:#fff3e0,stroke:#e65100
+    style rag_agents fill:#e8f5e9,stroke:#2e7d32
+    style mcp_agents fill:#e8eaf6,stroke:#283593
+    style sw fill:#e8f5e9,stroke:#2e7d32
+    style nw fill:#e8f5e9,stroke:#2e7d32
+    style k8s fill:#e8eaf6,stroke:#283593
+    style aro fill:#e8eaf6,stroke:#283593
+```
+
+The green agents (Software, Network) use **RAG** — they search historical tickets to find documented solutions. The blue agents (Kubernetes, ARO) use **MCP** — they connect to live systems to investigate current state. This coexistence is the key insight: different problems need different approaches, but users don't need to know which approach is being used.
 
 ```mermaid
 flowchart LR
@@ -211,6 +273,36 @@ uv run python -m aro_agent.main
 | `agent-service/config/` | ARO support agent YAML registration |
 | `keycloak/realm-partner.json` | Added `azure` department for ARO agent authorization |
 | `policies/` | Updated OPA rules for ARO agent delegation |
+
+## Beyond Azure: An Ecosystem Strategy
+
+The MCP integration is not Azure-specific. The same pattern works for any external service that has an MCP server. Each new MCP server that Microsoft, AWS, Google, or any vendor publishes instantly becomes a potential new agent capability — with no framework changes, no new integrations, no cross-team coordination:
+
+```mermaid
+flowchart TB
+    subgraph framework["Partner Agent Framework"]
+        RM["Orchestrator + Policy Engine"]
+        RM --> SW["Software Agent\nsearches tickets"]
+        RM --> NW["Network Agent\nsearches tickets"]
+        RM --> ARO_A["ARO Agent\ninspects Azure"]
+        RM --> AWS_A["AWS Agent\ninspects AWS"]
+        RM --> GH_A["GitHub Agent\nsearches repos"]
+        RM --> CUSTOM["Custom Agent\nany approach"]
+    end
+
+    ARO_A --> AZURE["Azure"]
+    AWS_A --> AWS["AWS"]
+    GH_A --> GH["GitHub"]
+    CUSTOM --> INT["Internal Systems"]
+
+    style framework fill:#f5f5f5,stroke:#424242
+    style SW fill:#e8f5e9,stroke:#2e7d32
+    style NW fill:#e8f5e9,stroke:#2e7d32
+    style ARO_A fill:#e8eaf6,stroke:#283593
+    style AWS_A fill:#e8eaf6,stroke:#283593
+    style GH_A fill:#e8eaf6,stroke:#283593
+    style CUSTOM fill:#fff3e0,stroke:#e65100
+```
 
 ## Detailed Documentation
 
