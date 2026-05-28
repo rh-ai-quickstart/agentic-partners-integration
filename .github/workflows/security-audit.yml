@@ -1,0 +1,99 @@
+name: Security Audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**/pyproject.toml'
+      - '**/uv.lock'
+      - '**/requirements.txt'
+      - 'rag-service/Containerfile'
+      - '.github/workflows/security-audit.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '**/pyproject.toml'
+      - '**/uv.lock'
+      - '**/requirements.txt'
+      - 'rag-service/Containerfile'
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  pip-audit:
+    name: Dependency Audit (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: shared-models
+            path: shared-models
+          - package: agent-service
+            path: agent-service
+          - package: request-manager
+            path: request-manager
+          - package: kubernetes-partner-agent
+            path: kubernetes-partner-agent
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Export dependencies
+        run: |
+          cd ${{ matrix.path }}
+          uv export --no-dev --no-editable --no-emit-project --no-emit-workspace --no-emit-local --no-hashes -o /tmp/requirements-audit.txt
+          pip install --quiet pip-audit
+
+      - name: Run pip-audit
+        run: |
+          set -eo pipefail
+          pip-audit --strict --desc on -r /tmp/requirements-audit.txt | tee ${{ matrix.path }}/audit-results.txt
+
+      - name: Upload audit results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: audit-${{ matrix.package }}
+          path: ${{ matrix.path }}/audit-results.txt
+
+  pip-audit-rag:
+    name: Dependency Audit (rag-service)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies from Containerfile
+        run: |
+          pip install --quiet \
+            fastapi \
+            uvicorn[standard] \
+            pgvector \
+            psycopg[binary] \
+            sqlalchemy[asyncio] \
+            asyncpg \
+            google-genai \
+            structlog
+          pip install pip-audit
+
+      - name: Run pip-audit
+        run: pip-audit --strict --desc on 2>&1 | tee audit-results.txt
+
+      - name: Upload audit results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: audit-rag-service
+          path: audit-results.txt
