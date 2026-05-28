@@ -6,6 +6,8 @@ Password Grant. Only users configured in the Keycloak realm can log in.
 JWTs are validated via Keycloak's JWKS endpoint (RS256).
 """
 
+import asyncio
+import logging
 import os
 from typing import Optional
 
@@ -18,6 +20,27 @@ from shared_models.aaa_service import AAAService
 from shared_models.audit import AuditService
 from shared_models.database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
+
+_audit_logger = logging.getLogger(__name__)
+
+
+def _fire_and_forget_audit(*, event_type: str, reason: str) -> None:
+    """Schedule an audit event if an event loop is running, otherwise skip."""
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(
+            AuditService.emit(
+                event_type=event_type,
+                actor="unknown",
+                action="validate_token",
+                resource="/adk/*",
+                outcome="failure",
+                reason=reason,
+                service="request-manager",
+            )
+        )
+    except RuntimeError:
+        _audit_logger.debug("No event loop available for audit emit: %s", event_type)
 
 logger = structlog.get_logger()
 
@@ -72,34 +95,15 @@ def decode_token(authorization: str) -> dict:
     try:
         return _decode_keycloak_jwt(token)
     except jwt.ExpiredSignatureError:
-        # Fire-and-forget: audit runs in its own session, won't block if DB is slow.
-        import asyncio
-
-        asyncio.ensure_future(
-            AuditService.emit(
-                event_type="auth.token.expired",
-                actor="unknown",
-                action="validate_token",
-                resource="/adk/*",
-                outcome="failure",
-                reason="Token expired",
-                service="request-manager",
-            )
+        _fire_and_forget_audit(
+            event_type="auth.token.expired",
+            reason="Token expired",
         )
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.PyJWTError as e:
-        import asyncio
-
-        asyncio.ensure_future(
-            AuditService.emit(
-                event_type="auth.token.invalid",
-                actor="unknown",
-                action="validate_token",
-                resource="/adk/*",
-                outcome="failure",
-                reason=str(e),
-                service="request-manager",
-            )
+        _fire_and_forget_audit(
+            event_type="auth.token.invalid",
+            reason=str(e),
         )
         raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
 

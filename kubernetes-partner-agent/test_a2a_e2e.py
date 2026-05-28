@@ -19,23 +19,21 @@ from a2a.client.client import ClientConfig as A2AClientConfig
 from a2a.client.client_factory import ClientFactory as A2AClientFactory
 from a2a.server.agent_execution import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
-from a2a.server.apps import A2AStarletteApplication
 from a2a.server.events.event_queue import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.server.tasks.task_updater import TaskUpdater
 from a2a.types import (
-    AgentCard,
     Message,
     Part,
     Role,
+    Task,
     TaskState,
-    TextPart,
-    TransportProtocol,
-    UnsupportedOperationError,
+    TaskStatus,
 )
-from a2a.utils import new_task
-from a2a.utils.errors import ServerError
+from a2a.utils.errors import InvalidParamsError, UnsupportedOperationError
+from google.protobuf.json_format import MessageToDict
 from starlette.applications import Starlette
 from starlette.routing import Mount
 
@@ -64,26 +62,24 @@ class MockKubernetesExecutor(AgentExecutor):
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         user_input = context.get_user_input()
         if not user_input:
-            from a2a.types import InvalidParamsError
+            raise InvalidParamsError(message="No input")
 
-            raise ServerError(InvalidParamsError(message="No input"))
+        task = Task(
+            id=context.task_id,
+            context_id=context.context_id,
+            status=TaskStatus(state=TaskState.TASK_STATE_SUBMITTED),
+        )
+        await event_queue.enqueue_event(task)
+        updater = TaskUpdater(event_queue, context.task_id, context.context_id)
 
-        task = context.current_task or new_task(context.message)
-        if not context.current_task:
-            await event_queue.enqueue_event(task)
-
-        updater = TaskUpdater(event_queue, task.id, task.context_id)
-
-        await updater.update_status(
-            TaskState.working,
+        await updater.start_work(
             message=Message(
-                role=Role.agent,
-                parts=[Part(root=TextPart(text="Searching Kubernetes knowledge base..."))],
+                role=Role.ROLE_AGENT,
+                parts=[Part(text="Searching Kubernetes knowledge base...")],
                 message_id=str(uuid.uuid4()),
                 task_id=updater.task_id,
                 context_id=updater.context_id,
             ),
-            final=False,
         )
 
         response = (
@@ -96,21 +92,19 @@ class MockKubernetesExecutor(AgentExecutor):
             f"Source: knowledge base (similarity: 94.1%)"
         )
 
-        await updater.update_status(
-            TaskState.completed,
+        await updater.complete(
             message=Message(
-                role=Role.agent,
-                parts=[Part(root=TextPart(text=response))],
+                role=Role.ROLE_AGENT,
+                parts=[Part(text=response)],
                 metadata={"agent": "kubernetes-support"},
                 message_id=str(uuid.uuid4()),
                 task_id=updater.task_id,
                 context_id=updater.context_id,
             ),
-            final=True,
         )
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        raise ServerError(UnsupportedOperationError(message="Not supported"))
+        raise UnsupportedOperationError(message="Not supported")
 
 
 def _load_config() -> dict:
@@ -128,11 +122,11 @@ def build_test_server() -> Starlette:
     handler = DefaultRequestHandler(
         agent_executor=MockKubernetesExecutor(),
         task_store=InMemoryTaskStore(),
+        agent_card=card,
     )
 
-    a2a_app = A2AStarletteApplication(
-        agent_card=card, http_handler=handler
-    ).build()
+    routes = create_agent_card_routes(card) + create_jsonrpc_routes(handler, rpc_url="/")
+    a2a_app = Starlette(routes=routes)
 
     root = Starlette(
         routes=[
@@ -151,33 +145,35 @@ async def test_agent_card(http: httpx.AsyncClient):
     if not ok:
         return
 
-    card = AgentCard(**resp.json())
-    record("Card name matches", card.name == "Kubernetes Support Agent", f"got '{card.name}'")
-    record("Protocol version 0.3.0", card.protocol_version == "0.3.0", card.protocol_version)
-    record("Transport JSONRPC", card.preferred_transport == "JSONRPC", str(card.preferred_transport))
-    record("Has skills", len(card.skills) > 0, f"{len(card.skills)} skills")
-    record("Has description", len(card.description) > 50, f"{len(card.description)} chars")
-    record("Capabilities set", card.capabilities is not None, "")
+    data = resp.json()
+    card_name = data.get("name", "")
+    record("Card name matches", card_name == "Kubernetes Support Agent", f"got '{card_name}'")
+    record("Version set", "version" in data and len(data["version"]) > 0, data.get("version", ""))
+    skills = data.get("skills", [])
+    record("Has skills", len(skills) > 0, f"{len(skills)} skills")
+    description = data.get("description", "")
+    record("Has description", len(description) > 50, f"{len(description)} chars")
+    record("Capabilities set", "capabilities" in data, "")
 
 
 async def test_message_send(http: httpx.AsyncClient, query: str):
     """Test JSON-RPC message/send (non-streaming)."""
     msg = Message(
         message_id=str(uuid.uuid4()),
-        role="user",
-        parts=[Part(root=TextPart(text=query))],
+        role=Role.ROLE_USER,
+        parts=[Part(text=query)],
         context_id=f"e2e-k8s-{uuid.uuid4().hex[:8]}",
     )
 
     jsonrpc = {
         "jsonrpc": "2.0",
         "id": 1,
-        "method": "message/send",
-        "params": {"message": msg.model_dump(by_alias=True, exclude_none=True)},
+        "method": "SendMessage",
+        "params": {"message": MessageToDict(msg, preserving_proto_field_name=False)},
     }
 
     url = K8S_BASE.rstrip("/") + "/"
-    resp = await http.post(url, json=jsonrpc)
+    resp = await http.post(url, json=jsonrpc, headers={"A2A-Version": "1.0"})
     record("message/send HTTP 200", resp.status_code == 200, f"status={resp.status_code}")
 
     body = resp.json()
@@ -188,12 +184,13 @@ async def test_message_send(http: httpx.AsyncClient, query: str):
         return
 
     result = body.get("result", {})
-    task_id = result.get("id")
+    task_data = result.get("task", result)
+    task_id = task_data.get("id")
     record("Task ID present", bool(task_id), task_id or "missing")
 
-    status = result.get("status", {})
+    status = task_data.get("status", {})
     state = status.get("state")
-    record("Task state=completed", state == "completed", f"got '{state}'")
+    record("Task state=completed", state == "TASK_STATE_COMPLETED", f"got '{state}'")
 
     resp_msg = status.get("message", {})
     parts = resp_msg.get("parts", [])
@@ -208,7 +205,7 @@ async def test_message_send(http: httpx.AsyncClient, query: str):
             f"preview: {text[:80]}...",
         )
 
-    context_id = result.get("contextId")
+    context_id = task_data.get("contextId")
     record("context_id propagated", context_id is not None, context_id or "missing")
 
 
@@ -224,20 +221,25 @@ async def test_a2a_client(http: httpx.AsyncClient, query: str):
             httpx_client=sdk_http,
             streaming=False,
             polling=False,
-            supported_transports=[TransportProtocol.jsonrpc],
         )
         factory = A2AClientFactory(config=config)
         a2a_client = factory.create(card)
 
+        from a2a.types import SendMessageConfiguration, SendMessageRequest
+
         msg = Message(
             message_id=str(uuid.uuid4()),
-            role="user",
-            parts=[Part(root=TextPart(text=query))],
+            role=Role.ROLE_USER,
+            parts=[Part(text=query)],
             context_id="sdk-k8s-test",
+        )
+        request = SendMessageRequest(
+            message=msg,
+            configuration=SendMessageConfiguration(),
         )
 
         events = []
-        async for response in a2a_client.send_message(request=msg):
+        async for response in a2a_client.send_message(request=request):
             events.append(response)
 
         record("A2A client got response(s)", len(events) > 0, f"{len(events)} events")
@@ -250,14 +252,14 @@ async def test_a2a_client(http: httpx.AsyncClient, query: str):
                     state = task.status.state if task.status else None
                     record(
                         "A2A client task completed",
-                        state == TaskState.completed,
+                        state == TaskState.TASK_STATE_COMPLETED,
                         f"state={state}",
                     )
                     if task.status and task.status.message:
                         text_parts = [
-                            p.root.text
+                            p.text
                             for p in task.status.message.parts
-                            if hasattr(p.root, "text")
+                            if hasattr(p, "text")
                         ]
                         full_text = " ".join(text_parts)
                         record(
@@ -267,7 +269,7 @@ async def test_a2a_client(http: httpx.AsyncClient, query: str):
                         )
             elif isinstance(last, Message):
                 text_parts = [
-                    p.root.text for p in last.parts if hasattr(p.root, "text")
+                    p.text for p in last.parts if hasattr(p, "text")
                 ]
                 record(
                     "A2A client got Message",

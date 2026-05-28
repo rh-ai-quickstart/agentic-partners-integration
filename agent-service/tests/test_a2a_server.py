@@ -8,7 +8,9 @@ import pytest
 class TestA2AServer:
     """Tests for the dynamic A2A server builder."""
 
-    @patch("agent_service.a2a.server.A2AStarletteApplication")
+    @patch("agent_service.a2a.server.Starlette")
+    @patch("agent_service.a2a.server.create_jsonrpc_routes")
+    @patch("agent_service.a2a.server.create_agent_card_routes")
     @patch("agent_service.a2a.server.DefaultRequestHandler")
     @patch("agent_service.a2a.server.InMemoryTaskStore")
     @patch("agent_service.a2a.server.create_agent_card")
@@ -19,7 +21,9 @@ class TestA2AServer:
         mock_card_fn,
         mock_store_cls,
         mock_handler_cls,
-        mock_a2a_app_cls,
+        mock_card_routes,
+        mock_jsonrpc_routes,
+        mock_starlette_cls,
         monkeypatch,
     ):
         from agent_service.a2a.server import get_a2a_app
@@ -30,8 +34,8 @@ class TestA2AServer:
         )
 
         config = {"name": "software-support", "departments": ["software"]}
-        mock_starlette_app = MagicMock()
-        mock_a2a_app_cls.return_value.build.return_value = mock_starlette_app
+        mock_card_routes.return_value = []
+        mock_jsonrpc_routes.return_value = []
 
         result = get_a2a_app("software-support", config)
 
@@ -41,9 +45,12 @@ class TestA2AServer:
             "http://localhost:8080/a2a/software-support/",
         )
         mock_executor_cls.assert_called_once_with("software-support")
-        assert result is mock_starlette_app
+        mock_starlette_cls.assert_called_once()
+        assert result is mock_starlette_cls.return_value
 
-    @patch("agent_service.a2a.server.A2AStarletteApplication")
+    @patch("agent_service.a2a.server.Starlette")
+    @patch("agent_service.a2a.server.create_jsonrpc_routes")
+    @patch("agent_service.a2a.server.create_agent_card_routes")
     @patch("agent_service.a2a.server.DefaultRequestHandler")
     @patch("agent_service.a2a.server.InMemoryTaskStore")
     @patch("agent_service.a2a.server.create_agent_card")
@@ -54,7 +61,9 @@ class TestA2AServer:
         mock_card_fn,
         mock_store_cls,
         mock_handler_cls,
-        mock_a2a_app_cls,
+        mock_card_routes,
+        mock_jsonrpc_routes,
+        mock_starlette_cls,
         monkeypatch,
     ):
         from agent_service.a2a.server import get_a2a_app
@@ -65,8 +74,8 @@ class TestA2AServer:
         )
 
         config = {"name": "network-support", "departments": ["network"]}
-        mock_starlette_app = MagicMock()
-        mock_a2a_app_cls.return_value.build.return_value = mock_starlette_app
+        mock_card_routes.return_value = []
+        mock_jsonrpc_routes.return_value = []
 
         result = get_a2a_app("network-support", config)
 
@@ -76,9 +85,11 @@ class TestA2AServer:
             "http://localhost:8080/a2a/network-support/",
         )
         mock_executor_cls.assert_called_once_with("network-support")
-        assert result is mock_starlette_app
+        assert result is mock_starlette_cls.return_value
 
-    @patch("agent_service.a2a.server.A2AStarletteApplication")
+    @patch("agent_service.a2a.server.Starlette")
+    @patch("agent_service.a2a.server.create_jsonrpc_routes")
+    @patch("agent_service.a2a.server.create_agent_card_routes")
     @patch("agent_service.a2a.server.DefaultRequestHandler")
     @patch("agent_service.a2a.server.InMemoryTaskStore")
     @patch("agent_service.a2a.server.create_agent_card")
@@ -89,22 +100,27 @@ class TestA2AServer:
         mock_card_fn,
         mock_store_cls,
         mock_handler_cls,
-        mock_a2a_app_cls,
+        mock_card_routes,
+        mock_jsonrpc_routes,
+        mock_starlette_cls,
     ):
         from agent_service.a2a.server import _build_a2a_app
 
         config = {"name": "software-support", "departments": ["software"]}
-        mock_starlette_app = MagicMock()
-        mock_a2a_app_cls.return_value.build.return_value = mock_starlette_app
+        mock_card_routes.return_value = []
+        mock_jsonrpc_routes.return_value = []
 
         result = _build_a2a_app("software-support", config, "http://localhost:8080/")
 
         mock_executor_cls.assert_called_once_with("software-support")
         mock_handler_cls.assert_called_once()
-        mock_a2a_app_cls.assert_called_once()
-        assert result is mock_starlette_app
+        mock_card_routes.assert_called_once()
+        mock_jsonrpc_routes.assert_called_once()
+        assert result is mock_starlette_cls.return_value
 
-    @patch("agent_service.a2a.server.A2AStarletteApplication")
+    @patch("agent_service.a2a.server.Starlette")
+    @patch("agent_service.a2a.server.create_jsonrpc_routes")
+    @patch("agent_service.a2a.server.create_agent_card_routes")
     @patch("agent_service.a2a.server.DefaultRequestHandler")
     @patch("agent_service.a2a.server.InMemoryTaskStore")
     @patch("agent_service.a2a.server.create_agent_card")
@@ -115,7 +131,9 @@ class TestA2AServer:
         mock_card_fn,
         mock_store_cls,
         mock_handler_cls,
-        mock_a2a_app_cls,
+        mock_card_routes,
+        mock_jsonrpc_routes,
+        mock_starlette_cls,
         monkeypatch,
     ):
         from agent_service.a2a.server import get_a2a_app
@@ -126,8 +144,8 @@ class TestA2AServer:
         )
 
         config = {"name": "kubernetes-support", "departments": ["kubernetes"]}
-        mock_starlette_app = MagicMock()
-        mock_a2a_app_cls.return_value.build.return_value = mock_starlette_app
+        mock_card_routes.return_value = []
+        mock_jsonrpc_routes.return_value = []
 
         result = get_a2a_app("kubernetes-support", config)
 
@@ -137,7 +155,7 @@ class TestA2AServer:
             "http://localhost:8080/a2a/kubernetes-support/",
         )
         mock_executor_cls.assert_called_once_with("kubernetes-support")
-        assert result is mock_starlette_app
+        assert result is mock_starlette_cls.return_value
 
     def test_get_a2a_app_default_url(self, monkeypatch):
         """When no env var is set, the default URL uses the agent name."""
@@ -152,9 +170,10 @@ class TestA2AServer:
             patch("agent_service.a2a.server.SpecialistAgentExecutor"),
             patch("agent_service.a2a.server.DefaultRequestHandler"),
             patch("agent_service.a2a.server.InMemoryTaskStore"),
-            patch("agent_service.a2a.server.A2AStarletteApplication") as mock_a2a,
+            patch("agent_service.a2a.server.create_agent_card_routes", return_value=[]),
+            patch("agent_service.a2a.server.create_jsonrpc_routes", return_value=[]),
+            patch("agent_service.a2a.server.Starlette"),
         ):
-            mock_a2a.return_value.build.return_value = MagicMock()
             get_a2a_app("db-support", config)
 
             mock_card.assert_called_once_with(

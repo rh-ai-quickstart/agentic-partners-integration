@@ -16,17 +16,19 @@ from a2a.server.agent_execution.context import RequestContext
 from a2a.server.events.event_queue import EventQueue
 from a2a.server.tasks.task_updater import TaskUpdater
 from a2a.types import (
-    InternalError,
-    InvalidParamsError,
     Message,
     Part,
     Role,
+    Task,
     TaskState,
-    TextPart,
+    TaskStatus,
+)
+from a2a.utils.errors import (
+    A2AError,
+    InternalError,
+    InvalidParamsError,
     UnsupportedOperationError,
 )
-from a2a.utils import new_task
-from a2a.utils.errors import ServerError
 
 logger = logging.getLogger(__name__)
 
@@ -54,43 +56,39 @@ class SpecialistAgentExecutor(AgentExecutor):
 
         user_input = context.get_user_input()
         if not user_input:
-            raise ServerError(InvalidParamsError(message="No input message provided"))
+            raise InvalidParamsError(message="No input message provided")
 
         task_updater = await self._init_task(context, event_queue)
 
         try:
-            await task_updater.update_status(
-                TaskState.working,
+            await task_updater.start_work(
                 message=Message(
-                    role=Role.agent,
-                    parts=[Part(root=TextPart(text="Searching knowledge base..."))],
+                    role=Role.ROLE_AGENT,
+                    parts=[Part(text="Searching knowledge base...")],
                     message_id=str(uuid.uuid4()),
                     task_id=task_updater.task_id,
                     context_id=task_updater.context_id,
                 ),
-                final=False,
             )
 
             response_text = await self._invoke_specialist(user_input)
 
-            await task_updater.update_status(
-                TaskState.completed,
+            await task_updater.complete(
                 message=Message(
-                    role=Role.agent,
-                    parts=[Part(root=TextPart(text=response_text))],
+                    role=Role.ROLE_AGENT,
+                    parts=[Part(text=response_text)],
                     metadata={"agent": self._agent_name},
                     message_id=str(uuid.uuid4()),
                     task_id=task_updater.task_id,
                     context_id=task_updater.context_id,
                 ),
-                final=True,
             )
-        except ServerError:
+        except A2AError:
             raise
         except Exception as exc:
             logger.exception("Specialist agent execution failed: %s", exc)
-            raise ServerError(
-                InternalError(message=f"Agent execution failed: {exc}")
+            raise InternalError(
+                message=f"Agent execution failed: {exc}"
             ) from exc
 
     async def cancel(
@@ -99,13 +97,13 @@ class SpecialistAgentExecutor(AgentExecutor):
         event_queue: EventQueue,
     ) -> None:
         if context.current_task and context.current_task.status.state in {
-            TaskState.completed,
-            TaskState.failed,
-            TaskState.canceled,
+            TaskState.TASK_STATE_COMPLETED,
+            TaskState.TASK_STATE_FAILED,
+            TaskState.TASK_STATE_CANCELED,
         }:
             return
-        raise ServerError(
-            UnsupportedOperationError(message="Task cancellation is not supported.")
+        raise UnsupportedOperationError(
+            message="Task cancellation is not supported."
         )
 
     async def _init_task(
@@ -113,11 +111,13 @@ class SpecialistAgentExecutor(AgentExecutor):
         context: RequestContext,
         event_queue: EventQueue,
     ) -> TaskUpdater:
-        task = context.current_task
-        if not task:
-            task = new_task(context.message)
-            await event_queue.enqueue_event(task)
-        return TaskUpdater(event_queue, task.id, task.context_id)
+        task = Task(
+            id=context.task_id,
+            context_id=context.context_id,
+            status=TaskStatus(state=TaskState.TASK_STATE_SUBMITTED),
+        )
+        await event_queue.enqueue_event(task)
+        return TaskUpdater(event_queue, context.task_id, context.context_id)
 
     async def _invoke_specialist(self, user_message: str) -> str:
         """Run the full specialist flow: RAG lookup then LLM generation."""
@@ -197,10 +197,8 @@ The following information was retrieved from the support knowledge base for the 
 
                 if resp.status_code != 200:
                     logger.error("RAG API returned %s: %s", resp.status_code, resp.text)
-                    raise ServerError(
-                        InternalError(
-                            message=f"RAG API unavailable (HTTP {resp.status_code})"
-                        )
+                    raise InternalError(
+                        message=f"RAG API unavailable (HTTP {resp.status_code})"
                     )
 
                 data = resp.json()
@@ -208,6 +206,6 @@ The following information was retrieved from the support knowledge base for the 
 
         except httpx.HTTPError as exc:
             logger.error("RAG API connection failed: %s", exc)
-            raise ServerError(
-                InternalError(message=f"RAG API unavailable: {exc}")
+            raise InternalError(
+                message=f"RAG API unavailable: {exc}"
             ) from exc

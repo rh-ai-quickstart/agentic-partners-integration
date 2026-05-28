@@ -5,12 +5,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from a2a.types import (
+    TaskState,
+)
+from a2a.utils.errors import (
+    A2AError,
     InternalError,
     InvalidParamsError,
-    TaskState,
     UnsupportedOperationError,
 )
-from a2a.utils.errors import ServerError
 
 from agent_service.a2a.executor import SpecialistAgentExecutor
 
@@ -44,51 +46,44 @@ class TestSpecialistAgentExecutor:
         "agent_service.a2a.executor.SpecialistAgentExecutor._invoke_specialist",
         new_callable=AsyncMock,
     )
-    @patch("agent_service.a2a.executor.new_task")
     async def test_execute_invokes_specialist(
-        self, mock_new_task, mock_invoke, executor, mock_context, mock_event_queue
+        self, mock_invoke, executor, mock_context, mock_event_queue
     ):
-        mock_task = MagicMock()
-        mock_task.id = "task-123"
-        mock_task.context_id = "ctx-1"
-        mock_new_task.return_value = mock_task
         mock_invoke.return_value = "Here is the solution"
 
         await executor.execute(mock_context, mock_event_queue)
 
         mock_invoke.assert_awaited_once_with("My app is crashing")
 
-    @patch("agent_service.a2a.executor.new_task")
     async def test_execute_handles_missing_user_input(
-        self, mock_new_task, executor, mock_context, mock_event_queue
+        self, executor, mock_context, mock_event_queue
     ):
         mock_context.get_user_input.return_value = None
 
-        with pytest.raises(ServerError):
+        with pytest.raises(A2AError):
             await executor.execute(mock_context, mock_event_queue)
 
     async def test_cancel_raises_unsupported(
         self, executor, mock_context, mock_event_queue
     ):
         mock_context.current_task = None
-        with pytest.raises(ServerError):
+        with pytest.raises(A2AError):
             await executor.cancel(mock_context, mock_event_queue)
 
     async def test_cancel_returns_if_task_completed(
         self, executor, mock_context, mock_event_queue
     ):
         mock_task = MagicMock()
-        mock_task.status.state = TaskState.completed
+        mock_task.status.state = TaskState.TASK_STATE_COMPLETED
         mock_context.current_task = mock_task
 
-        # Should not raise
         await executor.cancel(mock_context, mock_event_queue)
 
     async def test_cancel_returns_if_task_failed(
         self, executor, mock_context, mock_event_queue
     ):
         mock_task = MagicMock()
-        mock_task.status.state = TaskState.failed
+        mock_task.status.state = TaskState.TASK_STATE_FAILED
         mock_context.current_task = mock_task
 
         await executor.cancel(mock_context, mock_event_queue)
@@ -159,48 +154,36 @@ class TestSpecialistAgentExecutor:
         mock_client_instance.__aexit__ = AsyncMock(return_value=False)
         mock_httpx_cls.return_value = mock_client_instance
 
-        with pytest.raises(ServerError):
+        with pytest.raises(A2AError):
             await executor._query_rag("app crash")
 
     @patch(
         "agent_service.a2a.executor.SpecialistAgentExecutor._invoke_specialist",
         new_callable=AsyncMock,
     )
-    @patch("agent_service.a2a.executor.new_task")
-    async def test_execute_reraises_server_error(
-        self, mock_new_task, mock_invoke, executor, mock_context, mock_event_queue
+    async def test_execute_reraises_a2a_error(
+        self, mock_invoke, executor, mock_context, mock_event_queue
     ):
-        """Lines 88-89: ServerError raised during execution is re-raised as-is."""
-        mock_task = MagicMock()
-        mock_task.id = "task-err"
-        mock_task.context_id = "ctx-1"
-        mock_new_task.return_value = mock_task
-        mock_invoke.side_effect = ServerError(
-            InternalError(message="RAG API unavailable")
-        )
+        """A2AError raised during execution is re-raised as-is."""
+        mock_invoke.side_effect = InternalError(message="RAG API unavailable")
 
-        with pytest.raises(ServerError):
+        with pytest.raises(A2AError):
             await executor.execute(mock_context, mock_event_queue)
 
     @patch(
         "agent_service.a2a.executor.SpecialistAgentExecutor._invoke_specialist",
         new_callable=AsyncMock,
     )
-    @patch("agent_service.a2a.executor.new_task")
-    async def test_execute_wraps_generic_exception_in_server_error(
-        self, mock_new_task, mock_invoke, executor, mock_context, mock_event_queue
+    async def test_execute_wraps_generic_exception_in_internal_error(
+        self, mock_invoke, executor, mock_context, mock_event_queue
     ):
-        """Lines 90-93: Generic exception is wrapped in ServerError(InternalError)."""
-        mock_task = MagicMock()
-        mock_task.id = "task-gen-err"
-        mock_task.context_id = "ctx-1"
-        mock_new_task.return_value = mock_task
+        """Generic exception is wrapped in InternalError."""
         mock_invoke.side_effect = ValueError("unexpected problem")
 
-        with pytest.raises(ServerError) as exc_info:
+        with pytest.raises(InternalError) as exc_info:
             await executor.execute(mock_context, mock_event_queue)
 
-        assert "Agent execution failed" in str(exc_info.value.error.message)
+        assert "Agent execution failed" in str(exc_info.value)
 
     @patch("agent_service.agents.AgentManager")
     @patch(
@@ -210,7 +193,7 @@ class TestSpecialistAgentExecutor:
     async def test_invoke_specialist_logs_warning_on_failed_response(
         self, mock_query_rag, mock_agent_manager_cls, executor
     ):
-        """Line 174: warning is logged when agent response generation fails."""
+        """Warning is logged when agent response generation fails."""
         mock_query_rag.return_value = (
             "RAG answer",
             [{"id": "T-1", "similarity": 0.9, "content": "Fix it"}],
@@ -219,7 +202,7 @@ class TestSpecialistAgentExecutor:
         mock_agent = AsyncMock()
         mock_agent.create_response_with_retry.return_value = (
             "I apologize, but I'm having difficulty generating a response right now.",
-            True,  # failed=True
+            True,
         )
         mock_manager = MagicMock()
         mock_manager.get_agent.return_value = mock_agent
@@ -227,14 +210,13 @@ class TestSpecialistAgentExecutor:
 
         result = await executor._invoke_specialist("My app crashes")
 
-        # Should still return the fallback message
         assert "apologize" in result.lower()
 
     @patch("agent_service.a2a.executor.httpx.AsyncClient")
     async def test_query_rag_handles_httpx_connection_error(
         self, mock_httpx_cls, executor, monkeypatch
     ):
-        """Lines 212-213: httpx.HTTPError is caught and wrapped in ServerError."""
+        """httpx.HTTPError is caught and wrapped in InternalError."""
         import httpx
 
         monkeypatch.setenv("RAG_API_ENDPOINT", "http://rag:8080/answer")
@@ -245,18 +227,17 @@ class TestSpecialistAgentExecutor:
         mock_client_instance.__aexit__ = AsyncMock(return_value=False)
         mock_httpx_cls.return_value = mock_client_instance
 
-        with pytest.raises(ServerError) as exc_info:
+        with pytest.raises(InternalError) as exc_info:
             await executor._query_rag("app crash")
 
-        assert "RAG API unavailable" in str(exc_info.value.error.message)
+        assert "RAG API unavailable" in str(exc_info.value)
 
     async def test_cancel_returns_if_task_canceled(
         self, executor, mock_context, mock_event_queue
     ):
-        """Line 104: cancel returns early when task state is 'canceled'."""
+        """cancel returns early when task state is 'canceled'."""
         mock_task = MagicMock()
-        mock_task.status.state = TaskState.canceled
+        mock_task.status.state = TaskState.TASK_STATE_CANCELED
         mock_context.current_task = mock_task
 
-        # Should not raise
         await executor.cancel(mock_context, mock_event_queue)

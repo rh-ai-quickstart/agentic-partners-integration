@@ -15,22 +15,20 @@ import uuid
 import uvicorn
 from a2a.server.agent_execution import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
-from a2a.server.apps import A2AStarletteApplication
 from a2a.server.events.event_queue import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.server.tasks.task_updater import TaskUpdater
 from a2a.types import (
-    InvalidParamsError,
     Message,
     Part,
     Role,
+    Task,
     TaskState,
-    TextPart,
-    UnsupportedOperationError,
+    TaskStatus,
 )
-from a2a.utils import new_task
-from a2a.utils.errors import ServerError
+from a2a.utils.errors import InvalidParamsError, UnsupportedOperationError
 from starlette.applications import Starlette
 from starlette.routing import Mount
 
@@ -132,48 +130,47 @@ class StandaloneExecutor(AgentExecutor):
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         user_input = context.get_user_input()
         if not user_input:
-            raise ServerError(InvalidParamsError(message="No input message provided"))
+            raise InvalidParamsError(message="No input message provided")
 
         logger.info("Execute: agent=%s input='%s'", self._name, user_input[:80])
 
-        task = context.current_task or new_task(context.message)
-        if not context.current_task:
-            await event_queue.enqueue_event(task)
+        from a2a.types import Task, TaskStatus
+        task = Task(
+            id=context.task_id,
+            context_id=context.context_id,
+            status=TaskStatus(state=TaskState.TASK_STATE_SUBMITTED),
+        )
+        await event_queue.enqueue_event(task)
+        updater = TaskUpdater(event_queue, context.task_id, context.context_id)
 
-        updater = TaskUpdater(event_queue, task.id, task.context_id)
-
-        await updater.update_status(
-            TaskState.working,
+        await updater.start_work(
             message=Message(
-                role=Role.agent,
-                parts=[Part(root=TextPart(text="Searching knowledge base..."))],
+                role=Role.ROLE_AGENT,
+                parts=[Part(text="Searching knowledge base...")],
                 message_id=str(uuid.uuid4()),
                 task_id=updater.task_id,
                 context_id=updater.context_id,
             ),
-            final=False,
         )
 
         await asyncio.sleep(0.3)
 
         response = self._responses.get("default", "No response available.")
 
-        await updater.update_status(
-            TaskState.completed,
+        await updater.complete(
             message=Message(
-                role=Role.agent,
-                parts=[Part(root=TextPart(text=response))],
+                role=Role.ROLE_AGENT,
+                parts=[Part(text=response)],
                 metadata={"agent": self._name, "rag_used": True},
                 message_id=str(uuid.uuid4()),
                 task_id=updater.task_id,
                 context_id=updater.context_id,
             ),
-            final=True,
         )
         logger.info("Completed: agent=%s response_len=%d", self._name, len(response))
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        raise ServerError(UnsupportedOperationError(message="Not supported"))
+        raise UnsupportedOperationError(message="Not supported")
 
 
 STANDALONE_RESPONSES: dict[str, dict[str, str]] = {
@@ -197,8 +194,10 @@ def build_app() -> Starlette:
         handler = DefaultRequestHandler(
             agent_executor=StandaloneExecutor(name, responses),
             task_store=InMemoryTaskStore(),
+            agent_card=card,
         )
-        a2a_app = A2AStarletteApplication(agent_card=card, http_handler=handler).build()
+        app_routes = create_agent_card_routes(card) + create_jsonrpc_routes(handler, rpc_url="/")
+        a2a_app = Starlette(routes=app_routes)
         routes.append(Mount(f"/a2a/{name}", app=a2a_app))
 
     return Starlette(routes=routes)

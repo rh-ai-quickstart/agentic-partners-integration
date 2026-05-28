@@ -7,7 +7,7 @@ adding a new agent YAML with an 'a2a' block is sufficient.
 
 from typing import Any
 
-from a2a.types import AgentCapabilities, AgentCard, AgentSkill
+from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 
 
 def create_agent_card(
@@ -54,16 +54,19 @@ def create_agent_card(
     return AgentCard(
         name=card_name,
         description=card_description.strip(),
-        url=base_url,
-        protocol_version="0.3.0",
         version="0.1.0",
-        preferred_transport="JSONRPC",
         default_input_modes=["text/plain", "application/json"],
         default_output_modes=["text/plain", "application/json"],
         capabilities=AgentCapabilities(
             streaming=False,
             push_notifications=False,
-            state_transition_history=True,
         ),
+        supported_interfaces=[
+            AgentInterface(
+                url=base_url,
+                protocol_binding="JSONRPC",
+                protocol_version="1.0",
+            ),
+        ],
         skills=skills,
     )

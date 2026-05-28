@@ -10,10 +10,11 @@ import logging
 import os
 from typing import Any
 
-from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore
 from starlette.applications import Starlette
+from starlette.routing import Route
 
 from .agent_cards import create_agent_card
 from .executor import SpecialistAgentExecutor
@@ -34,14 +35,14 @@ def _build_a2a_app(agent_name: str, config: dict[str, Any], base_url: str) -> St
     handler = DefaultRequestHandler(
         agent_executor=SpecialistAgentExecutor(agent_name),
         task_store=InMemoryTaskStore(),
-    )
-
-    a2a_app = A2AStarletteApplication(
         agent_card=agent_card,
-        http_handler=handler,
     )
 
-    return a2a_app.build()
+    routes: list[Route] = []
+    routes.extend(create_agent_card_routes(agent_card))
+    routes.extend(create_jsonrpc_routes(handler, rpc_url="/"))
+
+    return Starlette(routes=routes)
 
 
 def get_a2a_app(agent_name: str, config: dict[str, Any]) -> Starlette:

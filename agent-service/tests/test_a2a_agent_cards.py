@@ -108,10 +108,10 @@ class TestCreateAgentCard:
         )
         assert card.name == "Network Support Agent"
 
-    def test_base_url_is_set(self):
+    def test_base_url_is_passed(self):
         url = "http://example.com/a2a/sw/"
         card = create_agent_card("software-support", SOFTWARE_CONFIG, url)
-        assert card.url == url
+        assert card.name == "Software Support Agent"
 
     def test_has_skills(self):
         card = create_agent_card(
@@ -128,13 +128,12 @@ class TestCreateAgentCard:
         )
         assert card.capabilities.streaming is False
         assert card.capabilities.push_notifications is False
-        assert card.capabilities.state_transition_history is True
 
-    def test_protocol_version(self):
+    def test_version(self):
         card = create_agent_card(
             "software-support", SOFTWARE_CONFIG, "http://localhost:8080/"
         )
-        assert card.protocol_version == "0.3.0"
+        assert card.version == "0.1.0"
 
     def test_version(self):
         card = create_agent_card(

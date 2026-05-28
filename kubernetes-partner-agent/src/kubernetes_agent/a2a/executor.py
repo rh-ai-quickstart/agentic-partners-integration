@@ -15,17 +15,19 @@ from a2a.server.agent_execution.context import RequestContext
 from a2a.server.events.event_queue import EventQueue
 from a2a.server.tasks.task_updater import TaskUpdater
 from a2a.types import (
-    InternalError,
-    InvalidParamsError,
     Message,
     Part,
     Role,
+    Task,
     TaskState,
-    TextPart,
+    TaskStatus,
+)
+from a2a.utils.errors import (
+    A2AError,
+    InternalError,
+    InvalidParamsError,
     UnsupportedOperationError,
 )
-from a2a.utils import new_task
-from a2a.utils.errors import ServerError
 
 logger = logging.getLogger(__name__)
 
@@ -40,47 +42,45 @@ class KubernetesAgentExecutor(AgentExecutor):
     ) -> None:
         user_input = context.get_user_input()
         if not user_input:
-            raise ServerError(InvalidParamsError(message="No input message provided"))
+            raise InvalidParamsError(message="No input message provided")
 
-        task = context.current_task or new_task(context.message)
-        if not context.current_task:
-            await event_queue.enqueue_event(task)
-
-        updater = TaskUpdater(event_queue, task.id, task.context_id)
+        task = Task(
+            id=context.task_id,
+            context_id=context.context_id,
+            status=TaskStatus(state=TaskState.TASK_STATE_SUBMITTED),
+        )
+        await event_queue.enqueue_event(task)
+        updater = TaskUpdater(event_queue, context.task_id, context.context_id)
 
         try:
-            await updater.update_status(
-                TaskState.working,
+            await updater.start_work(
                 message=Message(
-                    role=Role.agent,
-                    parts=[Part(root=TextPart(text="Searching knowledge base..."))],
+                    role=Role.ROLE_AGENT,
+                    parts=[Part(text="Searching knowledge base...")],
                     message_id=str(uuid.uuid4()),
                     task_id=updater.task_id,
                     context_id=updater.context_id,
                 ),
-                final=False,
             )
 
             response_text = await self._invoke(user_input)
 
-            await updater.update_status(
-                TaskState.completed,
+            await updater.complete(
                 message=Message(
-                    role=Role.agent,
-                    parts=[Part(root=TextPart(text=response_text))],
+                    role=Role.ROLE_AGENT,
+                    parts=[Part(text=response_text)],
                     metadata={"agent": "kubernetes-support"},
                     message_id=str(uuid.uuid4()),
                     task_id=updater.task_id,
                     context_id=updater.context_id,
                 ),
-                final=True,
             )
-        except ServerError:
+        except A2AError:
             raise
         except Exception as exc:
             logger.exception("Agent execution failed: %s", exc)
-            raise ServerError(
-                InternalError(message=f"Agent execution failed: {exc}")
+            raise InternalError(
+                message=f"Agent execution failed: {exc}"
             ) from exc
 
     async def cancel(
@@ -88,8 +88,8 @@ class KubernetesAgentExecutor(AgentExecutor):
         context: RequestContext,
         event_queue: EventQueue,
     ) -> None:
-        raise ServerError(
-            UnsupportedOperationError(message="Task cancellation is not supported.")
+        raise UnsupportedOperationError(
+            message="Task cancellation is not supported."
         )
 
     async def _invoke(self, user_message: str) -> str:
