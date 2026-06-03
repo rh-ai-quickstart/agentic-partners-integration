@@ -1,12 +1,50 @@
-# ARO Support Agent — Azure MCP Server Integration
+# Deploy ARO Support with Live Azure Troubleshooting
+
+[![CI](https://github.com/rh-ai-quickstart/agentic-partners-integration/actions/workflows/ci.yaml/badge.svg)](https://github.com/rh-ai-quickstart/agentic-partners-integration/actions/workflows/ci.yaml)
+[![Security Audit](https://github.com/rh-ai-quickstart/agentic-partners-integration/actions/workflows/security-audit.yml/badge.svg)](https://github.com/rh-ai-quickstart/agentic-partners-integration/actions/workflows/security-audit.yml)
+
+An AI quickstart that troubleshoots Azure Red Hat OpenShift issues by connecting to live Azure infrastructure via MCP tool calling.
+
+## Table of Contents
+
+- [Detailed Description](#detailed-description)
+  - [See It in Action](#see-it-in-action)
+  - [Architecture](#architecture)
+- [Requirements](#requirements)
+  - [Hardware Requirements](#hardware-requirements)
+  - [Software Requirements](#software-requirements)
+- [Deploy](#deploy)
+  - [Delete](#delete)
+- [Reference](#reference)
+- [Key Capabilities](#key-capabilities)
+- [What Changed from main](#what-changed-from-main)
+- [Tags](#tags)
+
+## Detailed Description
 
 > **This branch** extends the [Partner Agent Integration Framework](https://github.com/rh-ai-quickstart/agentic-partners-integration) with an ARO Support Agent that uses [Microsoft's Azure MCP Server](https://github.com/microsoft/mcp/tree/main/servers/Azure.Mcp.Server) for live Azure infrastructure troubleshooting via tool calling.
 >
 > For the core framework (routing, security, RAG, A2A protocol), see the [`main` branch README](https://github.com/rh-ai-quickstart/agentic-partners-integration/tree/main).
 
-## What This Branch Adds
+When users report Azure Red Hat® OpenShift® (ARO) infrastructure issues, traditional support agents search a static knowledge base for documented solutions. But infrastructure problems are often unique to the user's environment — a generic runbook can't tell you that *your* pods are using 240Mi of a 256Mi memory limit with traffic spikes at 14:00 UTC.
 
-Unlike the in-process Software and Network agents that rely on RAG over a local knowledge base, the ARO agent connects to a live Azure MCP server exposing 40+ tools across Azure services (AKS, Storage, Cosmos DB, Key Vault, Monitor, etc.). The LLM dynamically discovers available tools, decides which to invoke based on the user's question, and executes them via the MCP protocol to inspect real infrastructure state before generating a grounded response.
+The ARO Support Agent takes a different approach. Instead of searching tickets, it connects to a live Azure MCP server exposing 40+ tools across Azure services (AKS, Storage, Cosmos DB, Key Vault, Monitor, and more). The LLM dynamically discovers available tools, decides which to invoke based on the user's question, and executes them via the MCP protocol to inspect real infrastructure state before generating a grounded response.
+
+This quickstart demonstrates how to integrate live cloud infrastructure tooling into a multi-agent AI system built on Red Hat® OpenShift®, using MCP as the standard protocol for tool discovery and execution. The same pattern works for any cloud provider or external service that publishes an MCP server — no framework changes required.
+
+### See It in Action
+
+Once deployed, sign in with one of the test users that have Azure department access:
+
+| User | Access | Try |
+|------|--------|-----|
+| `carlos@example.com` / `carlos123` | Software + Kubernetes + Azure support | "My pods on ARO keep getting OOMKilled" |
+| `sharon@example.com` / `sharon123` | All agents | "List my AKS clusters and their node counts" |
+| `luis@example.com` / `luis123` | Network support only | Azure queries denied (no `azure` department) |
+
+The ARO agent inspects live Azure resources and returns answers grounded in real data — not hallucinated. The user can verify every claim by checking the same metrics themselves.
+
+### Architecture
 
 ```mermaid
 flowchart LR
@@ -23,51 +61,7 @@ flowchart LR
     style Answer fill:#e8f5e9,stroke:#2e7d32
 ```
 
-The answer references **real data** the agent just pulled from Azure — no hallucination, no generic advice. The user can verify every claim by checking the same metrics themselves.
-
-```mermaid
-flowchart LR
-    User["User asks:\n'My pods are OOMKilled'"]
-    RM[Request Manager]
-    ARO[ARO Agent]
-    LLM[LLM]
-    MCP[Azure MCP Server]
-    Azure[Azure Services<br/>AKS, Storage,<br/>Cosmos DB, ...]
-
-    User --> RM -->|A2A HTTP| ARO
-    ARO -->|tool definitions + calls| LLM
-    ARO -->|MCP protocol| MCP --> Azure
-
-    style ARO fill:#e8eaf6,stroke:#283593
-    style MCP fill:#e3f2fd,stroke:#1565c0
-```
-
-## How It Works
-
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant RM as Request Manager
-    participant A as ARO Agent
-    participant LLM as OpenAI / LLM
-    participant MCP as Azure MCP Server
-    participant AZ as Azure Services
-
-    U->>RM: "My pods are OOMKilled"
-    RM->>A: A2A invoke (azure dept)
-    A->>MCP: list_tools()
-    MCP-->>A: tool definitions
-    A->>LLM: question + tools
-    LLM-->>A: call search("OOMKilled")
-    A->>MCP: call_tool("search", ...)
-    MCP->>AZ: Azure AI Search query
-    AZ-->>MCP: search results
-    MCP-->>A: tool result
-    A->>LLM: question + tool result
-    LLM-->>A: final answer
-    A-->>RM: response
-    RM-->>U: "Based on the search results..."
-```
+**How it works:**
 
 1. The agent receives a question via A2A invoke
 2. It connects to the Azure MCP server and fetches available tool definitions
@@ -75,11 +69,7 @@ sequenceDiagram
 4. The LLM decides whether to call tools (search an index, list AKS clusters, etc.)
 5. If the LLM requests tool calls, the agent executes them via MCP and feeds results back
 6. The loop repeats until the LLM produces a final text answer
-7. If no MCP server is configured, the agent answers using LLM knowledge only
-
-## Where It Fits in the Architecture
-
-The ARO agent plugs into the existing multi-agent ecosystem through the same contract used by knowledge-based agents. From the user's perspective, nothing changes — they ask a question and get an answer. Behind the scenes, different agents use fundamentally different approaches to find that answer:
+7. If no MCP server is configured, the agent falls back to answering from LLM knowledge only
 
 ```mermaid
 flowchart LR
@@ -122,107 +112,68 @@ flowchart LR
     style aro fill:#e8eaf6,stroke:#283593
 ```
 
-The green agents (Software, Network) use **RAG** — they search historical tickets to find documented solutions. The blue agents (Kubernetes, ARO) use **MCP** — they connect to live systems to investigate current state. This coexistence is the key insight: different problems need different approaches, but users don't need to know which approach is being used.
+The green agents (Software, Network) use **RAG** — they search historical tickets to find documented solutions. The blue agents (Kubernetes, ARO) use **MCP** — they connect to live systems to investigate current state. Different problems need different approaches, but users don't need to know which approach is being used.
 
-```mermaid
-flowchart LR
-    users["Users"]
+For detailed architecture diagrams and the ARO agent's internal structure, see [`aro-partner-agent/README.md`](aro-partner-agent/README.md).
 
-    subgraph frontend[" RH Web Frontend "]
-        ui["PatternFly\nChat UI"]
-    end
+## Requirements
 
-    subgraph orchestrator[" Orchestrator Layer "]
-        adk["Google ADK\n(Self-hosted)\n\nRequest Manager\n+ OPA + Keycloak"]
-    end
+### Hardware Requirements
 
-    llm_main["LLM\n(Gemini 2.5 Flash)"]
+| Resource | Minimum | Recommended |
+|----------|---------|-------------|
+| CPU | 4 cores | 8 cores |
+| RAM | 8 GB | 16 GB |
+| Disk | 10 GB free | 20 GB free |
+| GPU | Not required | Not required |
 
-    subgraph agents[" Domain-based Agents "]
-        sw["Software\nSupport Agent"]
-        nw["Network\nSupport Agent"]
-        k8s["Kubernetes\nSupport Agent"]
-        aro["ARO Support\nAgent"]
-    end
+This quickstart uses an external LLM API — no local GPU is needed. All computation runs on CPU via Docker containers.
 
-    llm_sw["LLM"]
-    llm_nw["LLM"]
-    llm_k8s["LLM"]
-    llm_aro["LLM"]
+### Software Requirements
 
-    users --> ui
-    ui --> adk
-    adk --> llm_main
+| Software | Version | Purpose |
+|----------|---------|---------|
+| [Docker](https://docs.docker.com/get-docker/) | 24.0+ | Container runtime for all services |
+| [Docker Compose](https://docs.docker.com/compose/install/) | 2.20+ | Multi-container orchestration |
+| [Git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git) | 2.30+ | Clone the repository |
+| [Make](https://www.gnu.org/software/make/) | 4.0+ | Build automation (included on Linux/Mac) |
+| LLM API key | — | Any OpenAI-compatible API (see [Configuration](docs/configuration.md) for supported backends) |
+| **Optional:** [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) | 2.60+ | Required only for live Azure MCP tool access |
+| **Optional:** Azure MCP server | — | Enables live Azure infrastructure troubleshooting |
 
-    adk -->|A2A| sw
-    adk -->|A2A| nw
-    adk -->|A2A| k8s
-    adk -->|A2A| aro
+## Deploy
 
-    sw --- llm_sw
-    nw --- llm_nw
-    k8s --- llm_k8s
-    aro --- llm_aro
-
-    style frontend fill:#e3f2fd,stroke:#1565c0
-    style orchestrator fill:#fff3e0,stroke:#e65100
-    style agents fill:#e8f5e9,stroke:#2e7d32
-    style sw fill:#e8f5e9,stroke:#2e7d32
-    style nw fill:#e8f5e9,stroke:#2e7d32
-    style k8s fill:#e8eaf6,stroke:#283593
-    style aro fill:#e8eaf6,stroke:#283593
-```
-
-The ARO agent (shown in blue) runs as a separate container with its own LLM connection. It communicates with the orchestrator solely through the A2A HTTP contract — no shared code, no shared state.
-
-## Key Characteristics
-
-- **Fully independent black box** — uses the OpenAI SDK directly, runs as its own container, and communicates with the orchestrator solely through `POST /api/v1/agents/aro-support/invoke`.
-- **MCP tool-calling loop** — fetches tool definitions from the Azure MCP server at runtime, passes them to the LLM, executes any requested tool calls, and feeds results back until the LLM produces a final answer.
-- **Configurable tool filter** — limits which of the 110 Azure MCP tools the LLM sees (e.g., only `search`, `storage`, `container`, `cosmos`, `monitor`) to keep context windows manageable.
-- **Multiple deployment options** — the Azure MCP server can run via npm locally, as a container, or deployed from the Red Hat AI on OpenShift catalog.
-- **Graceful degradation** — if no MCP server is configured, the agent falls back to answering from LLM knowledge alone.
-
-## Quick Start
-
-### Prerequisites
-
-- The core framework running from `main` (see [Getting Started](docs/getting-started.md))
-- Python 3.12+
-- A Google API key for Gemini (default) — or any OpenAI-compatible API
-- **Optional:** Azure MCP server + Azure credentials (for live Azure tool access)
-
-### 1. Start the core framework
+### 1. Clone the repository
 
 ```bash
 git clone https://github.com/rh-ai-quickstart/agentic-partners-integration
 cd agentic-partners-integration
 git checkout aro
-export GOOGLE_API_KEY=your-key-here   # or add to .env
-make setup                            # builds, starts, and configures everything
 ```
 
-### 2. Run the ARO agent without MCP (basic LLM mode)
+### 2. Set your LLM API key
 
 ```bash
-cd aro-partner-agent
-uv sync
-GOOGLE_API_KEY=AIza... uv run python -m aro_agent.main
+export GOOGLE_API_KEY=your-key-here
 ```
 
-The agent starts on port 8080 and answers Azure/ARO questions using LLM knowledge only. No Azure credentials needed.
+The setup script will prompt you if the key is not set. See [Configuration](docs/configuration.md) for alternative LLM backends (OpenAI, Ollama, Azure OpenAI).
+
+### 3. Build and start all services
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/agents/aro-support/invoke \
-  -H "Content-Type: application/json" \
-  -d '{
-    "session_id": "test-1",
-    "user_id": "carlos@example.com",
-    "message": "My pods on ARO keep getting OOMKilled"
-  }'
+make setup
 ```
 
-### 3. Run with Azure MCP Server (live Azure tools)
+This builds all container images (including the ARO agent), starts infrastructure (PostgreSQL with pgvector, Keycloak, OPA), runs database migrations, starts application services, ingests the RAG knowledge base, and launches the web UI. The ARO agent starts in basic LLM mode — it can answer Azure/ARO questions using LLM knowledge without Azure credentials.
+
+### 4. Open the application
+
+Navigate to [http://localhost:3000](http://localhost:3000) and sign in with one of the [test users](#see-it-in-action).
+
+### 5. (Optional) Connect the Azure MCP server for live tools
+
+To enable live Azure infrastructure access, start the Azure MCP server:
 
 **Option A — npm (local development):**
 
@@ -251,19 +202,75 @@ docker run -d \
   --transport http
 ```
 
-**Option C — RHAOI catalog on OpenShift/ARO:**
+**Option C — Red Hat® AI on OpenShift® catalog:**
 
 Deploy the Azure MCP server from the Red Hat AI on OpenShift MCP catalog. See [`aro-partner-agent/README.md`](aro-partner-agent/README.md) for full deployment instructions including secret creation.
 
-Then point the ARO agent at the MCP server:
+Then restart the ARO agent pointing at the MCP server:
 
 ```bash
-GOOGLE_API_KEY=AIza... \
-MCP_SERVER_URL=http://localhost:5008/mcp \
-uv run python -m aro_agent.main
+MCP_SERVER_URL=http://localhost:5008/mcp make setup
 ```
 
-## What Changed from `main`
+### 6. Verify the deployment
+
+```bash
+make test
+```
+
+This runs unit tests for all services (shared-models, request-manager, agent-service, kubernetes-partner-agent, aro-partner-agent, azure-mcp-server).
+
+### Delete
+
+To stop and remove all containers, volumes, and networks:
+
+```bash
+make clean
+```
+
+This stops all running containers, removes them, deletes the Docker network and volumes, and cleans up any generated files. Your source code and `.env` file are not affected.
+
+## Reference
+
+| Document | Description |
+|----------|-------------|
+| [ARO Agent Documentation](aro-partner-agent/README.md) | Full ARO agent docs: Azure credentials, tool filtering, MCP transports, API reference, testing |
+| [Getting Started](docs/getting-started.md) | Prerequisites, setup, test users, and first steps |
+| [Architecture Overview](docs/architecture.md) | System diagram, request flow, design decisions, project structure |
+| [Security (AAA)](docs/aaa-security.md) | SPIFFE workload identity, Keycloak OIDC, OPA authorization, audit trail |
+| [A2A Communication](docs/a2a-communication.md) | Agent-to-agent HTTP protocol, endpoint contract, credential propagation |
+| [Configuration](docs/configuration.md) | Environment variables, LLM backends |
+| [Development](docs/development.md) | Makefile targets, building, testing, Docker Compose |
+
+**External links:**
+
+- [Azure MCP Server](https://github.com/microsoft/mcp/tree/main/servers/Azure.Mcp.Server) — Microsoft's MCP server for Azure services
+- [Partner Agent Integration Framework (main branch)](https://github.com/rh-ai-quickstart/agentic-partners-integration/tree/main) — core framework documentation
+- [AI Quickstart Catalog](https://docs.redhat.com/en/learn/ai-quickstarts) — curated collection of AI quickstarts on redhat.com
+
+## Key Capabilities
+
+### Live Infrastructure Troubleshooting via MCP
+
+Unlike RAG-based agents that search static knowledge bases, the ARO agent connects to live Azure infrastructure through the MCP protocol. The LLM discovers available tools at runtime, decides which to invoke, and executes them to inspect real system state before answering.
+
+### Configurable Tool Filter
+
+The Azure MCP server exposes 110+ tools across 40+ Azure services. A configurable tool filter limits which tools the LLM sees (e.g., only `search`, `storage`, `container`, `cosmos`, `monitor`) to keep context windows manageable and responses focused.
+
+### Multiple MCP Deployment Options
+
+The Azure MCP server can run via npm locally, as a container, or deployed from the Red Hat AI on OpenShift catalog. Each option supports the same MCP protocol — the agent doesn't need to know how the server is deployed.
+
+### Graceful Degradation
+
+If no MCP server is configured, the agent falls back to answering from LLM knowledge alone. This lets you deploy and demo the agent immediately, then add live Azure access when credentials are available.
+
+### Ecosystem Extensibility
+
+The MCP integration is not Azure-specific. The same pattern works for any external service that publishes an MCP server. Each new MCP server from any vendor instantly becomes a potential new agent capability — with no framework changes required.
+
+## What Changed from main
 
 | Area | Change |
 |------|--------|
@@ -274,38 +281,12 @@ uv run python -m aro_agent.main
 | `keycloak/realm-partner.json` | Added `azure` department for ARO agent authorization |
 | `policies/` | Updated OPA rules for ARO agent delegation |
 
-## Beyond Azure: An Ecosystem Strategy
+## Tags
 
-The MCP integration is not Azure-specific. The same pattern works for any external service that has an MCP server. Each new MCP server that Microsoft, AWS, Google, or any vendor publishes instantly becomes a potential new agent capability — with no framework changes, no new integrations, no cross-team coordination:
-
-```mermaid
-flowchart TB
-    subgraph framework["Partner Agent Framework"]
-        RM["Orchestrator + Policy Engine"]
-        RM --> SW["Software Agent\nsearches tickets"]
-        RM --> NW["Network Agent\nsearches tickets"]
-        RM --> ARO_A["ARO Agent\ninspects Azure"]
-        RM --> AWS_A["AWS Agent\ninspects AWS"]
-        RM --> GH_A["GitHub Agent\nsearches repos"]
-        RM --> CUSTOM["Custom Agent\nany approach"]
-    end
-
-    ARO_A --> AZURE["Azure"]
-    AWS_A --> AWS["AWS"]
-    GH_A --> GH["GitHub"]
-    CUSTOM --> INT["Internal Systems"]
-
-    style framework fill:#f5f5f5,stroke:#424242
-    style SW fill:#e8f5e9,stroke:#2e7d32
-    style NW fill:#e8f5e9,stroke:#2e7d32
-    style ARO_A fill:#e8eaf6,stroke:#283593
-    style AWS_A fill:#e8eaf6,stroke:#283593
-    style GH_A fill:#e8eaf6,stroke:#283593
-    style CUSTOM fill:#fff3e0,stroke:#e65100
-```
-
-## Detailed Documentation
-
-For the full ARO agent documentation including Azure credential setup, tool filtering, all deployment options, and testing — see [`aro-partner-agent/README.md`](aro-partner-agent/README.md).
-
-For the core framework documentation (architecture, security, RAG, A2A protocol, configuration) — see the [`main` branch](https://github.com/rh-ai-quickstart/agentic-partners-integration/tree/main).
+| Tag | Value |
+|-----|-------|
+| **Industry** | Media and IT services |
+| **Partner** | Microsoft |
+| **Product** | Red Hat® OpenShift® AI |
+| **Use case** | Productivity |
+| **Status** | `work-in-progress` |

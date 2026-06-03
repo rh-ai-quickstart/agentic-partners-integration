@@ -59,23 +59,22 @@ sequenceDiagram
 ## Prerequisites
 
 - Python 3.12+
-- A Google API key for Gemini (default) — or any OpenAI-compatible API
+- An LLM API key — any OpenAI-compatible API (see [Configuration](../docs/configuration.md) for supported backends)
 - **Optional:** Azure MCP server + Azure credentials (for live Azure tool access)
 
 ## Getting your API keys
 
-### Gemini API key (for the LLM)
+### LLM API key
 
-1. Go to [Google AI Studio](https://aistudio.google.com/apikey)
-2. Click **Create API Key**
-3. Select or create a Google Cloud project
-4. Copy the key — it starts with `AIza...`
+Set one of the following environment variables depending on your LLM backend:
 
 ```bash
-export GOOGLE_API_KEY=AIza...
+export GOOGLE_API_KEY=your-key-here
+# or
+export OPENAI_API_KEY=your-key-here
 ```
 
-This is the same `GOOGLE_API_KEY` used by the rest of the quickstart
+This is the same LLM API key used by the rest of the quickstart
 (agent-service, request-manager, rag-api).
 
 ### Azure credentials (for the MCP server)
@@ -129,7 +128,7 @@ uv sync
 ### 2. Run without MCP (basic LLM mode)
 
 ```bash
-GOOGLE_API_KEY=AIza... uv run python -m aro_agent.main
+GOOGLE_API_KEY=your-key-here uv run python -m aro_agent.main
 ```
 
 The agent starts on port 8080 and answers Azure/ARO questions using LLM
@@ -208,7 +207,7 @@ accessible as a Kubernetes service within the cluster.
 #### Start the ARO agent pointing at the MCP server
 
 ```bash
-GOOGLE_API_KEY=AIza... \
+GOOGLE_API_KEY=your-key-here \
 MCP_SERVER_URL=http://localhost:5008/mcp \
 uv run python -m aro_agent.main
 ```
@@ -310,10 +309,10 @@ mcp_servers:
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `GOOGLE_API_KEY` | Yes* | — | Google Gemini API key (default LLM) |
-| `OPENAI_API_KEY` | Yes* | `not-set` | Alternative: OpenAI or compatible API key |
-| `OPENAI_BASE_URL` | No | Gemini endpoint | Override for Azure OpenAI, Ollama, etc. |
-| `OPENAI_MODEL` | No | `gemini-2.5-flash` | LLM model to use |
+| `GOOGLE_API_KEY` | Yes* | — | LLM API key (default backend) |
+| `OPENAI_API_KEY` | Yes* | `not-set` | Alternative: OpenAI-compatible API key |
+| `OPENAI_BASE_URL` | No | — | Override for Azure OpenAI, Ollama, etc. |
+| `OPENAI_MODEL` | No | — | LLM model to use |
 | `MCP_SERVER_URL` | No | from YAML config | MCP server endpoint (overrides YAML) |
 | `MCP_TRANSPORT` | No | `http` | MCP transport: `http` or `sse` |
 | `LOG_LEVEL` | No | `INFO` | Logging level |
