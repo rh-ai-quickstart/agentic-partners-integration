@@ -26,11 +26,11 @@ An AI quickstart that routes partner support requests to the right specialist ag
 
 ## Detailed Description
 
-> **Based on** the [IT Self-Service Agent Quickstart](https://github.com/rh-ai-quickstart/it-self-service-agent) by Red Hat® AI — adapted into a standalone POC focused on partner support with Google Gemini, PatternFly UI, and simplified A2A HTTP communication.
+> **Based on** the [IT Self-Service Agent Quickstart](https://github.com/rh-ai-quickstart/it-self-service-agent) by Red Hat® AI — adapted into a standalone POC focused on partner support with a pluggable LLM backend, PatternFly UI, and simplified A2A HTTP communication.
 
 Partner support teams waste time triaging and routing issues manually. Users don't know which team to contact, and when they guess wrong, the back-and-forth delays resolution. There's no guarantee the answer they get is grounded in what's actually worked before.
 
-This AI quickstart puts an intelligent routing layer between the user and your specialist teams. A user describes their problem in plain language. The system figures out which specialist can help, checks that the user is authorized to access that team, and returns an answer grounded in your historical support data — not hallucinated. The solution runs on Red Hat® OpenShift® with Google Gemini as the LLM backend, using PatternFly for the web interface and A2A (Agent-to-Agent) HTTP for inter-agent communication.
+This AI quickstart puts an intelligent routing layer between the user and your specialist teams. A user describes their problem in plain language. The system figures out which specialist can help, checks that the user is authorized to access that team, and returns an answer grounded in your historical support data — not hallucinated. The solution runs on Red Hat® OpenShift® with a pluggable LLM backend (any OpenAI-compatible endpoint), using PatternFly for the web interface and A2A (Agent-to-Agent) HTTP for inter-agent communication.
 
 The framework demonstrates how to build a multi-agent AI system with real enterprise patterns: SPIFFE workload identity, OPA policy-as-code authorization, Keycloak OIDC authentication, RAG-backed knowledge retrieval, and full audit logging. Every response references real past cases and known solutions — not generic advice the LLM invented.
 
@@ -89,7 +89,7 @@ For detailed architecture diagrams, request flow, and design decisions, see the 
 | Disk | 10 GB free | 20 GB free |
 | GPU | Not required | Not required |
 
-This quickstart uses Google Gemini as an external LLM API — no local GPU is needed. All computation runs on CPU via Docker containers.
+This quickstart uses an external LLM API — no local GPU is needed. All computation runs on CPU via Docker containers.
 
 ### Software Requirements
 
@@ -99,7 +99,7 @@ This quickstart uses Google Gemini as an external LLM API — no local GPU is ne
 | [Docker Compose](https://docs.docker.com/compose/install/) | 2.20+ | Multi-container orchestration |
 | [Git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git) | 2.30+ | Clone the repository |
 | [Make](https://www.gnu.org/software/make/) | 4.0+ | Build automation (included on Linux/Mac) |
-| [Google API Key](https://aistudio.google.com/apikey) | — | Gemini 2.5 Flash for LLM and embeddings |
+| LLM API key | — | Any OpenAI-compatible API (see [Configuration](docs/configuration.md) for supported backends) |
 
 ## Deploy
 
@@ -110,13 +110,13 @@ This quickstart uses Google Gemini as an external LLM API — no local GPU is ne
    cd agentic-partners-integration
    ```
 
-2. **Set your Google API key:**
+2. **Set your LLM API key:**
 
    ```bash
    export GOOGLE_API_KEY=your-key-here
    ```
 
-   Alternatively, create a `.env` file in the project root with `GOOGLE_API_KEY=your-key-here`. The setup script will prompt you if the key is not set.
+   Alternatively, create a `.env` file in the project root with `GOOGLE_API_KEY=your-key-here`. The setup script will prompt you if the key is not set. See [Configuration](docs/configuration.md) for alternative LLM backends (OpenAI, Ollama).
 
 3. **Build and start all services:**
 
@@ -158,7 +158,7 @@ This stops all running containers, removes them, deletes the Docker network and 
 | [RAG](docs/rag.md) | Knowledge base ingestion, vector search, response grounding |
 | [A2A Communication](docs/a2a-communication.md) | Agent-to-agent HTTP protocol, endpoint contract, credential propagation |
 | [Web UI](docs/web-ui.md) | PatternFly chat interface, pages, nginx architecture |
-| [Configuration](docs/configuration.md) | Environment variables, LLM backends (Gemini, OpenAI, Ollama) |
+| [Configuration](docs/configuration.md) | Environment variables, LLM backends (OpenAI-compatible, Ollama) |
 | [API Reference](docs/api-reference.md) | Chat, OPA, and A2A endpoint examples with curl |
 | [Development](docs/development.md) | Makefile targets, building, testing, Docker Compose |
 | [Production Recommendations](docs/production.md) | Scaling guidance for pgvector, PostgreSQL, Keycloak, OPA, LLM, and more |
@@ -167,7 +167,6 @@ This stops all running containers, removes them, deletes the Docker network and 
 
 - [IT Self-Service Agent Quickstart](https://github.com/rh-ai-quickstart/it-self-service-agent) — upstream project this quickstart is based on
 - [AI Quickstart Catalog](https://docs.redhat.com/en/learn/ai-quickstarts) — curated collection of AI quickstarts on redhat.com
-- [Google Gemini API](https://aistudio.google.com/) — LLM backend used by this quickstart
 - [PatternFly 6](https://www.patternfly.org/) — Red Hat design system used for the web UI
 
 ## Key Capabilities
@@ -203,7 +202,7 @@ To explore a use case, check out its branch and refer to the agent's own README 
 | Tag | Value |
 |-----|-------|
 | **Industry** | Professional services |
-| **Partner** | Google, Microsoft |
+| **Partner** | Microsoft |
 | **Product** | Red Hat® OpenShift® AI |
 | **Use case** | Support |
 | **Status** | `work-in-progress` |
