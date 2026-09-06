@@ -66,16 +66,21 @@ sequenceDiagram
 
 ### LLM API key
 
-Set one of the following environment variables depending on your LLM backend:
+**Recommended (new):**
 
 ```bash
-export GOOGLE_API_KEY=your-key-here
-# or
-export OPENAI_API_KEY=your-key-here
+export AI_API_KEY=your-key-here
 ```
 
-This is the same LLM API key used by the rest of the quickstart
-(agent-service, request-manager, rag-api).
+**Alternative (legacy, still supported):**
+
+```bash
+export GOOGLE_API_KEY=your-key-here  # Deprecated
+# or
+export OPENAI_API_KEY=your-key-here  # Deprecated
+```
+
+This is the same API key used by the rest of the quickstart (agent-service, request-manager, rag-api). The new `AI_API_KEY` variable works with any LLM backend. See [Configuration](../docs/configuration.md) for the migration guide.
 
 ### Azure credentials (for the MCP server)
 
@@ -309,8 +314,10 @@ mcp_servers:
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `GOOGLE_API_KEY` | Yes* | — | LLM API key (default backend) |
-| `OPENAI_API_KEY` | Yes* | `not-set` | Alternative: OpenAI-compatible API key |
+| `AI_API_KEY` | Yes* | — | Universal LLM API key (recommended) |
+| `AI_OPENAI_API_KEY` | No | — | Provider-specific OpenAI key (optional) |
+| `GOOGLE_API_KEY` | Yes* | — | ⚠️ Deprecated. Use `AI_API_KEY` instead. |
+| `OPENAI_API_KEY` | Yes* | `not-set` | ⚠️ Deprecated. Use `AI_API_KEY` instead. |
 | `OPENAI_BASE_URL` | No | — | Override for Azure OpenAI, Ollama, etc. |
 | `OPENAI_MODEL` | No | — | LLM model to use |
 | `MCP_SERVER_URL` | No | from YAML config | MCP server endpoint (overrides YAML) |
@@ -318,7 +325,7 @@ mcp_servers:
 | `LOG_LEVEL` | No | `INFO` | Logging level |
 | `PORT` | No | `8080` | Server port |
 
-\* Provide either `GOOGLE_API_KEY` (preferred) or `OPENAI_API_KEY`.
+> **Note:** The recommended approach is to use `AI_API_KEY` which works with any provider. Legacy variables (`GOOGLE_API_KEY`, `OPENAI_API_KEY`) are still supported but deprecated. The agent uses the OpenAI SDK with an OpenAI-compatible endpoint.
 
 ### MCP tool filter
 

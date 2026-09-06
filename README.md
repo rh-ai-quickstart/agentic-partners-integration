@@ -2,6 +2,10 @@
 
 [![CI](https://github.com/rh-ai-quickstart/agentic-partners-integration/actions/workflows/ci.yaml/badge.svg)](https://github.com/rh-ai-quickstart/agentic-partners-integration/actions/workflows/ci.yaml)
 [![Security Audit](https://github.com/rh-ai-quickstart/agentic-partners-integration/actions/workflows/security-audit.yml/badge.svg)](https://github.com/rh-ai-quickstart/agentic-partners-integration/actions/workflows/security-audit.yml)
+[![shared-models](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/rh-ai-quickstart/agentic-partners-integration/gh-pages/shared-models-coverage.json)](https://github.com/rh-ai-quickstart/agentic-partners-integration/actions/workflows/ci.yaml)
+[![agent-service](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/rh-ai-quickstart/agentic-partners-integration/gh-pages/agent-service-coverage.json)](https://github.com/rh-ai-quickstart/agentic-partners-integration/actions/workflows/ci.yaml)
+[![request-manager](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/rh-ai-quickstart/agentic-partners-integration/gh-pages/request-manager-coverage.json)](https://github.com/rh-ai-quickstart/agentic-partners-integration/actions/workflows/ci.yaml)
+[![kubernetes-partner-agent](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/rh-ai-quickstart/agentic-partners-integration/gh-pages/kubernetes-partner-agent-coverage.json)](https://github.com/rh-ai-quickstart/agentic-partners-integration/actions/workflows/ci.yaml)
 
 An AI quickstart that troubleshoots Azure Red Hat OpenShift issues by connecting to live Azure infrastructure via MCP tool calling.
 
@@ -30,7 +34,7 @@ When users report Azure Red Hat® OpenShift® (ARO) infrastructure issues, tradi
 
 The ARO Support Agent takes a different approach. Instead of searching tickets, it connects to a live Azure MCP server exposing 40+ tools across Azure services (AKS, Storage, Cosmos DB, Key Vault, Monitor, and more). The LLM dynamically discovers available tools, decides which to invoke based on the user's question, and executes them via the MCP protocol to inspect real infrastructure state before generating a grounded response.
 
-This quickstart demonstrates how to integrate live cloud infrastructure tooling into a multi-agent AI system built on Red Hat® OpenShift®, using MCP as the standard protocol for tool discovery and execution. The same pattern works for any cloud provider or external service that publishes an MCP server — no framework changes required.
+This quickstart demonstrates how to integrate live cloud infrastructure tooling into a multi-agent AI system built on Red Hat OpenShift, using MCP as the standard protocol for tool discovery and execution. The same pattern works for any cloud provider or external service that publishes an MCP server — no framework changes required.
 
 ### See It in Action
 
@@ -123,11 +127,11 @@ For detailed architecture diagrams and the ARO agent's internal structure, see [
 | Resource | Minimum | Recommended |
 |----------|---------|-------------|
 | CPU | 4 cores | 8 cores |
-| RAM | 8 GB | 16 GB |
-| Disk | 10 GB free | 20 GB free |
+| RAM | 8 GB | 16 GB (24 GB for larger local models) |
+| Disk | 10 GB free | 30 GB free (for local model storage) |
 | GPU | Not required | Not required |
 
-This quickstart uses an external LLM API — no local GPU is needed. All computation runs on CPU via Docker containers.
+This quickstart supports both local open-weight models (via Ollama on CPU) and external LLM APIs. Minimum specs work for small models (Llama 3.2 3B) or external APIs. Recommended specs provide better performance for larger local models (8B+) or faster response times.
 
 ### Software Requirements
 
@@ -137,7 +141,8 @@ This quickstart uses an external LLM API — no local GPU is needed. All computa
 | [Docker Compose](https://docs.docker.com/compose/install/) | 2.20+ | Multi-container orchestration |
 | [Git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git) | 2.30+ | Clone the repository |
 | [Make](https://www.gnu.org/software/make/) | 4.0+ | Build automation (included on Linux/Mac) |
-| LLM API key | — | Any OpenAI-compatible API (see [Configuration](docs/configuration.md) for supported backends) |
+| [Ollama](https://ollama.com/) | Latest | **Recommended:** Run local open-weight models (Llama 3.2, Mistral, etc.) |
+| **Alternative:** LLM API key | — | Any OpenAI-compatible API (OpenAI, Gemini, Anthropic - see [Configuration](docs/configuration.md)) |
 | **Optional:** [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) | 2.60+ | Required only for live Azure MCP tool access |
 | **Optional:** Azure MCP server | — | Enables live Azure infrastructure troubleshooting |
 
@@ -151,13 +156,36 @@ cd agentic-partners-integration
 git checkout aro
 ```
 
-### 2. Set your LLM API key
+### 2. Set up your LLM backend
+
+**Recommended: Local open-weight model with Ollama**
+
+Run Ollama locally for a fully open-source deployment:
 
 ```bash
-export GOOGLE_API_KEY=your-key-here
+# Start Ollama
+docker run -d -p 11434:11434 --name ollama ollama/ollama
+
+# Pull an open-weight model (e.g., Llama 3.2)
+docker exec ollama ollama pull llama3.2
+
+# Configure the quickstart
+export AI_PROVIDER=ollama
+export AI_MODEL=llama3.2
+export AI_BASE_URL=http://localhost:11434
 ```
 
-The setup script will prompt you if the key is not set. See [Configuration](docs/configuration.md) for alternative LLM backends (OpenAI, Ollama, Azure OpenAI).
+**Alternative: External API providers**
+
+If you prefer using external APIs (OpenAI, Gemini, Anthropic):
+
+```bash
+export AI_API_KEY=your-key-here
+export AI_PROVIDER=gemini  # or openai, anthropic
+export AI_MODEL=gemini-2.5-flash
+```
+
+See [Configuration](docs/configuration.md) for all supported backends, model options, and the full migration guide from legacy environment variables.
 
 ### 3. Build and start all services
 
@@ -202,7 +230,7 @@ docker run -d \
   --transport http
 ```
 
-**Option C — Red Hat® AI on OpenShift® catalog:**
+**Option C — Red Hat AI on OpenShift catalog:**
 
 Deploy the Azure MCP server from the Red Hat AI on OpenShift MCP catalog. See [`aro-partner-agent/README.md`](aro-partner-agent/README.md) for full deployment instructions including secret creation.
 
@@ -283,10 +311,8 @@ The MCP integration is not Azure-specific. The same pattern works for any extern
 
 ## Tags
 
-| Tag | Value |
-|-----|-------|
-| **Industry** | Media and IT services |
-| **Partner** | Microsoft |
-| **Product** | Red Hat® OpenShift® AI |
-| **Use case** | Productivity |
-| **Status** | `work-in-progress` |
+- **Industry:** Media and IT services
+- **Partner:** Microsoft
+- **Product:** Red Hat OpenShift AI
+- **Use case:** Productivity
+- **Status:** work-in-progress

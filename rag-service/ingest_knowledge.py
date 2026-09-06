@@ -23,7 +23,12 @@ from sqlalchemy.orm import declarative_base
 logger = structlog.get_logger()
 
 # Configuration
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+# Support new AI_* variables with backward compatibility
+GOOGLE_API_KEY = (
+    os.getenv("AI_API_KEY")
+    or os.getenv("AI_GEMINI_API_KEY")
+    or os.getenv("GOOGLE_API_KEY")
+)
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql+asyncpg://user:pass@postgres:5432/partner_agent"
 )
@@ -216,8 +221,10 @@ async def main_async():
 
     # Check Google API key
     if not GOOGLE_API_KEY:
-        logger.error("GOOGLE_API_KEY environment variable not set")
-        return
+        logger.error(
+            "API key not set. Set AI_API_KEY, AI_GEMINI_API_KEY, or GOOGLE_API_KEY (deprecated)"
+        )
+        sys.exit(1)
 
     # Initialize Google GenAI client
     genai_client = genai.Client(api_key=GOOGLE_API_KEY)

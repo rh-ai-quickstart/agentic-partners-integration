@@ -4,15 +4,30 @@
 
 ### LLM
 
+#### New Configuration (Recommended)
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LLM_BACKEND` | `openai` | LLM provider: `gemini`, `openai`, or `ollama`. Setup scripts set `gemini`. |
-| `GOOGLE_API_KEY` | -- | Required when using Gemini backend |
-| `GEMINI_MODEL` | `gemini-2.5-flash` | Model name for Gemini |
-| `OPENAI_API_KEY` | -- | Required when using OpenAI backend |
-| `OPENAI_MODEL` | -- | Model name for OpenAI (e.g., `gpt-4`) |
-| `OLLAMA_BASE_URL` | -- | Ollama server URL (e.g., `http://localhost:11434`) |
-| `OLLAMA_MODEL` | -- | Model name for Ollama |
+| `AI_PROVIDER` | `gemini` | LLM provider: `gemini`, `openai`, `ollama`, or `anthropic` |
+| `AI_API_KEY` | -- | Universal API key for any provider |
+| `AI_MODEL` | `gemini-2.5-flash` | Universal model name |
+| `AI_GEMINI_API_KEY` | -- | Gemini-specific key (optional, for multi-provider setups) |
+| `AI_OPENAI_API_KEY` | -- | OpenAI-specific key (optional, for multi-provider setups) |
+| `AI_ANTHROPIC_API_KEY` | -- | Anthropic-specific key (optional, for multi-provider setups) |
+
+#### Legacy Configuration (Deprecated)
+
+These variables are maintained for backward compatibility but will be removed in a future release. Deprecation warnings are logged when used.
+
+| Variable | Replacement | Description |
+|----------|-------------|-------------|
+| `LLM_BACKEND` | `AI_PROVIDER` | LLM provider: `gemini`, `openai`, or `ollama` |
+| `GOOGLE_API_KEY` | `AI_API_KEY` or `AI_GEMINI_API_KEY` | Required when using Gemini backend |
+| `GEMINI_MODEL` | `AI_MODEL` | Model name for Gemini |
+| `OPENAI_API_KEY` | `AI_API_KEY` or `AI_OPENAI_API_KEY` | Required when using OpenAI backend |
+| `OPENAI_MODEL` | `AI_MODEL` | Model name for OpenAI |
+| `OLLAMA_BASE_URL` | -- | Ollama server URL (still in use) |
+| `OLLAMA_MODEL` | `AI_MODEL` | Model name for Ollama |
 
 ### Database
 
@@ -58,8 +73,36 @@
 
 ## LLM Backends
 
+### Recommended Configuration
+
+| Backend | Env Vars | Example |
+|---------|----------|----------|
+| Gemini | `AI_PROVIDER=gemini`, `AI_API_KEY`, `AI_MODEL` | `AI_PROVIDER=gemini AI_API_KEY=xyz AI_MODEL=gemini-2.5-flash` |
+| OpenAI | `AI_PROVIDER=openai`, `AI_API_KEY`, `AI_MODEL` | `AI_PROVIDER=openai AI_API_KEY=sk-xyz AI_MODEL=gpt-4` |
+| Ollama | `AI_PROVIDER=ollama`, `AI_MODEL`, `OLLAMA_BASE_URL` | `AI_PROVIDER=ollama AI_MODEL=llama3.1 OLLAMA_BASE_URL=http://localhost:11434` |
+
+### Legacy Configuration (Deprecated)
+
 | Backend | Env Vars | Notes |
 |---------|----------|-------|
-| Gemini | `GOOGLE_API_KEY`, `GEMINI_MODEL` | Used by default in setup. Uses Google AI API. |
-| OpenAI | `OPENAI_API_KEY`, `OPENAI_MODEL` | GPT-4, GPT-3.5, etc. |
-| Ollama | `OLLAMA_BASE_URL`, `OLLAMA_MODEL` | Local LLMs. No API key needed. |
+| Gemini | `GOOGLE_API_KEY`, `GEMINI_MODEL` | ⚠️ Deprecated. Use `AI_API_KEY` and `AI_MODEL` instead. |
+| OpenAI | `OPENAI_API_KEY`, `OPENAI_MODEL` | ⚠️ Deprecated. Use `AI_API_KEY` and `AI_MODEL` instead. |
+| Ollama | `OLLAMA_BASE_URL`, `OLLAMA_MODEL` | ⚠️ Partially deprecated. Use `AI_MODEL` instead of `OLLAMA_MODEL`. |
+
+### Migration Guide
+
+**From legacy to new configuration:**
+
+```bash
+# Old (deprecated)
+export LLM_BACKEND=gemini
+export GOOGLE_API_KEY=your-key
+export GEMINI_MODEL=gemini-2.5-flash
+
+# New (recommended)
+export AI_PROVIDER=gemini
+export AI_API_KEY=your-key
+export AI_MODEL=gemini-2.5-flash
+```
+
+**Both configurations work during the transition period**, but deprecation warnings will be logged when legacy variables are used.

@@ -29,7 +29,20 @@ from sqlalchemy.orm import declarative_base
 logger = structlog.get_logger()
 
 # Configuration from environment
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+# Support new AI_* variables with backward compatibility
+GOOGLE_API_KEY = (
+    os.getenv("AI_API_KEY")
+    or os.getenv("AI_GEMINI_API_KEY")
+    or os.getenv("GOOGLE_API_KEY")
+)
+
+# Log deprecation warning if using legacy GOOGLE_API_KEY
+if GOOGLE_API_KEY and not os.getenv("AI_API_KEY") and not os.getenv("AI_GEMINI_API_KEY"):
+    if os.getenv("GOOGLE_API_KEY"):
+        logger.warning(
+            "GOOGLE_API_KEY is deprecated. Use AI_API_KEY or AI_GEMINI_API_KEY instead.",
+            legacy_var="GOOGLE_API_KEY",
+        )
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql+asyncpg://user:pass@postgres:5432/partner_agent"
 )
@@ -38,10 +51,10 @@ LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.5-flash")
 EMBEDDING_DIM = 3072  # Google Gemini embedding-001 dimension (updated from 768)
 
 if not GOOGLE_API_KEY:
-    logger.error("GOOGLE_API_KEY is not set - cannot initialize RAG service")
+    logger.error("API key not set - cannot initialize RAG service")
     raise RuntimeError(
-        "GOOGLE_API_KEY environment variable is required. "
-        "Set it before starting the RAG service."
+        "API key is required. Set AI_API_KEY, AI_GEMINI_API_KEY, or GOOGLE_API_KEY (deprecated) "
+        "before starting the RAG service."
     )
 
 logger.info(

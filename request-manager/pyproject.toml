@@ -16,6 +16,9 @@ dependencies = [
     "PyJWT>=2.8.0",
     "partner-agent-shared-models",
     "partner-agent-service",
+    # Security: explicit versions for transitive dependencies with CVEs
+    "cryptography>=50.0.0",
+    "pyasn1>=0.6.4",
 ]
 
 [project.optional-dependencies]
