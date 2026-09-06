@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
+from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 
 
 def create_agent_card(
@@ -36,18 +36,12 @@ def create_agent_card(
         name=card_name,
         description=card_description.strip(),
         version="0.1.0",
+        url=base_url,
         default_input_modes=["text/plain", "application/json"],
         default_output_modes=["text/plain", "application/json"],
         capabilities=AgentCapabilities(
             streaming=False,
             push_notifications=False,
         ),
-        supported_interfaces=[
-            AgentInterface(
-                url=base_url,
-                protocol_binding="JSONRPC",
-                protocol_version="1.0",
-            ),
-        ],
         skills=skills,
     )

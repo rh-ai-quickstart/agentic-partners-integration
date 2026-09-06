@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 700">
+  <!-- Browser Chrome -->
+  <rect x="0" y="0" width="1000" height="700" fill="#f5f5f5" rx="10"/>
+  <rect x="0" y="0" width="1000" height="40" fill="#263238" rx="10 10 0 0"/>
+
+  <!-- Browser Buttons -->
+  <circle cx="20" cy="20" r="6" fill="#ff5f56"/>
+  <circle cx="40" cy="20" r="6" fill="#ffbd2e"/>
+  <circle cx="60" cy="20" r="6" fill="#27c93f"/>
+
+  <!-- URL Bar -->
+  <rect x="90" y="12" width="820" height="16" fill="#37474f" rx="8"/>
+  <text x="100" y="24" font-family="monospace" font-size="11" fill="#90a4ae">http://localhost:3000</text>
+
+  <!-- App Header -->
+  <rect x="0" y="40" width="1000" height="60" fill="#0066cc"/>
+  <text x="30" y="75" font-family="Arial, sans-serif" font-size="20" font-weight="bold" fill="white">Partner Support Portal</text>
+  <text x="850" y="70" font-family="Arial, sans-serif" font-size="12" fill="white">carlos@example.com</text>
+  <text x="850" y="85" font-family="Arial, sans-serif" font-size="10" fill="#b3d9ff">Sign Out</text>
+
+  <!-- Main Content Area -->
+  <rect x="0" y="100" width="1000" height="600" fill="white"/>
+
+  <!-- Page Title -->
+  <text x="30" y="140" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#333">Support Request</text>
+  <text x="30" y="165" font-family="Arial, sans-serif" font-size="14" fill="#666">Describe your issue and get instant help from our specialist agents</text>
+
+  <!-- Input Area -->
+  <rect x="30" y="190" width="940" height="150" fill="#f8f9fa" stroke="#dee2e6" stroke-width="1" rx="5"/>
+  <text x="45" y="215" font-family="Arial, sans-serif" font-size="14" fill="#333">My application crashes when I try to process large files</text>
+  <text x="45" y="235" font-family="Arial, sans-serif" font-size="14" fill="#333">with error code 500. It was working fine yesterday.</text>
+
+  <!-- Send Button -->
+  <rect x="820" y="300" width="140" height="35" fill="#0066cc" rx="5"/>
+  <text x="890" y="323" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="white">Send Request</text>
+
+  <!-- Response Area -->
+  <rect x="30" y="360" width="940" height="310" fill="white" stroke="#dee2e6" stroke-width="1" rx="5"/>
+
+  <!-- Agent Badge -->
+  <rect x="50" y="380" width="180" height="25" fill="#e8f5e9" stroke="#2e7d32" stroke-width="1" rx="3"/>
+  <text x="140" y="397" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#2e7d32">Software Support Agent</text>
+
+  <!-- Response Text -->
+  <text x="50" y="425" font-family="Arial, sans-serif" font-size="13" fill="#333" font-weight="bold">Based on your description, this appears to be a memory limit issue.</text>
+  <text x="50" y="450" font-family="Arial, sans-serif" font-size="13" fill="#555">I found similar cases in our knowledge base:</text>
+
+  <text x="50" y="480" font-family="Arial, sans-serif" font-size="13" fill="#555">• <tspan font-weight="bold">KB-A3F21B</tspan>: "Error 500 on large file uploads"</text>
+  <text x="70" y="500" font-family="Arial, sans-serif" font-size="12" fill="#666">Solution: Increase upload_max_filesize in php.ini to 64M</text>
+
+  <text x="50" y="530" font-family="Arial, sans-serif" font-size="13" fill="#555">• <tspan font-weight="bold">KB-9D82E4</tspan>: "Memory exhausted during file processing"</text>
+  <text x="70" y="550" font-family="Arial, sans-serif" font-size="12" fill="#666">Solution: Add memory_limit = 512M to configuration</text>
+
+  <text x="50" y="580" font-family="Arial, sans-serif" font-size="13" fill="#555">Recommended actions:</text>
+  <text x="50" y="600" font-family="Arial, sans-serif" font-size="13" fill="#555">1. Check your server's error logs for specific memory errors</text>
+  <text x="50" y="620" font-family="Arial, sans-serif" font-size="13" fill="#555">2. Apply the configuration changes from KB-A3F21B</text>
+  <text x="50" y="640" font-family="Arial, sans-serif" font-size="13" fill="#555">3. Test with a smaller file first to verify the fix</text>
+
+  <!-- Footer Info -->
+  <rect x="30" y="680" width="300" height="20" fill="transparent"/>
+  <text x="35" y="693" font-family="Arial, sans-serif" font-size="10" fill="#999">Response time: 1.2s | Confidence: 94%</text>
+</svg>

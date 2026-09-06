@@ -1,0 +1,21 @@
+erDiagram
+    request_logs {
+        uuid request_id PK "Unique request identifier"
+        uuid session_id FK "FK → request_sessions"
+        varchar request_type "Always 'message'"
+        text request_content "User's message text"
+        varchar agent_id "Agent that handled request (e.g. software-support)"
+        text response_content "Agent's full response text"
+        jsonb response_metadata "Routing decisions, OPA decision, agent metadata"
+        integer processing_time_ms "End-to-end processing time in milliseconds"
+        timestamp completed_at "When the response was received"
+        varchar pod_name "Pod/container that handled the request"
+        timestamp created_at "When the request was received"
+    }
+
+    request_sessions {
+        uuid session_id PK "Conversation session"
+        jsonb conversation_context "Message history as JSON array"
+    }
+
+    request_logs }o--|| request_sessions : "belongs to"

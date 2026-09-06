@@ -6,7 +6,13 @@
 **One command to setup everything**
 
 ```bash
-export GOOGLE_API_KEY="your-key"
+# Recommended (new)
+export AI_API_KEY="your-key"
+export AI_PROVIDER=gemini
+bash scripts/setup.sh
+
+# Alternative (legacy, still supported)
+export GOOGLE_API_KEY="your-key"  # Deprecated
 bash scripts/setup.sh
 ```
 

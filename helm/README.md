@@ -29,9 +29,16 @@ kubectl create namespace partner-agent
 ### 2. Install the chart
 
 ```bash
+# Recommended (new)
 helm install partner-agent ./helm \
   --namespace partner-agent \
-  --set llm.googleApiKey='your-api-key-here'
+  --set llm.apiKey='your-api-key-here' \
+  --set llm.provider='gemini'
+
+# Alternative (legacy, still supported)
+helm install partner-agent ./helm \
+  --namespace partner-agent \
+  --set llm.googleApiKey='your-api-key-here'  # Deprecated
 ```
 
 ### 3. Verify
@@ -51,21 +58,35 @@ kubectl port-forward -n partner-agent svc/partner-agent-pf-chat-ui 3000:3000
 
 ### LLM Backend
 
-**Gemini (default):**
+**Gemini (default) - Recommended:**
 
 ```bash
-helm install partner-agent ./helm \
-  --namespace partner-agent \
+helm upgrade partner-agent ./helm \
+  --set llm.provider=gemini \
+  --set llm.apiKey='your-key' \
+  --set llm.model='gemini-2.5-flash'
+```
+
+**OpenAI - Recommended:**
+
+```bash
+helm upgrade partner-agent ./helm \
+  --set llm.provider=openai \
+  --set llm.apiKey='sk-your-key' \
+  --set llm.model='gpt-4'
+```
+
+**Legacy (deprecated, still supported):**
+
+```bash
+# Gemini (deprecated)
+helm upgrade partner-agent ./helm \
   --set llm.backend=gemini \
   --set llm.googleApiKey='your-key' \
   --set llm.geminiModel='gemini-2.5-flash'
-```
 
-**OpenAI:**
-
-```bash
-helm install partner-agent ./helm \
-  --namespace partner-agent \
+# OpenAI (deprecated)
+helm upgrade partner-agent ./helm \
   --set llm.backend=openai \
   --set llm.openaiApiKey='sk-your-key' \
   --set llm.openaiModel='gpt-4'

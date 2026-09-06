@@ -14,7 +14,8 @@ RUN pip3 install --no-cache-dir \
     sqlalchemy[asyncio] \
     asyncpg \
     google-genai \
-    structlog
+    structlog \
+    numpy
 
 # Copy RAG service
 COPY rag-service/rag_service.py /app/

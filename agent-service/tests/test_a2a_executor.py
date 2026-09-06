@@ -4,14 +4,13 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from a2a.types import InternalError as InternalErrorModel
 from a2a.types import (
     TaskState,
 )
 from a2a.utils.errors import (
-    A2AError,
-    InternalError,
-    InvalidParamsError,
-    UnsupportedOperationError,
+    A2AServerError,
+    ServerError,
 )
 
 from agent_service.a2a.executor import SpecialistAgentExecutor
@@ -60,21 +59,21 @@ class TestSpecialistAgentExecutor:
     ):
         mock_context.get_user_input.return_value = None
 
-        with pytest.raises(A2AError):
+        with pytest.raises(ServerError):
             await executor.execute(mock_context, mock_event_queue)
 
     async def test_cancel_raises_unsupported(
         self, executor, mock_context, mock_event_queue
     ):
         mock_context.current_task = None
-        with pytest.raises(A2AError):
+        with pytest.raises(ServerError):
             await executor.cancel(mock_context, mock_event_queue)
 
     async def test_cancel_returns_if_task_completed(
         self, executor, mock_context, mock_event_queue
     ):
         mock_task = MagicMock()
-        mock_task.status.state = TaskState.TASK_STATE_COMPLETED
+        mock_task.status.state = TaskState.completed
         mock_context.current_task = mock_task
 
         await executor.cancel(mock_context, mock_event_queue)
@@ -83,7 +82,7 @@ class TestSpecialistAgentExecutor:
         self, executor, mock_context, mock_event_queue
     ):
         mock_task = MagicMock()
-        mock_task.status.state = TaskState.TASK_STATE_FAILED
+        mock_task.status.state = TaskState.failed
         mock_context.current_task = mock_task
 
         await executor.cancel(mock_context, mock_event_queue)
@@ -154,7 +153,7 @@ class TestSpecialistAgentExecutor:
         mock_client_instance.__aexit__ = AsyncMock(return_value=False)
         mock_httpx_cls.return_value = mock_client_instance
 
-        with pytest.raises(A2AError):
+        with pytest.raises(ServerError):
             await executor._query_rag("app crash")
 
     @patch(
@@ -164,10 +163,10 @@ class TestSpecialistAgentExecutor:
     async def test_execute_reraises_a2a_error(
         self, mock_invoke, executor, mock_context, mock_event_queue
     ):
-        """A2AError raised during execution is re-raised as-is."""
-        mock_invoke.side_effect = InternalError(message="RAG API unavailable")
+        """A2AServerError raised during execution is re-raised as-is."""
+        mock_invoke.side_effect = ServerError(error=InternalErrorModel(message="RAG API unavailable"))
 
-        with pytest.raises(A2AError):
+        with pytest.raises(ServerError):
             await executor.execute(mock_context, mock_event_queue)
 
     @patch(
@@ -180,7 +179,7 @@ class TestSpecialistAgentExecutor:
         """Generic exception is wrapped in InternalError."""
         mock_invoke.side_effect = ValueError("unexpected problem")
 
-        with pytest.raises(InternalError) as exc_info:
+        with pytest.raises(ServerError) as exc_info:
             await executor.execute(mock_context, mock_event_queue)
 
         assert "Agent execution failed" in str(exc_info.value)
@@ -227,7 +226,7 @@ class TestSpecialistAgentExecutor:
         mock_client_instance.__aexit__ = AsyncMock(return_value=False)
         mock_httpx_cls.return_value = mock_client_instance
 
-        with pytest.raises(InternalError) as exc_info:
+        with pytest.raises(ServerError) as exc_info:
             await executor._query_rag("app crash")
 
         assert "RAG API unavailable" in str(exc_info.value)
@@ -237,7 +236,7 @@ class TestSpecialistAgentExecutor:
     ):
         """cancel returns early when task state is 'canceled'."""
         mock_task = MagicMock()
-        mock_task.status.state = TaskState.TASK_STATE_CANCELED
+        mock_task.status.state = TaskState.canceled
         mock_context.current_task = mock_task
 
         await executor.cancel(mock_context, mock_event_queue)

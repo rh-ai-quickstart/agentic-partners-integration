@@ -4,8 +4,9 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from a2a.types import InternalError as InternalErrorModel
 from a2a.types import Message, Part, Role, TaskState
-from a2a.utils.errors import A2AError, InternalError
+from a2a.utils.errors import A2AServerError, ServerError
 
 
 @pytest.fixture
@@ -17,7 +18,7 @@ def mock_context():
     ctx.get_user_input.return_value = "My pods are crashing"
     ctx.current_task = None
     ctx.message = Message(
-        role=Role.ROLE_USER,
+        role=Role.user,
         parts=[Part(text="My pods are crashing")],
         message_id=str(uuid.uuid4()),
     )
@@ -125,14 +126,14 @@ class TestKubernetesAgentExecutor:
         mock_agent.create_response_with_retry.assert_awaited_once()
 
     async def test_execute_no_input_raises(self, mock_event_queue):
-        """Missing user input should raise A2AError."""
+        """Missing user input should raise ServerError."""
         from kubernetes_agent.a2a.executor import KubernetesAgentExecutor
 
         ctx = MagicMock()
         ctx.get_user_input.return_value = None
 
         executor = KubernetesAgentExecutor()
-        with pytest.raises(A2AError):
+        with pytest.raises(ServerError):
             await executor.execute(ctx, mock_event_queue)
 
     @patch("kubernetes_agent.agent.KubernetesAgent")
@@ -158,15 +159,15 @@ class TestKubernetesAgentExecutor:
         mock_httpx.return_value = mock_client
 
         executor = KubernetesAgentExecutor()
-        with pytest.raises(A2AError):
+        with pytest.raises(ServerError):
             await executor.execute(mock_context, mock_event_queue)
 
     async def test_cancel_raises_unsupported(self, mock_context, mock_event_queue):
-        """cancel() should raise A2AError (UnsupportedOperationError)."""
+        """cancel() should raise ServerError (UnsupportedOperationError)."""
         from kubernetes_agent.a2a.executor import KubernetesAgentExecutor
 
         executor = KubernetesAgentExecutor()
-        with pytest.raises(A2AError):
+        with pytest.raises(ServerError):
             await executor.cancel(mock_context, mock_event_queue)
 
     @patch("kubernetes_agent.agent.KubernetesAgent")
@@ -207,12 +208,12 @@ class TestKubernetesAgentExecutor:
     async def test_execute_a2a_error_reraise(
         self, mock_httpx, mock_agent_cls, mock_context, mock_event_queue
     ):
-        """A2AError raised during execution is re-raised (not wrapped)."""
+        """ServerError raised during execution is re-raised (not wrapped)."""
         from kubernetes_agent.a2a.executor import KubernetesAgentExecutor
 
         mock_agent = MagicMock()
         mock_agent.create_response_with_retry = AsyncMock(
-            side_effect=InternalError(message="Server issue")
+            side_effect=ServerError(error=InternalErrorModel(message="Server issue"))
         )
         mock_agent_cls.return_value = mock_agent
 
@@ -225,7 +226,7 @@ class TestKubernetesAgentExecutor:
         mock_httpx.return_value = mock_client
 
         executor = KubernetesAgentExecutor()
-        with pytest.raises(A2AError):
+        with pytest.raises(ServerError):
             await executor.execute(mock_context, mock_event_queue)
 
     @patch("kubernetes_agent.agent.KubernetesAgent")

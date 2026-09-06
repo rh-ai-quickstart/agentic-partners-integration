@@ -57,13 +57,22 @@ ragApi:
 
 # LLM credentials (set via --set or external secret)
 llm:
-  backend: "gemini"
-  # Gemini
-  googleApiKey: ""
-  geminiModel: "gemini-2.5-flash"
-  # OpenAI
+  # New configuration (recommended)
+  provider: "gemini"  # gemini, openai, ollama, anthropic
+  apiKey: ""  # Universal API key
+  model: "gemini-2.5-flash"  # Universal model name
+
+  # Provider-specific keys (optional, for multi-provider setups)
+  geminiApiKey: ""
   openaiApiKey: ""
-  openaiModel: "gpt-4"
+  anthropicApiKey: ""
+
+  # Legacy configuration (deprecated)
+  backend: "gemini"  # Deprecated: use 'provider' instead
+  googleApiKey: ""  # Deprecated: use 'apiKey' or 'geminiApiKey'
+  geminiModel: "gemini-2.5-flash"  # Deprecated: use 'model'
+  openaiModel: "gpt-4"  # Deprecated: use 'model'
+
   # Ollama
   ollamaBaseUrl: "http://ollama:11434"
   ollamaModel: "llama3.1"

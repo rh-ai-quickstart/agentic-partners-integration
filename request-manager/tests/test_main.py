@@ -31,15 +31,22 @@ class TestAppRouters:
         """The app should include the auth router."""
         from request_manager.main import app
 
-        routes = [route.path for route in app.routes]
-        assert any("/auth" in r for r in routes)
+        client = TestClient(app)
+        # Try to access an auth endpoint (will fail auth but proves router exists)
+        resp = client.get("/auth/me")
+        # 401 means the router exists but requires auth (expected)
+        # 404 would mean the router doesn't exist
+        assert resp.status_code != 404
 
     def test_app_includes_adk_router(self):
         """The app should include the adk router."""
         from request_manager.main import app
 
-        routes = [route.path for route in app.routes]
-        assert any("/adk" in r for r in routes)
+        client = TestClient(app)
+        # Try to access an adk endpoint (will fail but proves router exists)
+        resp = client.post("/adk/chat", json={"message": "test"})
+        # Any status except 404 means the router exists
+        assert resp.status_code != 404
 
 
 class TestCredentialContextMiddleware:

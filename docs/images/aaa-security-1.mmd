@@ -1,0 +1,23 @@
+flowchart LR
+    subgraph mock["Mock Mode · local dev"]
+        direction TB
+        m1["Identity source:\nX-SPIFFE-ID HTTP header"]
+        m2["Transport:\nPlain HTTP"]
+        m3["Identity type:\nSPIFFE ID URI"]
+        m4["Business logic:\nIdentical to production"]
+    end
+
+    subgraph real["Real Mode · production"]
+        direction TB
+        r1["Identity source:\nmTLS peer certificate SAN"]
+        r2["Transport:\nMutual TLS (mTLS)"]
+        r3["Identity type:\nSPIFFE ID URI"]
+        r4["Business logic:\nIdentical to mock"]
+    end
+
+    env["MOCK_SPIFFE=true|false\n(single env var switch)"]
+    env -->|"true (default)"| mock
+    env -->|"false"| real
+
+    style mock fill:#e8f5e9,stroke:#2e7d32
+    style real fill:#e3f2fd,stroke:#1565c0

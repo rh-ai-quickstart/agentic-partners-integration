@@ -1,0 +1,33 @@
+flowchart LR
+    subgraph req["POST /api/v1/agents/{agent_name}/invoke"]
+        direction TB
+
+        subgraph headers["Headers · required when ENFORCE_AGENT_AUTH=true"]
+            h1["X-SPIFFE-ID: str\ncaller's SPIFFE identity\n(mock header or mTLS cert)"]
+            h2["Authorization: Bearer JWT\nuser's Keycloak JWT\n(optional, token propagation)"]
+            h3["X-Delegation-User: str\nuser SPIFFE ID\n(specialist calls only → triggers OPA re-check)"]
+            h4["X-Delegation-Agent: str\ntarget agent SPIFFE ID\n(specialist calls only)"]
+        end
+
+        subgraph body["Request Body"]
+            b1["session_id: str — conversation session"]
+            b2["user_id: str — user email"]
+            b3["message: str — user message text"]
+            subgraph tc["transfer_context · optional"]
+                t1["departments: str[]\neffective department tags\n(narrowed by OPA intersection)"]
+                t2["conversation_history: msg[]\nprior messages"]
+                t3["previous_agent: str\nwhich agent handled the last turn"]
+            end
+        end
+
+        subgraph response["Response"]
+            r1["content: str\nagent's text response"]
+            r2["routing_decision: str\n(routing-agent only)\nwhich specialist to delegate to"]
+            r3["agent_name: str\nwhich agent produced the response"]
+        end
+    end
+
+    style headers fill:#fff3e0,stroke:#e65100
+    style body fill:#e8f5e9,stroke:#2e7d32
+    style tc fill:#f1f8e9,stroke:#558b2f
+    style response fill:#e3f2fd,stroke:#1565c0

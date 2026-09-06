@@ -15,6 +15,8 @@ from a2a.server.agent_execution import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
 from a2a.server.events.event_queue import EventQueue
 from a2a.server.tasks.task_updater import TaskUpdater
+from a2a.types import InternalError as InternalErrorModel
+from a2a.types import InvalidParamsError as InvalidParamsErrorModel
 from a2a.types import (
     Message,
     Part,
@@ -23,11 +25,10 @@ from a2a.types import (
     TaskState,
     TaskStatus,
 )
+from a2a.types import UnsupportedOperationError as UnsupportedOperationErrorModel
 from a2a.utils.errors import (
-    A2AError,
-    InternalError,
-    InvalidParamsError,
-    UnsupportedOperationError,
+    A2AServerError,
+    ServerError,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,14 +57,14 @@ class SpecialistAgentExecutor(AgentExecutor):
 
         user_input = context.get_user_input()
         if not user_input:
-            raise InvalidParamsError(message="No input message provided")
+            raise ServerError(error=InvalidParamsErrorModel(message="No input message provided"))
 
         task_updater = await self._init_task(context, event_queue)
 
         try:
             await task_updater.start_work(
                 message=Message(
-                    role=Role.ROLE_AGENT,
+                    role=Role.agent,
                     parts=[Part(text="Searching knowledge base...")],
                     message_id=str(uuid.uuid4()),
                     task_id=task_updater.task_id,
@@ -75,7 +76,7 @@ class SpecialistAgentExecutor(AgentExecutor):
 
             await task_updater.complete(
                 message=Message(
-                    role=Role.ROLE_AGENT,
+                    role=Role.agent,
                     parts=[Part(text=response_text)],
                     metadata={"agent": self._agent_name},
                     message_id=str(uuid.uuid4()),
@@ -83,12 +84,12 @@ class SpecialistAgentExecutor(AgentExecutor):
                     context_id=task_updater.context_id,
                 ),
             )
-        except A2AError:
+        except A2AServerError:
             raise
         except Exception as exc:
             logger.exception("Specialist agent execution failed: %s", exc)
-            raise InternalError(
-                message=f"Agent execution failed: {exc}"
+            raise ServerError(
+                error=InternalErrorModel(message=f"Agent execution failed: {exc}")
             ) from exc
 
     async def cancel(
@@ -97,13 +98,13 @@ class SpecialistAgentExecutor(AgentExecutor):
         event_queue: EventQueue,
     ) -> None:
         if context.current_task and context.current_task.status.state in {
-            TaskState.TASK_STATE_COMPLETED,
-            TaskState.TASK_STATE_FAILED,
-            TaskState.TASK_STATE_CANCELED,
+            TaskState.completed,
+            TaskState.failed,
+            TaskState.canceled,
         }:
             return
-        raise UnsupportedOperationError(
-            message="Task cancellation is not supported."
+        raise ServerError(
+            error=UnsupportedOperationErrorModel(message="Task cancellation is not supported.")
         )
 
     async def _init_task(
@@ -114,7 +115,7 @@ class SpecialistAgentExecutor(AgentExecutor):
         task = Task(
             id=context.task_id,
             context_id=context.context_id,
-            status=TaskStatus(state=TaskState.TASK_STATE_SUBMITTED),
+            status=TaskStatus(state=TaskState.submitted),
         )
         await event_queue.enqueue_event(task)
         return TaskUpdater(event_queue, context.task_id, context.context_id)
@@ -197,8 +198,8 @@ The following information was retrieved from the support knowledge base for the 
 
                 if resp.status_code != 200:
                     logger.error("RAG API returned %s: %s", resp.status_code, resp.text)
-                    raise InternalError(
-                        message=f"RAG API unavailable (HTTP {resp.status_code})"
+                    raise ServerError(
+                        error=InternalErrorModel(message=f"RAG API unavailable (HTTP {resp.status_code})")
                     )
 
                 data = resp.json()
@@ -206,6 +207,6 @@ The following information was retrieved from the support knowledge base for the 
 
         except httpx.HTTPError as exc:
             logger.error("RAG API connection failed: %s", exc)
-            raise InternalError(
-                message=f"RAG API unavailable: {exc}"
+            raise ServerError(
+                error=InternalErrorModel(message=f"RAG API unavailable: {exc}")
             ) from exc

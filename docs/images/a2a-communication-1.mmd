@@ -1,0 +1,15 @@
+sequenceDiagram
+    participant RM as Request Manager<br/>(orchestrator)
+    participant OPA as OPA
+    participant AS as Agent Service<br/>(agents)
+
+    RM->>AS: POST /api/v1/agents/routing-agent/invoke<br/>Headers: X-SPIFFE-ID (service identity)<br/>{session_id, user_id, message,<br/>transfer_context: {departments, history}}
+    Note right of AS: Verify caller SPIFFE identity<br/>routing-agent classifies<br/>intent via LLM
+    AS-->>RM: {content, routing_decision: "software-support"}
+
+    RM->>OPA: check_agent_authorization<br/>(user depts ∩ agent caps)
+    OPA-->>RM: allow: true, effective: ["software"]
+
+    RM->>AS: POST /api/v1/agents/software-support/invoke<br/>Headers: X-SPIFFE-ID, X-Delegation-User,<br/>X-Delegation-Agent, Authorization: Bearer JWT<br/>{session_id, user_id, message,<br/>transfer_context: {departments: ["software"],<br/>history, previous_agent: "routing-agent"}}
+    Note right of AS: Verify SPIFFE identity<br/>Re-check OPA (defense-in-depth)<br/>specialist queries RAG,<br/>generates grounded response
+    AS-->>RM: {content: "Based on similar cases..."}

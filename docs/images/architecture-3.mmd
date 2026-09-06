@@ -1,0 +1,14 @@
+flowchart LR
+    yaml["config/agents/*.yaml\n(departments, description,\nendpoint, a2a card metadata)"]
+
+    yaml --> am["AgentManager\n(agent registry)"]
+    am --> routing["Routing-agent\nsystem prompt\n(dynamic)"]
+    am --> a2a["A2A cards +\nendpoint mounting\n(dynamic)"]
+    am --> registry["GET /api/v1/agents/registry\n(endpoint discovery for\nrequest-manager)"]
+
+    yaml --> sync["sync_agent_capabilities.py\n(make sync-agents)"]
+    sync --> rego["agent_permissions.rego\n(auto-generated)"]
+    rego --> opa["OPA policy engine"]
+
+    style yaml fill:#e8f5e9,stroke:#2e7d32,font-weight:bold
+    style rego fill:#fffde7,stroke:#f9a825

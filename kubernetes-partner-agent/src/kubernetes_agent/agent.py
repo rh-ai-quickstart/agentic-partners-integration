@@ -57,7 +57,22 @@ class KubernetesAgent:
         self.model = self.config.get(
             "llm_model", os.getenv("OPENAI_MODEL", "gpt-4")
         )
-        api_key = os.getenv("OPENAI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "not-set"
+        # API key resolution: AI_API_KEY → AI_OPENAI_API_KEY → legacy keys
+        api_key = (
+            os.getenv("AI_API_KEY")
+            or os.getenv("AI_OPENAI_API_KEY")
+            or os.getenv("OPENAI_API_KEY")
+            or os.getenv("AI_GEMINI_API_KEY")
+            or os.getenv("GOOGLE_API_KEY")
+            or "not-set"
+        )
+
+        # Log deprecation warning if using legacy keys
+        if not os.getenv("AI_API_KEY") and not os.getenv("AI_OPENAI_API_KEY"):
+            if os.getenv("OPENAI_API_KEY"):
+                logger.warning("OPENAI_API_KEY is deprecated. Use AI_API_KEY or AI_OPENAI_API_KEY instead.")
+            elif os.getenv("GOOGLE_API_KEY"):
+                logger.warning("GOOGLE_API_KEY is deprecated. Use AI_API_KEY or AI_GEMINI_API_KEY instead.")
         base_url = os.getenv("OPENAI_BASE_URL")
         self.openai_client = AsyncOpenAI(
             api_key=api_key,

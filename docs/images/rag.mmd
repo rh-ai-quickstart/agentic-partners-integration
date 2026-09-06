@@ -1,0 +1,8 @@
+flowchart TD
+    A["data/software_support_tickets.json"] --> C["ingest_knowledge.py\n(embeds via Gemini, stores in PostgreSQL/pgvector)"]
+    B["data/network_support_tickets.json"] --> C
+    C --> D["pgvector knowledge_documents table"]
+    D --> D1["knowledge_base: software_support"]
+    D --> D2["knowledge_base: network_support"]
+    D1 & D2 --> E["/answer endpoint\n(query embedding → pgvector cosine similarity → LLM summary)"]
+    E --> F["RAG API response:\n{response, sources: [{id, content, similarity}]}"]

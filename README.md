@@ -66,6 +66,8 @@ flowchart LR
     style Answer fill:#f3e5f5,stroke:#6a1b9a
 ```
 
+![Architecture Diagram](docs/images/architecture.svg)
+
 **How it works:**
 
 1. A user signs in and types a message like "My app crashes with error 500"
@@ -85,11 +87,11 @@ For detailed architecture diagrams, request flow, and design decisions, see the 
 | Resource | Minimum | Recommended |
 |----------|---------|-------------|
 | CPU | 4 cores | 8 cores |
-| RAM | 8 GB | 16 GB |
-| Disk | 10 GB free | 20 GB free |
+| RAM | 8 GB | 16 GB (24 GB for larger local models) |
+| Disk | 10 GB free | 30 GB free (for local model storage) |
 | GPU | Not required | Not required |
 
-This quickstart uses an external LLM API — no local GPU is needed. All computation runs on CPU via Docker containers.
+This quickstart supports both local open-weight models (via Ollama on CPU) and external LLM APIs. Minimum specs work for small models (Llama 3.2 3B) or external APIs. Recommended specs provide better performance for larger local models (8B+) or faster response times.
 
 ### Software Requirements
 
@@ -99,7 +101,8 @@ This quickstart uses an external LLM API — no local GPU is needed. All computa
 | [Docker Compose](https://docs.docker.com/compose/install/) | 2.20+ | Multi-container orchestration |
 | [Git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git) | 2.30+ | Clone the repository |
 | [Make](https://www.gnu.org/software/make/) | 4.0+ | Build automation (included on Linux/Mac) |
-| LLM API key | — | Any OpenAI-compatible API (see [Configuration](docs/configuration.md) for supported backends) |
+| [Ollama](https://ollama.com/) | Latest | **Recommended:** Run local open-weight models (Llama 3.2, Mistral, etc.) |
+| **Alternative:** LLM API key | — | Any OpenAI-compatible API (OpenAI, Gemini, Anthropic - see [Configuration](docs/configuration.md)) |
 
 ## Deploy
 
@@ -110,13 +113,36 @@ This quickstart uses an external LLM API — no local GPU is needed. All computa
    cd agentic-partners-integration
    ```
 
-2. **Set your LLM API key:**
+2. **Set up your LLM backend:**
+
+   **Recommended: Local open-weight model with Ollama**
+
+   Run Ollama locally for a fully open-source deployment:
 
    ```bash
-   export GOOGLE_API_KEY=your-key-here
+   # Start Ollama
+   docker run -d -p 11434:11434 --name ollama ollama/ollama
+   
+   # Pull an open-weight model (e.g., Llama 3.2)
+   docker exec ollama ollama pull llama3.2
+   
+   # Configure the quickstart
+   export AI_PROVIDER=ollama
+   export AI_MODEL=llama3.2
+   export AI_BASE_URL=http://localhost:11434
    ```
 
-   Alternatively, create a `.env` file in the project root with `GOOGLE_API_KEY=your-key-here`. The setup script will prompt you if the key is not set. See [Configuration](docs/configuration.md) for alternative LLM backends (OpenAI, Ollama).
+   **Alternative: External API providers**
+
+   If you prefer using external APIs (OpenAI, Gemini, Anthropic):
+
+   ```bash
+   export AI_API_KEY=your-key-here
+   export AI_PROVIDER=gemini  # or openai, anthropic
+   export AI_MODEL=gemini-2.5-flash
+   ```
+
+   See [Configuration](docs/configuration.md) for all supported backends, model options, and the full migration guide from legacy environment variables.
 
 3. **Build and start all services:**
 
@@ -199,10 +225,8 @@ To explore a use case, check out its branch and refer to the agent's own README 
 
 ## Tags
 
-| Tag | Value |
-|-----|-------|
-| **Industry** | Professional services |
-| **Partner** | Microsoft |
-| **Product** | Red Hat® OpenShift® AI |
-| **Use case** | Support |
-| **Status** | `work-in-progress` |
+- **Industry:** Professional services
+- **Partner:** Microsoft
+- **Product:** Red Hat OpenShift AI
+- **Use case:** Support
+- **Status:** production-ready

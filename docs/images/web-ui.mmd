@@ -1,0 +1,12 @@
+sequenceDiagram
+    participant B as Browser
+    participant N as nginx (port 3000)
+    participant RM as Request Manager<br/>(port 8000)
+
+    B->>N: GET /login.html
+    N-->>B: serves static files
+
+    B->>N: POST /adk/chat + X-SPIFFE-ID header
+    N->>RM: proxy_pass /adk/ → :8080
+    RM-->>N: {response, agent, ...}
+    N-->>B: {response, agent, ...}
