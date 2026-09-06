@@ -6,31 +6,7 @@ The system implements a Zero Trust AAA framework using **SPIFFE workload identit
 
 Instead of passwords and JWT tokens, services authenticate using **SPIFFE IDs** (Secure Production Identity Framework for Everyone). Each service and user is identified by a URI like `spiffe://partner.example.com/user/carlos`.
 
-```mermaid
-flowchart LR
-    subgraph mock["Mock Mode · local dev"]
-        direction TB
-        m1["Identity source:\nX-SPIFFE-ID HTTP header"]
-        m2["Transport:\nPlain HTTP"]
-        m3["Identity type:\nSPIFFE ID URI"]
-        m4["Business logic:\nIdentical to production"]
-    end
-
-    subgraph real["Real Mode · production"]
-        direction TB
-        r1["Identity source:\nmTLS peer certificate SAN"]
-        r2["Transport:\nMutual TLS (mTLS)"]
-        r3["Identity type:\nSPIFFE ID URI"]
-        r4["Business logic:\nIdentical to mock"]
-    end
-
-    env["MOCK_SPIFFE=true|false\n(single env var switch)"]
-    env -->|"true (default)"| mock
-    env -->|"false"| real
-
-    style mock fill:#e8f5e9,stroke:#2e7d32
-    style real fill:#e3f2fd,stroke:#1565c0
-```
+![SPIFFE workload identity modes comparing mock mode (local dev using X-SPIFFE-ID header with plain HTTP) and real mode (production using mTLS peer certificate SAN), controlled by MOCK_SPIFFE environment variable](images/aaa-security-1.svg)
 
 **How it works:**
 
@@ -134,58 +110,7 @@ When a user delegates access to an agent, the agent can only operate within depa
 
 ## Token, Policy & Scope -- End-to-End Flow
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant U as User (Browser)
-    participant KC as Keycloak<br/>OIDC Provider
-    participant RM as Request Manager<br/>(orchestrator)
-    participant OPA as OPA<br/>Policy Engine
-    participant RA as Agent Service<br/>routing-agent
-    participant SA as Agent Service<br/>specialist agent
-    participant RAG as RAG API
-
-    Note over U,RAG: ── Phase 1: Authentication — JWT acquisition ──
-
-    U->>KC: POST /realms/partner-agent/protocol/openid-connect/token<br/>{email, password} (Resource Owner Password Grant)
-    KC-->>U: Signed JWT (RS256)<br/>claims: {email, realm_access.roles: ["engineering","software"]}
-
-    Note over U,RAG: ── Phase 2: Chat request — credential capture ──
-
-    U->>RM: POST /adk/chat<br/>Authorization: Bearer JWT<br/>X-SPIFFE-ID: spiffe://…/user/carlos<br/>{message, user: {email}}
-    Note right of RM: IdentityMiddleware extracts SPIFFE identity<br/>decode_token() validates JWT via Keycloak JWKS<br/>CredentialService.set_token(JWT) — stores in context var<br/>CredentialService.set_user_id(email)<br/>Load user departments from DB
-
-    Note over U,RAG: ── Phase 3: Routing — service-to-service (no delegation) ──
-
-    RM->>RA: POST /api/v1/agents/routing-agent/invoke<br/>Headers: X-SPIFFE-ID: spiffe://…/service/request-manager<br/>(no delegation headers — OPA Rule 1: service-to-service allowed)<br/>{message, transfer_context: {departments: ["engineering","software"]}}
-    Note right of RA: IdentityMiddleware verifies caller SPIFFE<br/>No X-Delegation-User → skip OPA re-check<br/>LLM classifies intent
-    RA-->>RM: {routing_decision: "software-support"}
-
-    Note over U,RAG: ── Phase 4: Authorization — OPA permission intersection ──
-
-    RM->>OPA: POST /v1/data/partner/authorization/decision<br/>{caller: spiffe://…/service/request-manager,<br/>delegation: {user: spiffe://…/user/carlos,<br/>agent: spiffe://…/agent/software-support,<br/>user_departments: ["engineering","software"]}}
-    Note right of OPA: OPA Rule 2: Delegated agent access<br/>User depts ∩ Agent caps<br/>["engineering","software"] ∩ ["software"]<br/>= ["software"] (non-empty → allow)
-    OPA-->>RM: {allow: true,<br/>effective_departments: ["software"]}
-
-    Note over U,RAG: ── Phase 5: Specialist — full credential propagation + scope reduction ──
-
-    RM->>SA: POST /api/v1/agents/software-support/invoke<br/>Headers:<br/>  X-SPIFFE-ID: spiffe://…/service/request-manager<br/>  X-Delegation-User: spiffe://…/user/carlos<br/>  X-Delegation-Agent: spiffe://…/agent/software-support<br/>  Authorization: Bearer JWT (from CredentialService)<br/>{message, transfer_context:<br/>  {departments: ["software"] ← SCOPE REDUCED}}
-    Note right of SA: IdentityMiddleware verifies caller SPIFFE<br/>X-Delegation-User present → OPA re-check<br/>(defense-in-depth: blocks even if RM gate bypassed)
-
-    SA->>OPA: POST /v1/data/partner/authorization/decision<br/>(re-verify: same delegation, same intersection)
-    OPA-->>SA: {allow: true}
-
-    SA->>RAG: POST /answer<br/>{query: message, knowledge_base: "software_support"}
-    RAG-->>SA: {sources: [{id, content, similarity}]}
-    Note right of SA: LLM generates grounded response<br/>using RAG context + effective scope ["software"]
-
-    SA-->>RM: {content: "Based on ticket T-42…"}
-
-    Note over U,RAG: ── Phase 6: Cleanup ──
-
-    Note right of RM: _complete_request_log() → audit<br/>Store conversation turn in session<br/>CredentialService.clear_credentials()
-    RM-->>U: {response, agent: "software-support"}
-```
+![End-to-end authentication and authorization flow sequence diagram showing six phases: JWT acquisition from Keycloak, credential capture at request manager, routing (service-to-service call), OPA permission intersection authorization, specialist invocation with scope reduction and credential propagation, and cleanup with audit logging](images/aaa-security-2.svg)
 
 **OPA policy rules** (from `delegation.rego`):
 
@@ -198,29 +123,7 @@ sequenceDiagram
 
 Every request is logged in the `request_logs` table with a complete audit trail:
 
-```mermaid
-erDiagram
-    request_logs {
-        uuid request_id PK "Unique request identifier"
-        uuid session_id FK "FK → request_sessions"
-        varchar request_type "Always 'message'"
-        text request_content "User's message text"
-        varchar agent_id "Agent that handled request (e.g. software-support)"
-        text response_content "Agent's full response text"
-        jsonb response_metadata "Routing decisions, OPA decision, agent metadata"
-        integer processing_time_ms "End-to-end processing time in milliseconds"
-        timestamp completed_at "When the response was received"
-        varchar pod_name "Pod/container that handled the request"
-        timestamp created_at "When the request was received"
-    }
-
-    request_sessions {
-        uuid session_id PK "Conversation session"
-        jsonb conversation_context "Message history as JSON array"
-    }
-
-    request_logs }o--|| request_sessions : "belongs to"
-```
+![Entity-relationship diagram showing request_logs table (with fields request_id, session_id, request_content, agent_id, response_content, response_metadata, processing_time_ms, timestamps) linked to request_sessions table (with session_id and conversation_context)](images/aaa-security-3.svg)
 
 The audit write-back happens in `communication_strategy.py` after each A2A call completes. The `_complete_request_log()` method updates the `RequestLog` row with the response data, agent identity, and timing.
 
@@ -232,23 +135,7 @@ The audit trail is queryable via the **Audit page** (`audit.html`), which calls 
 
 In addition to request audit, the system maintains an append-only `audit_events` table that captures security-relevant events across all services. This satisfies SOC 2 Trust Service Criteria CC7.1 (monitoring) and CC7.2 (anomaly detection).
 
-```mermaid
-erDiagram
-    audit_events {
-        integer id PK "Auto-increment"
-        varchar event_id UK "UUID — unique event identifier"
-        varchar event_type "Dotted type (e.g. auth.login.success)"
-        varchar actor "Who — email or SPIFFE ID"
-        varchar action "What — login, invoke_agent, send_message"
-        varchar resource "Target — agent name, endpoint"
-        varchar outcome "success or failure"
-        varchar reason "Why — OPA reason, error message"
-        jsonb metadata "Extra context (departments, effective_departments)"
-        varchar source_ip "Client IP address"
-        varchar service "Emitting service (request-manager, agent-service)"
-        timestamp created_at "When — append-only, never updated"
-    }
-```
+![Entity-relationship diagram of audit_events table showing append-only audit trail with fields for event_id, event_type, actor (who), action (what), resource (target), outcome, reason, metadata, source_ip, service, and created_at timestamp](images/aaa-security-4.svg)
 
 **Event types captured:**
 

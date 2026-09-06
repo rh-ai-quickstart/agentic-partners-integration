@@ -49,24 +49,9 @@ Try signing in as Carlos and asking a network question — the system will deny 
 
 ### Architecture
 
-```mermaid
-flowchart LR
-    User["User describes issue"]
-    Router["AI Routing Agent\nclassifies intent"]
-    Policy["Policy Engine\nchecks authorization"]
-    Specialist["Specialist Agent\nqueries knowledge base"]
-    Answer["Grounded answer\nfrom historical data"]
+![High-level request flow showing user request routing through AI agent classification, policy authorization, specialist knowledge query, and grounded response generation](docs/images/readme-flow.svg)
 
-    User --> Router --> Policy --> Specialist --> Answer
-
-    style User fill:#e3f2fd,stroke:#1565c0
-    style Router fill:#fff3e0,stroke:#e65100
-    style Policy fill:#fce4ec,stroke:#c62828
-    style Specialist fill:#e8f5e9,stroke:#2e7d32
-    style Answer fill:#f3e5f5,stroke:#6a1b9a
-```
-
-![Architecture Diagram](docs/images/architecture.svg)
+![Detailed architecture diagram showing all system components including web UI, request manager, agent service, and external dependencies](docs/images/architecture.svg)
 
 **How it works:**
 
@@ -225,7 +210,7 @@ To explore a use case, check out its branch and refer to the agent's own README 
 
 ## Tags
 
-- **Industry:** Professional services
+- **Industry:** Telecommunications
 - **Partner:** Microsoft
 - **Product:** Red Hat OpenShift AI
 - **Use case:** Support
