@@ -14,19 +14,6 @@ The system uses a custom PatternFly-based chat UI for the chat interface. It loa
 
 ## Architecture
 
-```mermaid
-sequenceDiagram
-    participant B as Browser
-    participant N as nginx (port 3000)
-    participant RM as Request Manager<br/>(port 8000)
-
-    B->>N: GET /login.html
-    N-->>B: serves static files
-
-    B->>N: POST /adk/chat + X-SPIFFE-ID header
-    N->>RM: proxy_pass /adk/ → :8080
-    RM-->>N: {response, agent, ...}
-    N-->>B: {response, agent, ...}
-```
+![Web UI architecture sequence diagram showing browser requesting static files from nginx (port 3000), and nginx reverse-proxying /adk/ requests to Request Manager (port 8080) for chat and audit API calls](images/web-ui.svg)
 
 The nginx container serves the static HTML/JS files and reverse-proxies `/adk/` and `/api/` requests to the request-manager. No build step, no Node.js runtime -- just static files served by nginx.

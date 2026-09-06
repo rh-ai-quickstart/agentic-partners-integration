@@ -4,16 +4,7 @@ Specialist agents don't hallucinate answers -- they query a knowledge base of hi
 
 ## Data Flow
 
-```mermaid
-flowchart TD
-    A["data/software_support_tickets.json"] --> C["ingest_knowledge.py\n(embeds via Gemini, stores in PostgreSQL/pgvector)"]
-    B["data/network_support_tickets.json"] --> C
-    C --> D["pgvector knowledge_documents table"]
-    D --> D1["knowledge_base: software_support"]
-    D --> D2["knowledge_base: network_support"]
-    D1 & D2 --> E["/answer endpoint\n(query embedding → pgvector cosine similarity → LLM summary)"]
-    E --> F["RAG API response:\n{response, sources: [{id, content, similarity}]}"]
-```
+![RAG data flow diagram showing synthetic support ticket JSON files being ingested via ingest_knowledge.py (embedding with Gemini and storing in pgvector), organized into knowledge bases (software_support and network_support), and queried through /answer endpoint using cosine similarity search to return grounded responses with source citations](images/rag.svg)
 
 ## How It Works
 

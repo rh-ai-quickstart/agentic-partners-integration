@@ -43,6 +43,11 @@ help:
 	@echo "  lint-k8s-partner         - Run mypy on kubernetes-partner-agent"
 	@echo "  lint-aro-partner         - Run mypy on aro-partner-agent"
 	@echo ""
+	@echo "Documentation:"
+	@echo "  diagrams                 - Generate SVG diagrams from mermaid sources"
+	@echo "  extract-mermaid          - Extract mermaid diagrams from markdown files"
+	@echo "  validate-diagrams        - Validate all SVG files have .mmd sources"
+	@echo ""
 	@echo "Lockfile Management:"
 	@echo "  check-lockfiles          - Check if all uv.lock files are up-to-date"
 	@echo "  update-lockfiles         - Update all uv.lock files"
@@ -239,6 +244,26 @@ lint-k8s-partner:
 .PHONY: lint-aro-partner
 lint-aro-partner:
 	$(call lint_mypy,aro-partner-agent)
+
+# ============================================================
+# Documentation
+# ============================================================
+
+.PHONY: diagrams
+diagrams:
+	@echo "Generating SVG diagrams from mermaid sources..."
+	@python3 scripts/generate-diagrams.py
+	@echo "Diagram generation complete."
+
+.PHONY: extract-mermaid
+extract-mermaid:
+	@echo "Extracting mermaid diagrams from markdown files..."
+	@python3 scripts/extract-mermaid.py
+	@echo "Mermaid extraction complete."
+
+.PHONY: validate-diagrams
+validate-diagrams:
+	@bash scripts/validate-diagrams.sh
 
 # ============================================================
 # Lockfile Management

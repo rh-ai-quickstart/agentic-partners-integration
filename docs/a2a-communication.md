@@ -4,23 +4,7 @@ All inter-agent communication uses exclusively HTTP-based A2A (Agent-to-Agent) c
 
 ## Communication Pattern
 
-```mermaid
-sequenceDiagram
-    participant RM as Request Manager<br/>(orchestrator)
-    participant OPA as OPA
-    participant AS as Agent Service<br/>(agents)
-
-    RM->>AS: POST /api/v1/agents/routing-agent/invoke<br/>Headers: X-SPIFFE-ID (service identity)<br/>{session_id, user_id, message,<br/>transfer_context: {departments, history}}
-    Note right of AS: Verify caller SPIFFE identity<br/>routing-agent classifies<br/>intent via LLM
-    AS-->>RM: {content, routing_decision: "software-support"}
-
-    RM->>OPA: check_agent_authorization<br/>(user depts ∩ agent caps)
-    OPA-->>RM: allow: true, effective: ["software"]
-
-    RM->>AS: POST /api/v1/agents/software-support/invoke<br/>Headers: X-SPIFFE-ID, X-Delegation-User,<br/>X-Delegation-Agent, Authorization: Bearer JWT<br/>{session_id, user_id, message,<br/>transfer_context: {departments: ["software"],<br/>history, previous_agent: "routing-agent"}}
-    Note right of AS: Verify SPIFFE identity<br/>Re-check OPA (defense-in-depth)<br/>specialist queries RAG,<br/>generates grounded response
-    AS-->>RM: {content: "Based on similar cases..."}
-```
+![A2A communication sequence diagram showing request flow from Request Manager through routing-agent invocation, OPA authorization check, and specialist agent invocation with full credential propagation and defense-in-depth verification](images/a2a-communication-1.svg)
 
 ## How It Works
 
@@ -37,25 +21,7 @@ sequenceDiagram
 
 Both agent types implement the same `POST /api/v1/agents/{name}/invoke` contract with the same request/response schema. The request-manager is unaware of the deployment model — it simply sends HTTP to the URL it obtained from the registry.
 
-```mermaid
-flowchart LR
-    RM["Request Manager"]
-
-    subgraph local["Agent Service (local agents)"]
-        sw["/api/v1/agents/software-support/invoke"]
-        nw["/api/v1/agents/network-support/invoke"]
-    end
-
-    subgraph remote["Kubernetes Partner Agent (remote)"]
-        k8s["/api/v1/agents/kubernetes-support/invoke"]
-    end
-
-    RM -->|"default AGENT_SERVICE_URL\n(no endpoint in registry)"| local
-    RM -->|"explicit endpoint URL\n(from registry)"| remote
-
-    style local fill:#e8f5e9,stroke:#2e7d32
-    style remote fill:#e8eaf6,stroke:#283593
-```
+![Diagram showing Request Manager routing to local agents (software-support and network-support in Agent Service) via default AGENT_SERVICE_URL versus routing to remote agents (Kubernetes Partner Agent) via explicit endpoint URL from registry](images/a2a-communication-2.svg)
 
 The registry response format:
 
@@ -79,41 +45,7 @@ Agents **without** an `endpoint` field are local — the request-manager uses it
 
 ## A2A Endpoint Contract
 
-```mermaid
-flowchart LR
-    subgraph req["POST /api/v1/agents/{agent_name}/invoke"]
-        direction TB
-
-        subgraph headers["Headers · required when ENFORCE_AGENT_AUTH=true"]
-            h1["X-SPIFFE-ID: str\ncaller's SPIFFE identity\n(mock header or mTLS cert)"]
-            h2["Authorization: Bearer JWT\nuser's Keycloak JWT\n(optional, token propagation)"]
-            h3["X-Delegation-User: str\nuser SPIFFE ID\n(specialist calls only → triggers OPA re-check)"]
-            h4["X-Delegation-Agent: str\ntarget agent SPIFFE ID\n(specialist calls only)"]
-        end
-
-        subgraph body["Request Body"]
-            b1["session_id: str — conversation session"]
-            b2["user_id: str — user email"]
-            b3["message: str — user message text"]
-            subgraph tc["transfer_context · optional"]
-                t1["departments: str[]\neffective department tags\n(narrowed by OPA intersection)"]
-                t2["conversation_history: msg[]\nprior messages"]
-                t3["previous_agent: str\nwhich agent handled the last turn"]
-            end
-        end
-
-        subgraph response["Response"]
-            r1["content: str\nagent's text response"]
-            r2["routing_decision: str\n(routing-agent only)\nwhich specialist to delegate to"]
-            r3["agent_name: str\nwhich agent produced the response"]
-        end
-    end
-
-    style headers fill:#fff3e0,stroke:#e65100
-    style body fill:#e8f5e9,stroke:#2e7d32
-    style tc fill:#f1f8e9,stroke:#558b2f
-    style response fill:#e3f2fd,stroke:#1565c0
-```
+![A2A endpoint contract diagram showing POST /api/v1/agents/{agent_name}/invoke with required headers (X-SPIFFE-ID, Authorization, delegation headers), request body (session_id, user_id, message, transfer_context with departments and history), and response structure (content, routing_decision, agent_name)](images/a2a-communication-3.svg)
 
 ## Why A2A Instead of an Event Bus
 

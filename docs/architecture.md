@@ -2,63 +2,7 @@
 
 ## System Diagram
 
-```mermaid
-flowchart TB
-    subgraph ui["Web UI · port 3000"]
-        nginx["PatternFly Chat Interface\nnginx reverse proxy → :8080"]
-    end
-
-    subgraph rm["Request Manager · port 8000"]
-        identity["Identity Middleware\nSPIFFE ID extraction (X-SPIFFE-ID mock)"]
-        adk["adk_endpoints.py\n/adk/chat · /adk/audit"]
-        strategy["communication_strategy.py\ninvoke routing · detect ROUTE:\nquery OPA · invoke specialist · write audit"]
-        identity --> adk --> strategy
-    end
-
-    subgraph as["Agent Service · port 8001"]
-        invoke["/invoke endpoint (main.py)"]
-        routing["routing-agent\nBuild system prompt with departments\nLLM classifies intent → ROUTE:agent"]
-        specialist["specialist agent\nQuery RAG API · build prompt with RAG context\nLLM generates grounded response"]
-        llm["LLM Client Factory\nGeminiClient (default) · OpenAIClient · OllamaClient"]
-        invoke --> routing & specialist
-        routing --> llm
-        specialist --> llm
-    end
-
-    subgraph k8s["Kubernetes Partner Agent · port 8002"]
-        k8s_invoke["/api/v1/agents/kubernetes-support/invoke"]
-        k8s_a2a["/a2a/kubernetes-support/\n(A2A protocol endpoint)"]
-        k8s_llm["Self-contained LLM layer\n(no shared-models dependency)"]
-        k8s_invoke --> k8s_llm
-    end
-
-    subgraph rag["RAG API · port 8003"]
-        ragapi["Embed query → Search pgvector → Return top matches"]
-    end
-
-    subgraph db["PostgreSQL + pgvector · port 5433"]
-        users["users\nemail · spiffe_id · role · departments[]"]
-        sessions["request_sessions\nsession_id · conversation_context{}"]
-        logs["request_logs\nrequest_id · agent_id · response · timing_ms"]
-    end
-
-    gemini["Google Gemini API\ngemini-2.5-flash"]
-    opa["OPA · port 8181"]
-    keycloak["Keycloak · port 8090"]
-
-    nginx -->|"POST /adk/chat\nGET /adk/audit"| adk
-    strategy -->|"A2A: POST /api/v1/agents/{name}/invoke\n(local agents)"| invoke
-    strategy -->|"A2A: POST /invoke\n(remote agents via registry)"| k8s_invoke
-    strategy -->|"GET /api/v1/agents/registry\n(endpoint discovery)"| invoke
-    strategy -->|"authorization query"| opa
-    llm -->|"LLM API calls"| gemini
-    k8s_llm -->|"LLM API calls"| gemini
-    specialist -->|"POST /answer"| ragapi
-    k8s_invoke -->|"POST /answer"| ragapi
-    ragapi --> db
-    rm --> db
-    keycloak -.->|"JWT validation"| identity
-```
+![System architecture showing all services: Web UI (nginx, PatternFly), Request Manager (identity middleware, ADK endpoints, communication strategy), Agent Service (routing and specialist agents with LLM factory), Kubernetes Partner Agent (remote A2A agent), RAG API (pgvector search), PostgreSQL database, OPA policy engine, and Keycloak identity provider](images/architecture-1.svg)
 
 ## Services
 
@@ -91,30 +35,7 @@ flowchart TB
 
 The system supports two deployment models for specialist agents. Both use the same A2A HTTP API contract (`POST /api/v1/agents/{name}/invoke`) and the same YAML config format, but differ in where the agent process runs and how network traffic flows.
 
-```mermaid
-flowchart LR
-    subgraph rm["Request Manager"]
-        strategy["communication_strategy.py"]
-    end
-
-    subgraph as["Agent Service · single process"]
-        invoke["/api/v1/agents/{name}/invoke"]
-        sw["software-support\n(in-process)"]
-        nw["network-support\n(in-process)"]
-        invoke --> sw & nw
-    end
-
-    subgraph k8s["Kubernetes Partner Agent · separate container"]
-        k8s_invoke["/api/v1/agents/kubernetes-support/invoke"]
-    end
-
-    strategy -->|"HTTP to agent-service\n(default URL)"| invoke
-    strategy -->|"HTTP to remote host\n(endpoint from registry)"| k8s_invoke
-
-    style sw fill:#e8f5e9,stroke:#2e7d32
-    style nw fill:#e8f5e9,stroke:#2e7d32
-    style k8s_invoke fill:#e8eaf6,stroke:#283593
-```
+![Agent deployment models comparing local agents (software-support and network-support running in-process within agent-service) versus remote agents (kubernetes-support running as a separate container with its own HTTP endpoint)](images/architecture-2.svg)
 
 **Local agents** (software-support, network-support) run inside the agent-service process. The agent-service's FastAPI `/invoke` endpoint dispatches to the correct `Agent` instance by name. No separate container or network hop is required — the request-manager sends HTTP to the agent-service, which handles routing and LLM calls in-process.
 
@@ -169,22 +90,7 @@ Each chat session maintains conversation history in `request_sessions.conversati
 
 Agent YAML configs are the single source of truth. All downstream systems derive their agent knowledge from these files — no hardcoded agent lists anywhere in the codebase.
 
-```mermaid
-flowchart LR
-    yaml["config/agents/*.yaml\n(departments, description,\nendpoint, a2a card metadata)"]
-
-    yaml --> am["AgentManager\n(agent registry)"]
-    am --> routing["Routing-agent\nsystem prompt\n(dynamic)"]
-    am --> a2a["A2A cards +\nendpoint mounting\n(dynamic)"]
-    am --> registry["GET /api/v1/agents/registry\n(endpoint discovery for\nrequest-manager)"]
-
-    yaml --> sync["sync_agent_capabilities.py\n(make sync-agents)"]
-    sync --> rego["agent_permissions.rego\n(auto-generated)"]
-    rego --> opa["OPA policy engine"]
-
-    style yaml fill:#e8f5e9,stroke:#2e7d32,font-weight:bold
-    style rego fill:#fffde7,stroke:#f9a825
-```
+![Dynamic agent registry flow showing how agent YAML configs drive the AgentManager (which builds routing prompts, A2A cards, and registry endpoint), and sync_agent_capabilities.py (which generates OPA Rego policies for authorization)](images/architecture-3.svg)
 
 **To add a new agent**, create a YAML file and run `make build`:
 
@@ -269,71 +175,7 @@ Available agents:
 
 ## Project Structure
 
-```mermaid
-flowchart TD
-    root["agentic-partners-integration"]
-
-    root --> as["agent-service/\nAI agent processing service"]
-    as --> as_cfg["config/agents/\nAgent YAML configs\n(single source of truth for\nagent capabilities, descriptions,\nand A2A card metadata)"]
-    as --> as_src["src/agent_service/"]
-    as_src --> as_main["main.py — FastAPI app, /invoke endpoint, dynamic routing + RAG"]
-    as_src --> as_agents["agents.py — AgentManager: dynamic registry, dept map, descriptions"]
-    as_src --> as_llm["llm/ — Pluggable LLM clients (Gemini, OpenAI, Ollama)"]
-    as_src --> as_schemas["schemas.py — Request/response models for /invoke"]
-
-    root --> rm["request-manager/\nAAA enforcement, A2A orchestration"]
-    rm --> rm_src["src/request_manager/"]
-    rm_src --> rm_main["main.py — FastAPI app, IdentityMiddleware, session cleanup"]
-    rm_src --> rm_adk["adk_endpoints.py — /adk/chat, /adk/audit (chat + audit API)"]
-    rm_src --> rm_cs["communication_strategy.py — A2A invocation, OPA hard gate, audit"]
-    rm_src --> rm_ac["agent_client_enhanced.py — HTTP client for A2A calls"]
-    rm_src --> rm_cred["credential_service.py — Request-scoped credential management"]
-
-    root --> rag["rag-service/\nRAG API (pgvector + Gemini embeddings)"]
-    rag --> rag_svc["rag_service.py — FastAPI service for /answer endpoint"]
-    rag --> rag_ingest["ingest_knowledge.py — Data ingestion script"]
-
-    root --> ui["pf-chat-ui/\nPatternFly chat web UI"]
-    ui --> ui_static["static/"]
-    ui_static --> ui_index["index.html — Landing page (redirects to login or chat)"]
-    ui_static --> ui_login["login.html — Login page with JWT authentication"]
-    ui_static --> ui_chat["chat.html — Chat interface with PF6 components"]
-    ui_static --> ui_audit["audit.html — Request audit log viewer"]
-    ui_static --> ui_events["audit-events.html — Audit trail viewer"]
-    ui --> ui_nginx["nginx.conf — Reverse proxy to request-manager"]
-
-    root --> k8s["kubernetes-partner-agent/\nStandalone remote Kubernetes agent\n(no shared-models dependency)"]
-    k8s --> k8s_src["src/kubernetes_agent/"]
-    k8s_src --> k8s_main["main.py — FastAPI app, /invoke + A2A"]
-    k8s_src --> k8s_agent["agent.py — KubernetesAgent with LLM"]
-    k8s_src --> k8s_llm["llm/ — Self-contained LLM clients"]
-    k8s --> k8s_cfg["config/agents/ — Agent YAML config"]
-
-    root --> shared["shared-models/\nShared library: DB models, migrations, identity, OPA client"]
-    root --> kc["keycloak/\nKeycloak realm config (OIDC)"]
-
-    root --> pol["policies/\nOPA Rego policies (authorization rules)"]
-    pol --> pol_user["user_permissions.rego — User-to-department mappings"]
-    pol --> pol_agent["agent_permissions.rego — Auto-generated agent capabilities"]
-    pol --> pol_deleg["delegation.rego — Permission intersection logic"]
-    pol --> pol_test["delegation_test.rego — Policy tests"]
-
-    root --> data["data/ — Synthetic support tickets (JSON)"]
-    root --> scripts["scripts/ — Setup, build, test, sync_agent_capabilities"]
-    root --> helm["helm/ — Helm chart for Kubernetes/OpenShift deployment"]
-    root --> makefile["Makefile — Build, test, lint, and deploy targets"]
-    root --> compose["docker-compose.yaml — Full stack compose file"]
-
-    style root fill:#f5f5f5,stroke:#424242,font-weight:bold
-    style as fill:#e8f5e9,stroke:#2e7d32
-    style rm fill:#e3f2fd,stroke:#1565c0
-    style rag fill:#fff3e0,stroke:#e65100
-    style ui fill:#fce4ec,stroke:#c62828
-    style k8s fill:#e8eaf6,stroke:#283593
-    style shared fill:#f3e5f5,stroke:#6a1b9a
-    style kc fill:#e0f2f1,stroke:#00695c
-    style pol fill:#fffde7,stroke:#f9a825
-```
+![Complete project structure showing all directories and key files: agent-service (agent processing with YAML configs), request-manager (AAA enforcement and A2A orchestration), rag-service (vector search), pf-chat-ui (PatternFly web interface), kubernetes-partner-agent (standalone remote agent), shared-models (common library), keycloak (OIDC config), policies (OPA Rego rules), data (support tickets), scripts (automation), helm (K8s deployment), and docker-compose](images/architecture-4.svg)
 
 ## Container Images
 

@@ -1,0 +1,24 @@
+name: Validate Diagrams
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'docs/images/*.svg'
+      - 'docs/images/*.mmd'
+      - 'scripts/validate-diagrams.sh'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'docs/images/*.svg'
+      - 'docs/images/*.mmd'
+      - 'scripts/validate-diagrams.sh'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate diagram sources
+        run: bash scripts/validate-diagrams.sh
