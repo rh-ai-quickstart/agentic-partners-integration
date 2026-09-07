@@ -1,0 +1,252 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: partner-postgres-adk
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: partner_agent
+    ports:
+      - "5432:5432"
+    volumes:
+      - partner-postgres-data:/var/lib/postgresql/data
+    networks:
+      - partner-agent-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d partner_agent"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # RAG API Service
+  rag-api:
+    image: ghcr.io/rh-ai-quickstart/partner-rag-api:latest
+    container_name: partner-rag-api-adk
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - DATABASE_URL=postgresql+asyncpg://user:pass@postgres:5432/partner_agent
+      - EMBEDDING_MODEL=models/gemini-embedding-001
+      - LLM_MODEL=gemini-2.5-flash
+    ports:
+      - "8080:8080"
+    networks:
+      - partner-agent-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Data Ingestion (One-time)
+  ingest-data:
+    image: registry.access.redhat.com/ubi9/python-312:latest
+    container_name: partner-ingest-data-adk
+    volumes:
+      - ./data:/app/data:ro
+      - ./rag-service:/app/rag-service:ro
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - DATABASE_URL=postgresql+asyncpg://user:pass@postgres:5432/partner_agent
+      - EMBEDDING_MODEL=models/gemini-embedding-001
+    working_dir: /app
+    command: >
+      bash -c "
+      pip3 install --user -q pgvector psycopg[binary] sqlalchemy[asyncio] google-genai numpy &&
+      python3 rag-service/ingest_knowledge.py
+      "
+    networks:
+      - partner-agent-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # Keycloak (OIDC Identity Provider)
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.5
+    container_name: partner-keycloak
+    command: ["start-dev", "--import-realm"]
+    environment:
+      - KC_BOOTSTRAP_ADMIN_USERNAME=admin
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=admin123
+      - KC_HTTP_ENABLED=true
+      - KC_HEALTH_ENABLED=true
+    volumes:
+      - ./keycloak/realm-partner.json:/opt/keycloak/data/import/realm-partner.json:ro
+    ports:
+      - "8090:8080"
+      - "9090:9000"
+    networks:
+      - partner-agent-network
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && cat <&3 | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  # OPA (Open Policy Agent) for authorization
+  opa:
+    image: openpolicyagent/opa:latest
+    container_name: partner-opa
+    command: ["run", "--server", "--addr", ":8181", "/policies"]
+    volumes:
+      - ./policies:/policies:ro
+    ports:
+      - "8181:8181"
+    networks:
+      - partner-agent-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8181/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Kubernetes Partner Agent (standalone remote agent — uses OpenAI SDK via Gemini)
+  kubernetes-agent:
+    image: ghcr.io/rh-ai-quickstart/partner-kubernetes-agent:latest
+    container_name: partner-kubernetes-agent-adk
+    environment:
+      - OPENAI_API_KEY=${GOOGLE_API_KEY}
+      - OPENAI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+      - OPENAI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - LOG_LEVEL=INFO
+      - RAG_API_ENDPOINT=http://rag-api:8080/answer
+    ports:
+      - "8002:8080"
+    networks:
+      partner-agent-network:
+        aliases:
+          - kubernetes-agent
+          - partner-kubernetes-agent-full
+    depends_on:
+      rag-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Agent Service
+  agent-service:
+    image: ghcr.io/rh-ai-quickstart/partner-agent-service:latest
+    container_name: partner-agent-service-adk
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://user:pass@postgres:5432/partner_agent
+      - LLM_BACKEND=gemini
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GEMINI_MODEL=gemini-2.5-flash
+      - LOG_LEVEL=INFO
+      - RAG_API_ENDPOINT=http://rag-api:8080/answer
+      - MOCK_SPIFFE=true
+      - SPIFFE_TRUST_DOMAIN=partner.example.com
+      - OPA_URL=http://opa:8181
+    ports:
+      - "8001:8080"
+    networks:
+      - partner-agent-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rag-api:
+        condition: service_healthy
+      opa:
+        condition: service_healthy
+      kubernetes-agent:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Request Manager
+  request-manager:
+    image: ghcr.io/rh-ai-quickstart/partner-request-manager:latest
+    container_name: partner-request-manager-adk
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://user:pass@postgres:5432/partner_agent
+      - LLM_BACKEND=gemini
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GEMINI_MODEL=gemini-2.5-flash
+      - AGENT_SERVICE_URL=http://agent-service:8080
+      - AGENT_TIMEOUT=120
+      - LOG_LEVEL=INFO
+      - STRUCTURED_CONTEXT_ENABLED=true
+      - MOCK_SPIFFE=true
+      - SPIFFE_TRUST_DOMAIN=partner.example.com
+      - OPA_URL=http://opa:8181
+      - KEYCLOAK_URL=http://keycloak:8080
+      - KEYCLOAK_REALM=partner-agent
+      - KEYCLOAK_CLIENT_ID=partner-agent-ui
+    ports:
+      - "8000:8080"
+    networks:
+      partner-agent-network:
+        aliases:
+          - partner-request-manager-full
+    depends_on:
+      postgres:
+        condition: service_healthy
+      agent-service:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      opa:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Database migrations (one-time)
+  db-migrate:
+    image: ghcr.io/rh-ai-quickstart/partner-request-manager:latest
+    container_name: partner-db-migrate
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://user:pass@postgres:5432/partner_agent
+    working_dir: /app
+    command: >
+      bash -c "
+      echo 'Running database migrations...' &&
+      cd /app/shared-models &&
+      python3 -m alembic upgrade head &&
+      echo 'Migrations complete!'
+      "
+    networks:
+      - partner-agent-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # PF Chat UI
+  pf-chat-ui:
+    image: ghcr.io/rh-ai-quickstart/partner-pf-chat-ui:latest
+    container_name: partner-pf-chat-ui
+    ports:
+      - "3000:8080"
+    networks:
+      - partner-agent-network
+    depends_on:
+      - request-manager
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/8080'"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+networks:
+  partner-agent-network:
+    driver: bridge
+
+volumes:
+  partner-postgres-data:

@@ -7,10 +7,10 @@ Deploys the full Partner Agent system to Kubernetes/OpenShift.
 | Service | Image | Port | Purpose |
 |---------|-------|------|---------|
 | PostgreSQL + pgvector | `pgvector/pgvector:pg16` | 5432 | Application data + vector storage |
-| RAG API | `ghcr.io/ccamacho/partner-rag-api` | 8080 | RAG with pgvector |
-| Agent Service | `ghcr.io/ccamacho/partner-agent-service` | 8080 | LLM orchestration |
-| Request Manager | `ghcr.io/ccamacho/partner-request-manager` | 8080 | API gateway |
-| PF Chat UI | `ghcr.io/ccamacho/partner-pf-chat-ui` | 80 | Web interface |
+| RAG API | `ghcr.io/rh-ai-quickstart/partner-rag-api` | 8080 | RAG with pgvector |
+| Agent Service | `ghcr.io/rh-ai-quickstart/partner-agent-service` | 8080 | LLM orchestration |
+| Request Manager | `ghcr.io/rh-ai-quickstart/partner-request-manager` | 8080 | API gateway |
+| PF Chat UI | `ghcr.io/rh-ai-quickstart/partner-pf-chat-ui` | 80 | Web interface |
 
 ## Prerequisites
 
@@ -106,7 +106,7 @@ helm install partner-agent ./helm \
 
 ```yaml
 image:
-  registry: ghcr.io/ccamacho/agentic-partners-integration
+  registry: ghcr.io/rh-ai-quickstart/agentic-partners-integration
   tag: "latest"
 
 requestManager:
