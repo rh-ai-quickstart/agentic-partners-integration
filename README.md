@@ -50,20 +50,7 @@ The ARO agent inspects live Azure resources and returns answers grounded in real
 
 ### Architecture
 
-```mermaid
-flowchart LR
-    User["User asks:\n'My pods are OOMKilled'"]
-    Agent["ARO Agent\nconnects to Azure\nvia MCP"]
-    Investigate["AI investigates:\n1. Check cluster metrics\n2. Read memory limits\n3. Correlate peak traffic"]
-    Answer["Specific answer:\n'Pods use 240Mi of 256Mi limit.\nSpikes at 14:00 UTC.\nIncrease to 512Mi.'"]
-
-    User --> Agent --> Investigate --> Answer
-
-    style User fill:#e3f2fd,stroke:#1565c0
-    style Agent fill:#e8eaf6,stroke:#283593
-    style Investigate fill:#fff3e0,stroke:#e65100
-    style Answer fill:#e8f5e9,stroke:#2e7d32
-```
+![ARO troubleshooting flow showing user question, Azure MCP connection, AI investigation steps, and specific grounded answer with real metrics](docs/images/aro-flow.svg)
 
 **How it works:**
 
@@ -75,46 +62,7 @@ flowchart LR
 6. The loop repeats until the LLM produces a final text answer
 7. If no MCP server is configured, the agent falls back to answering from LLM knowledge only
 
-```mermaid
-flowchart LR
-    users["Users"]
-
-    subgraph frontend[" Web Frontend "]
-        ui["Chat UI"]
-    end
-
-    subgraph orchestrator[" Orchestrator "]
-        adk["Request Manager\n+ Policy Engine\n+ Identity Provider"]
-    end
-
-    subgraph rag_agents[" Knowledge-based Agents "]
-        sw["Software\nSupport"]
-        nw["Network\nSupport"]
-    end
-
-    subgraph mcp_agents[" Live Infrastructure Agents "]
-        k8s["Kubernetes\nSupport"]
-        aro["ARO\nSupport"]
-    end
-
-    kb["Knowledge\nBase"]
-    cloud["Live Cloud\nInfrastructure"]
-
-    users --> ui --> adk
-    adk --> sw & nw
-    adk --> k8s & aro
-    sw & nw -->|search tickets| kb
-    k8s & aro -->|inspect systems| cloud
-
-    style frontend fill:#e3f2fd,stroke:#1565c0
-    style orchestrator fill:#fff3e0,stroke:#e65100
-    style rag_agents fill:#e8f5e9,stroke:#2e7d32
-    style mcp_agents fill:#e8eaf6,stroke:#283593
-    style sw fill:#e8f5e9,stroke:#2e7d32
-    style nw fill:#e8f5e9,stroke:#2e7d32
-    style k8s fill:#e8eaf6,stroke:#283593
-    style aro fill:#e8eaf6,stroke:#283593
-```
+![System architecture showing web frontend, request manager with policy enforcement, RAG-based knowledge agents for software and network support, and MCP-based live infrastructure agents for Kubernetes and ARO support](docs/images/aro-architecture.svg)
 
 The green agents (Software, Network) use **RAG** — they search historical tickets to find documented solutions. The blue agents (Kubernetes, ARO) use **MCP** — they connect to live systems to investigate current state. Different problems need different approaches, but users don't need to know which approach is being used.
 

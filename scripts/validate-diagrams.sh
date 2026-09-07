@@ -7,9 +7,23 @@ set -e
 IMAGES_DIR="docs/images"
 ERRORS=0
 
-# List of SVG files that are hand-crafted (not generated from mermaid)
+# List of SVG files that are hand-crafted or extracted from docs (not standalone .mmd sources)
 EXCEPTIONS=(
     "ui-screenshot.svg"
+    # Extracted from docs/*.md (embedded mermaid blocks):
+    "a2a-communication-1.svg"
+    "a2a-communication-2.svg"
+    "a2a-communication-3.svg"
+    "aaa-security-1.svg"
+    "aaa-security-2.svg"
+    "aaa-security-3.svg"
+    "aaa-security-4.svg"
+    "architecture-1.svg"
+    "architecture-2.svg"
+    "architecture-3.svg"
+    "architecture-4.svg"
+    "rag.svg"
+    "web-ui.svg"
 )
 
 echo "Validating diagram sources in $IMAGES_DIR..."
