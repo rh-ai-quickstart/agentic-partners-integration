@@ -5,7 +5,7 @@ logLevel: "INFO"
 
 # Custom images (built via GitHub Actions)
 image:
-  registry: ghcr.io/ccamacho/agentic-partners-integration
+  registry: ghcr.io/rh-ai-quickstart
   agentService: agent-service
   requestManager: request-manager
   ragApi: rag-api
