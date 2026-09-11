@@ -90,6 +90,27 @@ async def _request_manager_startup() -> None:
     """Custom startup logic for Request Manager."""
     import asyncio
 
+    # DCR self-registration — must run before any token exchange
+    from shared_models.dcr_client import DCR_ENABLED, get_dcr_client
+    from shared_models.spire_client import get_spire_client
+
+    if DCR_ENABLED:
+        try:
+            spire = get_spire_client()
+            svid = spire.fetch_svid()
+            spiffe_id = svid.spiffe_id if svid else "spiffe://partner.example.com/service/request-manager"
+        except Exception:
+            spiffe_id = os.getenv("SPIFFE_ID", "spiffe://partner.example.com/service/request-manager")
+
+        dcr = get_dcr_client(spiffe_id=spiffe_id, client_name="request-manager")
+        try:
+            await dcr.ensure_registered()
+            logger.info("DCR self-registration complete", extra={"spiffe_id": spiffe_id})
+        except Exception as exc:
+            logger.warning(
+                "DCR self-registration failed — continuing with legacy auth: %s", exc
+            )
+
     # Initialize unified processor
     global unified_processor
     communication_strategy = get_communication_strategy()

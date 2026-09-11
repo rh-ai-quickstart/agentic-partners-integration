@@ -1,0 +1,52 @@
+{
+  "realm": "partner-agent",
+  "groups": [
+    {"name": "engineering", "description": "Engineering department"},
+    {"name": "software", "description": "Software development team"},
+    {"name": "network", "description": "Network operations team"},
+    {"name": "kubernetes", "description": "Kubernetes platform team"},
+    {"name": "admin", "description": "System administrators"}
+  ],
+  "users": [
+    {
+      "username": "carlos",
+      "email": "carlos@example.com",
+      "password": "carlos123",
+      "firstName": "Carlos",
+      "lastName": "Camacho",
+      "groups": ["engineering", "software", "kubernetes"],
+      "displayName": "Carlos",
+      "description": "Engineering, Software depts"
+    },
+    {
+      "username": "luis",
+      "email": "luis@example.com",
+      "password": "luis123",
+      "firstName": "Luis",
+      "lastName": "Arizmendi",
+      "groups": ["engineering", "network"],
+      "displayName": "Luis",
+      "description": "Engineering, Network depts"
+    },
+    {
+      "username": "sharon",
+      "email": "sharon@example.com",
+      "password": "sharon123",
+      "firstName": "Sharon",
+      "lastName": "Admin",
+      "groups": ["engineering", "software", "network", "kubernetes", "admin"],
+      "displayName": "Sharon",
+      "description": "Admin (All departments)"
+    },
+    {
+      "username": "josh",
+      "email": "josh@example.com",
+      "password": "josh123",
+      "firstName": "Josh",
+      "lastName": "Restricted",
+      "groups": [],
+      "displayName": "Josh",
+      "description": "No department access"
+    }
+  ]
+}

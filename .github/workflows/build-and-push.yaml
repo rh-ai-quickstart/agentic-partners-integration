@@ -5,6 +5,7 @@ on:
     branches:
       - 'main'
       - 'dev'
+      - 'integration-services'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.sha }}

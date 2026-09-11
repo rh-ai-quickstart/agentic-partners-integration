@@ -69,18 +69,78 @@ services:
         condition: service_healthy
     restart: "no"
 
+  # SPIRE Server (Workload Identity CA)
+  spire-server:
+    image: ghcr.io/spiffe/spire-server:1.9.0
+    container_name: partner-spire-server
+    hostname: spire-server
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./spire/server:/opt/spire/conf/server:ro
+      - spire-server-data:/opt/spire/data
+    command: ["-config", "/opt/spire/conf/server/server.conf"]
+    networks:
+      - partner-agent-network
+    healthcheck:
+      test: ["/opt/spire/bin/spire-server", "healthcheck", "-shallow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # SPIRE Agent (Issues SVIDs to workloads)
+  spire-agent:
+    image: ghcr.io/spiffe/spire-agent:1.9.0
+    container_name: partner-spire-agent
+    hostname: spire-agent
+    volumes:
+      - ./spire/agent:/opt/spire/conf/agent:ro
+      - spire-socket:/run/spire/sockets
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: ["-config", "/opt/spire/conf/agent/agent.conf"]
+    depends_on:
+      spire-server:
+        condition: service_healthy
+    networks:
+      - partner-agent-network
+    healthcheck:
+      test: ["/opt/spire/bin/spire-agent", "healthcheck", "-shallow", "-socketPath", "/run/spire/sockets/agent.sock"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # SPIRE OIDC Discovery Provider (SVID to JWT conversion)
+  spire-oidc-provider:
+    image: ghcr.io/spiffe/oidc-discovery-provider:1.9.0
+    container_name: partner-spire-oidc
+    hostname: spire-oidc-provider
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./spire/oidc:/opt/spire/oidc-provider/config:ro
+      - spire-socket:/run/spire/sockets:ro
+    command: ["-config", "/opt/spire/oidc-provider/config/oidc-discovery-provider.conf"]
+    depends_on:
+      spire-agent:
+        condition: service_healthy
+    networks:
+      - partner-agent-network
+
   # Keycloak (OIDC Identity Provider)
   keycloak:
-    image: quay.io/keycloak/keycloak:26.5
+    image: quay.io/keycloak/keycloak:26.7
     container_name: partner-keycloak
-    command: ["start-dev", "--import-realm"]
+    command: ["start-dev", "--import-realm", "--features=token-exchange"]
     environment:
       - KC_BOOTSTRAP_ADMIN_USERNAME=admin
       - KC_BOOTSTRAP_ADMIN_PASSWORD=admin123
       - KC_HTTP_ENABLED=true
       - KC_HEALTH_ENABLED=true
+      - KC_FEATURES=token-exchange
     volumes:
-      - ./keycloak/realm-partner.json:/opt/keycloak/data/import/realm-partner.json:ro
+      - ./keycloak/realm-base.json:/opt/keycloak/data/import/realm-base.json:ro
     ports:
       - "8090:8080"
       - "9090:9000"
@@ -93,6 +153,30 @@ services:
       retries: 12
       start_period: 60s
 
+  # Keycloak Seeder (runs once to populate users/groups)
+  keycloak-seed:
+    image: ubuntu:22.04
+    container_name: partner-keycloak-seed
+    volumes:
+      - ./scripts/seed-keycloak.sh:/seed-keycloak.sh:ro
+    environment:
+      - KEYCLOAK_URL=http://keycloak:8080
+      - KEYCLOAK_REALM=partner-agent
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin123
+    command: >
+      bash -c "
+      apt-get update -qq &&
+      apt-get install -y -qq curl jq > /dev/null 2>&1 &&
+      bash /seed-keycloak.sh
+      "
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    networks:
+      - partner-agent-network
+    restart: "no"
+
   # OPA (Open Policy Agent) for authorization
   opa:
     image: openpolicyagent/opa:latest
@@ -100,10 +184,16 @@ services:
     command: ["run", "--server", "--addr", ":8181", "/policies"]
     volumes:
       - ./policies:/policies:ro
+      - spire-socket:/run/spire/sockets:ro
     ports:
       - "8181:8181"
+    environment:
+      - SPIRE_SOCKET_PATH=/run/spire/sockets/agent.sock
     networks:
       - partner-agent-network
+    depends_on:
+      spire-agent:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8181/health"]
       interval: 5s
@@ -122,14 +212,21 @@ services:
       - OPENAI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
       - LOG_LEVEL=INFO
       - RAG_API_ENDPOINT=http://rag-api:8080/answer
+      - MOCK_SPIFFE=false
+      - SPIFFE_ENDPOINT_SOCKET=/run/spire/sockets/agent.sock
+      - SPIFFE_TRUST_DOMAIN=partner.example.com
     ports:
       - "8002:8080"
+    volumes:
+      - spire-socket:/run/spire/sockets:ro
     networks:
       partner-agent-network:
         aliases:
           - kubernetes-agent
           - partner-kubernetes-agent-full
     depends_on:
+      spire-agent:
+        condition: service_healthy
       rag-api:
         condition: service_healthy
     healthcheck:
@@ -151,14 +248,19 @@ services:
       - GEMINI_MODEL=gemini-2.5-flash
       - LOG_LEVEL=INFO
       - RAG_API_ENDPOINT=http://rag-api:8080/answer
-      - MOCK_SPIFFE=true
+      - MOCK_SPIFFE=false
+      - SPIFFE_ENDPOINT_SOCKET=/run/spire/sockets/agent.sock
       - SPIFFE_TRUST_DOMAIN=partner.example.com
       - OPA_URL=http://opa:8181
     ports:
       - "8001:8080"
+    volumes:
+      - spire-socket:/run/spire/sockets:ro
     networks:
       - partner-agent-network
     depends_on:
+      spire-agent:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       rag-api:
@@ -188,19 +290,25 @@ services:
       - AGENT_TIMEOUT=120
       - LOG_LEVEL=INFO
       - STRUCTURED_CONTEXT_ENABLED=true
-      - MOCK_SPIFFE=true
+      - SPIFFE_ENDPOINT_SOCKET=/run/spire/sockets/agent.sock
       - SPIFFE_TRUST_DOMAIN=partner.example.com
       - OPA_URL=http://opa:8181
       - KEYCLOAK_URL=http://keycloak:8080
       - KEYCLOAK_REALM=partner-agent
       - KEYCLOAK_CLIENT_ID=partner-agent-ui
+      - KEYCLOAK_CLIENT_SECRET=xUYh3YZMwTLCv2OuizDj59JW0XpZ9EkW
+      - SPIRE_OIDC_ISSUER=http://spire-oidc-provider:8443
     ports:
       - "8000:8080"
+    volumes:
+      - spire-socket:/run/spire/sockets:ro
     networks:
       partner-agent-network:
         aliases:
           - partner-request-manager-full
     depends_on:
+      spire-agent:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       agent-service:
@@ -262,3 +370,5 @@ networks:
 
 volumes:
   partner-postgres-data:
+  spire-server-data:
+  spire-socket:

@@ -7,7 +7,7 @@ intersection model: Effective = User Departments ∩ Agent Capabilities.
 
 import os
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 import httpx
 import structlog
@@ -20,18 +20,41 @@ OPA_POLICY_PATH: str = "v1/data/partner/authorization/decision"
 
 @dataclass
 class Delegation:
-    """Delegation context: user delegates access to an agent."""
+    """Delegation context: user delegates access to an agent.
+
+    The act_claim field contains the RFC 8693 'act' (actor) claim from JWT tokens,
+    providing cryptographic proof of the delegation chain. This replaces the
+    trust-on-first-use model of HTTP headers with verifiable JWT claims.
+    """
 
     user_spiffe_id: str
     agent_spiffe_id: str
     user_departments: list[str] = field(default_factory=list)
+    act_claim: Optional[dict[str, Any]] = None
+    delegation_chain: Optional[List[str]] = None
+    original_user_email: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "user_spiffe_id": self.user_spiffe_id,
             "agent_spiffe_id": self.agent_spiffe_id,
             "user_departments": self.user_departments,
         }
+
+        # Include act_claim for OPA authorization if present
+        # This provides cryptographic proof of delegation chain via JWT
+        if self.act_claim:
+            result["act_claim"] = self.act_claim
+
+        # Include delegation chain as flattened list if present
+        if self.delegation_chain:
+            result["delegation_chain"] = self.delegation_chain
+
+        # Include original user email if present
+        if self.original_user_email:
+            result["original_user_email"] = self.original_user_email
+
+        return result
 
 
 @dataclass

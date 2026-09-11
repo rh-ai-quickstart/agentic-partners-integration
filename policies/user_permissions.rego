@@ -1,10 +1,18 @@
 package partner.authorization
 
-# User-to-department mappings (fallback for local/mock mode).
-# In production with OIDC/Keycloak, departments come from JWT group claims.
+# User departments are sourced from JWT group claims (Keycloak).
+# No static fallback - all users must be managed in Keycloak.
+# This ensures production-ready user management without hardcoded data.
+#
+# To add users:
+#   - Development: Run scripts/seed-keycloak.sh
+#   - Production: Use Keycloak Admin UI or LDAP/SAML integration
+#
+# JWT token structure:
+#   {
+#     "email": "user@example.com",
+#     "groups": ["engineering", "software", "kubernetes"]
+#   }
 user_departments_fallback := {
-	"carlos@example.com": ["engineering", "software", "kubernetes"],
-	"luis@example.com": ["engineering", "network"],
-	"sharon@example.com": ["engineering", "software", "network", "kubernetes", "admin"],
-	"josh@example.com": [],
+	# Empty - all users managed in Keycloak
 }

@@ -24,11 +24,35 @@ SERVICE_NAME = "agent-service"
 logger = configure_logging(SERVICE_NAME)
 
 
+async def _agent_service_startup() -> None:
+    """Custom startup logic for Agent Service — DCR self-registration."""
+    from shared_models.dcr_client import DCR_ENABLED, get_dcr_client
+    from shared_models.spire_client import get_spire_client
+
+    if DCR_ENABLED:
+        try:
+            spire = get_spire_client()
+            svid = spire.fetch_svid()
+            spiffe_id = svid.spiffe_id if svid else "spiffe://partner.example.com/agent-service"
+        except Exception:
+            spiffe_id = os.getenv("SPIFFE_ID", "spiffe://partner.example.com/agent-service")
+
+        dcr = get_dcr_client(spiffe_id=spiffe_id, client_name="agent-service")
+        try:
+            await dcr.ensure_registered()
+            logger.info("DCR self-registration complete", extra={"spiffe_id": spiffe_id})
+        except Exception as exc:
+            logger.warning(
+                "DCR self-registration failed — continuing with legacy auth: %s", exc
+            )
+
+
 # Create lifespan using shared utility
 def lifespan(app: FastAPI) -> Any:
     return create_shared_lifespan(
         service_name="agent-service",
         version=__version__,
+        custom_startup=_agent_service_startup,
     )
 
 
@@ -50,6 +74,42 @@ from .agents import AgentManager as _AgentManagerForA2A
 _a2a_manager = _AgentManagerForA2A()
 for _name, _config in _a2a_manager.get_specialist_agents().items():
     app.mount(f"/a2a/{_name}", get_a2a_app(_name, _config))
+
+# Root-level agent card directory — serves a JSON index of all specialist
+# agent card URLs at /.well-known/agent-card.json so that external callers
+# (e.g. an Ericsson orchestrator) who know only our base domain can discover
+# all available agents and their individual card locations.
+from .a2a.agent_cards import create_agent_card as _create_card
+
+_GATEWAY_BASE_URL = os.getenv(
+    "GATEWAY_BASE_URL", "http://partner-agent-service-full:8080"
+).rstrip("/")
+
+
+@app.get("/.well-known/agent-card.json", include_in_schema=False)
+async def root_agent_card_directory() -> Dict[str, Any]:
+    """A2A discovery endpoint for the agent-service gateway.
+
+    Returns a JSON object listing the /.well-known/agent-card.json URLs
+    for every specialist agent mounted on this service.  External callers
+    fetch this first to discover which agents are available, then fetch
+    each individual card to learn authentication requirements and skills.
+    """
+    manager = _AgentManagerForA2A()
+    agent_card_urls = {
+        name: f"{_GATEWAY_BASE_URL}/a2a/{name}/.well-known/agent-card.json"
+        for name in manager.get_specialist_agents()
+    }
+    return {
+        "gateway": _GATEWAY_BASE_URL,
+        "agent_cards": agent_card_urls,
+        "note": (
+            "Fetch each agent_card URL to get the full A2A AgentCard including "
+            "security_schemes (OAuth2 token endpoint, required audience, mTLS trust domain) "
+            "and supported skills."
+        ),
+    }
+
 
 # Add SPIFFE identity middleware — extracts caller identity from
 # X-SPIFFE-ID header (mock mode) or mTLS peer certificate (production).

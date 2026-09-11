@@ -116,6 +116,11 @@ async def adk_chat(
         departments = _extract_departments(payload)
         user_context["departments"] = departments
 
+        # Extract act claim for delegation chain tracking (RFC 8693)
+        act_claim = payload.get("act")
+        if act_claim:
+            user_context["act_claim"] = act_claim
+
         logger.info("User departments", user=user_email, departments=departments)
 
         # Route ALL messages to routing-agent first

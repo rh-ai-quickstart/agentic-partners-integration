@@ -222,3 +222,6 @@ blog*/
 # Os specific files
 .DS_Store
 *.iml
+
+# Claude Code internal tracking
+.superinference/

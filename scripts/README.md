@@ -1,63 +1,77 @@
-# Scripts - Essential Setup & Testing
+# Scripts Directory
 
-## Main Scripts
+## 🎯 Main Scripts (Root)
 
-### `setup.sh` - Complete Setup
-**One command to setup everything**
+### **setup.sh** ⭐
+**THE ONLY SCRIPT YOU NEED TO RUN**
 
+Idempotent setup that does everything:
+- Seeds Keycloak (users, groups, client)
+- Configures confidential authentication  
+- Starts SPIRE auto-registration
+- Restarts services
+- Verifies all users
+
+**Usage:**
 ```bash
-# Recommended (new)
-export AI_API_KEY="your-key"
-export AI_PROVIDER=gemini
-bash scripts/setup.sh
-
-# Alternative (legacy, still supported)
-export GOOGLE_API_KEY="your-key"  # Deprecated
 bash scripts/setup.sh
 ```
 
-**What it does:**
-- Builds all container images
-- Starts PostgreSQL, Keycloak, OPA
-- Runs database migrations
-- Starts agent-service, request-manager, rag-api, pf-chat-ui
-- Ingests RAG knowledge base
-
-Users are managed in Keycloak and auto-created in the DB on first login.
+**100% idempotent** - run as many times as you want.
 
 ---
 
-### `test.sh` - Complete Testing
-**One command to test everything**
+### **monitor.sh** 📊
+Real-time AAA flow monitoring
 
+Shows:
+- User messages & responses
+- Token exchanges (RFC 8693)
+- OPA authorization decisions
+- Audit events
+
+**Usage:**
 ```bash
-bash scripts/test.sh
+bash scripts/monitor.sh [LOG_LEVEL]
 ```
 
-**What it tests:**
-- Health checks (all services including Keycloak, OPA)
-- Keycloak authentication (login, token validation, invalid password rejection)
-- OPA authorization (department-based agent access)
-- RAG queries
-- End-to-end workflow (login -> chat -> response)
-- Database state
+Levels: `INFO` (default), `WARNING`, `ERROR`
 
 ---
 
-### `build_containers.sh`
-Builds all container images (used by setup.sh)
+## 📂 Seed Scripts (seed/)
+
+These are automatically called by `setup.sh`:
+
+- **seed-keycloak.sh** - Seeds users & groups from config/test-users.json
+- **seed-client.sh** - Configures confidential client, returns secret
+- **seed-spire.sh** - Starts SPIRE auto-registration daemon
+- **spire-auto-register-daemon.sh** - Background daemon (called by seed-spire.sh)
+- **start-spire-auto-register.sh** - Daemon starter (called by seed-spire.sh)
+
+**Don't call these directly** - use `setup.sh` instead.
 
 ---
 
-## Quick Reference
+## 📦 Archive
+
+Old/auxiliary scripts in `archive/` (28 files) - kept for reference only.
+
+---
+
+## 🚀 Quick Start
 
 ```bash
-# Complete setup + initialization
+# ONE COMMAND TO SETUP EVERYTHING:
 bash scripts/setup.sh
 
-# Test everything
-bash scripts/test.sh
-
-# Just build containers
-bash scripts/build_containers.sh
+# MONITOR THE FLOW:
+bash scripts/monitor.sh
 ```
+
+That's it! Everything else is automatic.
+
+---
+
+**Philosophy:** Two scripts at root, modular seeds called automatically
+**Last Updated:** 2026-09-09

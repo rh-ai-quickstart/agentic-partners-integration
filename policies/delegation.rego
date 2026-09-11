@@ -2,18 +2,29 @@ package partner.authorization
 
 import rego.v1
 
-# Parse entity type from SPIFFE ID: spiffe://domain/TYPE/name -> TYPE
-parse_spiffe_type(spiffe_id) := type if {
-	parts := split(spiffe_id, "/")
-	count(parts) >= 4
-	type := parts[count(parts) - 2]
-}
-
-# Parse entity name from SPIFFE ID: spiffe://domain/type/NAME -> NAME
+# Parse service name from SPIFFE ID: spiffe://partner.example.com/service-name -> service-name
 parse_spiffe_name(spiffe_id) := name if {
 	parts := split(spiffe_id, "/")
 	count(parts) >= 4
 	name := parts[count(parts) - 1]
+}
+
+# Determine entity type from SPIFFE ID
+# Services: request-manager, agent-service, kubernetes-agent, rag-api
+# Users would have spiffe://partner.example.com/user/username format
+parse_spiffe_type(spiffe_id) := "service" if {
+	service_names := {"request-manager", "agent-service", "kubernetes-agent", "aro-agent", "rag-api"}
+	name := parse_spiffe_name(spiffe_id)
+	name in service_names
+}
+
+parse_spiffe_type(spiffe_id) := "user" if {
+	contains(spiffe_id, "/user/")
+}
+
+parse_spiffe_type(spiffe_id) := "agent" if {
+	contains(spiffe_id, "/agent/")
+	not contains(spiffe_id, "agent-service")
 }
 
 # Default deny

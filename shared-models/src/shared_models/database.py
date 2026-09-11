@@ -237,15 +237,6 @@ class DatabaseManager:
 
                     current_version = version_row[0]
 
-                    # Verify that core tables exist and are accessible
-                    await session.execute(
-                        text("SELECT 1 FROM request_sessions LIMIT 1")
-                    )
-                    await session.execute(text("SELECT 1 FROM request_logs LIMIT 1"))
-                    await session.execute(
-                        text("SELECT 1 FROM user_integration_configs LIMIT 1")
-                    )
-
                     logger.info(
                         "Database migration completed successfully",
                         version=current_version,

@@ -1,7 +1,6 @@
 name: "kubernetes-support"
 description: "Handles Kubernetes issues, pod failures, deployment problems, cluster troubleshooting, container orchestration"
 departments: ["kubernetes"]
-endpoint: "http://partner-kubernetes-agent-full:8080/api/v1/agents/kubernetes-support/invoke"
 llm_backend: "gemini"
 llm_model: "gemini-2.5-flash"
 system_message: |
