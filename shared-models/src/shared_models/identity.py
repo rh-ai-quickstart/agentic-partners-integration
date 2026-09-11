@@ -1,23 +1,26 @@
 """
 SPIFFE Workload Identity for Python/FastAPI services.
 
-Provides mock and real SPIFFE identity extraction, matching the pattern
-from zero-trust-agent-demo/pkg/spiffe/workload.go.
+Production implementation using real SPIRE/SPIFFE.
+Uses official spiffe library from https://pypi.org/project/spiffe/
 
-In mock mode (MOCK_SPIFFE=true, the default), identity is carried via
-the X-SPIFFE-ID header. In real mode, identity is extracted from mTLS
-peer certificate SANs.
+Identity is fetched from SPIRE Agent via the Workload API (X.509-SVIDs).
 """
 
 import os
 from dataclasses import dataclass
 from typing import Optional
+import logging
 
 from fastapi import Request
 
+logger = logging.getLogger(__name__)
+
 # Configuration from environment
-MOCK_SPIFFE: bool = os.getenv("MOCK_SPIFFE", "true").lower() == "true"
 TRUST_DOMAIN: str = os.getenv("SPIFFE_TRUST_DOMAIN", "partner.example.com")
+
+# Import SPIRE client (production)
+from .spire_client import get_spire_client, SPIFFE_AVAILABLE
 
 
 @dataclass
@@ -51,28 +54,26 @@ def make_spiffe_id(entity_type: str, name: str) -> str:
 def extract_identity(request: Request) -> Optional[WorkloadIdentity]:
     """Extract workload identity from an incoming request.
 
-    In mock mode: reads the X-SPIFFE-ID header.
-    In real mode: extracts SPIFFE ID from the mTLS peer certificate SAN.
+    Reads the X-SPIFFE-ID header (caller's SVID identity).
+    In production, this would be validated against mTLS certificate.
     """
-    if MOCK_SPIFFE:
-        spiffe_id = request.headers.get("X-SPIFFE-ID")
-        if spiffe_id:
-            return WorkloadIdentity(spiffe_id=spiffe_id)
-        return None
+    # Read caller's SPIFFE ID from header
+    # (In full mTLS setup, this would be extracted from peer certificate)
+    spiffe_id = request.headers.get("X-SPIFFE-ID")
+    if spiffe_id:
+        return WorkloadIdentity(spiffe_id=spiffe_id)
 
-    # Real mode: extract from mTLS peer certificate
-    # The ASGI server (uvicorn with ssl) populates the TLS info
-    # via the transport's get_extra_info("peercert")
+    # Fallback: try to extract from mTLS peer certificate
     scope = request.scope
     transport = scope.get("transport")
     if transport is not None:
         peercert = transport.get_extra_info("peercert")
         if peercert:
-            # Extract SPIFFE ID from SAN (URI type)
             san = peercert.get("subjectAltName", ())
             for san_type, san_value in san:
                 if san_type == "URI" and san_value.startswith("spiffe://"):
                     return WorkloadIdentity(spiffe_id=san_value)
+
     return None
 
 
@@ -83,18 +84,46 @@ def outbound_identity_headers(
 ) -> dict[str, str]:
     """Build identity headers for outgoing service-to-service requests.
 
-    In mock mode, sets X-SPIFFE-ID header with the service's identity.
-    In real mode, mTLS handles identity — only delegation headers are added.
+    Fetches real X.509-SVID from SPIRE Agent and sets X-SPIFFE-ID header.
+    In full mTLS setup, identity would be in the client certificate.
 
     Args:
         service_name: Name of the calling service (e.g. "request-manager")
         delegation_user: SPIFFE ID of the user who delegated access (optional)
         delegation_agent: SPIFFE ID of the agent acting on behalf of user (optional)
+
+    Raises:
+        RuntimeError: If SPIRE SVID fetch fails (production - no fallback allowed)
     """
     headers: dict[str, str] = {}
 
-    if MOCK_SPIFFE:
-        headers["X-SPIFFE-ID"] = make_spiffe_id("service", service_name)
+    # Fetch real SVID from SPIRE (PRODUCTION - NO MOCK ALLOWED)
+    if not SPIFFE_AVAILABLE:
+        raise RuntimeError(
+            "SPIFFE library not available. Install with: pip install spiffe"
+        )
+
+    try:
+        client = get_spire_client()
+        svid_info = client.fetch_svid()
+
+        if not svid_info:
+            raise RuntimeError(
+                f"Failed to fetch SVID from SPIRE for service '{service_name}'. "
+                "SPIRE integration is REQUIRED - no fallback allowed."
+            )
+
+        # Set identity header with real SPIFFE ID from SVID
+        headers["X-SPIFFE-ID"] = svid_info.spiffe_id
+        logger.info(f"Using real SPIRE SVID: {svid_info.spiffe_id}")
+
+    except Exception as e:
+        # Production: FAIL LOUDLY - no fallback
+        logger.error(f"SPIRE SVID fetch failed for '{service_name}': {e}")
+        raise RuntimeError(
+            f"Cannot obtain SVID from SPIRE for service '{service_name}': {e}. "
+            "SPIRE integration is REQUIRED - no fallback allowed."
+        ) from e
 
     if delegation_user:
         headers["X-Delegation-User"] = delegation_user

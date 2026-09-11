@@ -2,8 +2,8 @@
 
 import os
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from datetime import datetime, timezone, timedelta
+from typing import Any, Dict, Optional, Tuple
 
 import httpx
 from fastapi import HTTPException, status
@@ -17,6 +17,13 @@ from .agent_client_enhanced import EnhancedAgentClient
 from .normalizer import RequestNormalizer
 
 logger = configure_logging("request-manager")
+
+# Module-level registry cache shared across all DirectHTTPStrategy instances
+# within a process.  key = agent_service_url, value = (endpoints, fetched_at).
+# This prevents every new strategy instance (created per request by
+# get_communication_strategy()) from making a redundant registry call.
+_registry_cache: Dict[str, Tuple[Dict[str, str], datetime]] = {}
+_REGISTRY_TTL_SECONDS = int(os.getenv("REGISTRY_TTL_SECONDS", "300"))
 
 
 def _should_filter_sessions_by_integration_type() -> bool:
@@ -347,8 +354,7 @@ class DirectHTTPStrategy(CommunicationStrategy):
             "AGENT_SERVICE_URL", "http://agent-service:8080"
         )
         self._timeout = float(os.getenv("AGENT_TIMEOUT", "120"))
-        self._registry_fetched = False
-        # Start with no per-agent endpoints; will be populated on first use
+        # Per-agent endpoints populated on first use via _ensure_registry().
         self.agent_client = EnhancedAgentClient(
             agent_service_url=self._agent_service_url, timeout=self._timeout
         )
@@ -359,19 +365,73 @@ class DirectHTTPStrategy(CommunicationStrategy):
         )
 
     async def _ensure_registry(self) -> None:
-        """Fetch the agent registry from agent-service if not yet cached.
+        """Populate per-agent endpoint URLs via a 3-tier discovery cascade.
 
-        Populates ``self.agent_client.agent_endpoints`` with per-agent
-        invoke URLs so remote agents are routed to the correct host.
-        Fetched once and cached for the lifetime of this strategy instance.
-        If the registry call fails, logs a warning and falls back to the
-        default agent-service URL for all agents.
+        Tier 1 — DCR registry (future): query Keycloak for dynamically
+            registered agent clients.  Skipped until DCR_ENABLED=true.
+        Tier 2 — /.well-known/agent-card.json: fetch cards from known
+            agent base URLs discovered from the Tier-3 YAML registry.
+            Extracts the authoritative ``url`` field from each card.
+        Tier 3 — YAML registry (current default): GET
+            /api/v1/agents/registry on agent-service.  Always attempted
+            as the final fallback.
+
+        Results are cached module-wide for REGISTRY_TTL_SECONDS (default
+        5 minutes) so new strategy instances (one per request) do not each
+        make a redundant HTTP call.
+
+        Bug fix vs. old implementation: ``_registry_fetched`` was set to
+        True *before* the try block, permanently disabling retries for the
+        process lifetime on the first transient failure.  The module-level
+        TTL cache below only updates on *success*, so failures are retried
+        on the next request after the TTL window.
         """
-        if self._registry_fetched:
-            return
-        self._registry_fetched = True
+        global _registry_cache
 
-        registry_url = f"{self._agent_service_url.rstrip('/')}/api/v1/agents/registry"
+        now = datetime.now(timezone.utc)
+        cached = _registry_cache.get(self._agent_service_url)
+        if cached is not None:
+            endpoints, fetched_at = cached
+            age = (now - fetched_at).total_seconds()
+            if age < _REGISTRY_TTL_SECONDS:
+                self.agent_client.agent_endpoints = endpoints
+                return
+
+        # ── Tier 3 — YAML registry (always attempted, current behaviour) ──
+        endpoints = await self._fetch_yaml_registry()
+
+        # ── Tier 2 — /.well-known/agent-card.json (additive: enrich URLs) ──
+        # Only runs if AGENT_CARD_DISCOVERY=true (opt-in, default off).
+        if os.getenv("AGENT_CARD_DISCOVERY", "false").lower() == "true":
+            card_endpoints = await self._fetch_wellknown_cards(endpoints)
+            endpoints.update(card_endpoints)
+
+        # Cache on success (even if empty — "all local" is valid)
+        _registry_cache[self._agent_service_url] = (endpoints, now)
+        if endpoints:
+            self.agent_client.agent_endpoints = endpoints
+            logger.info(
+                "Agent registry loaded",
+                agent_count=len(endpoints),
+                agents=list(endpoints.keys()),
+                ttl_seconds=_REGISTRY_TTL_SECONDS,
+            )
+        else:
+            logger.info(
+                "Agent registry loaded (all agents local)",
+                ttl_seconds=_REGISTRY_TTL_SECONDS,
+            )
+
+    async def _fetch_yaml_registry(self) -> Dict[str, str]:
+        """Tier 3: fetch remote agent endpoints from the YAML-backed registry.
+
+        Returns a dict of {agent_name: invoke_url} for agents that have an
+        explicit ``endpoint`` in their YAML config.  Returns an empty dict
+        (not a raise) on any failure so callers fall through gracefully.
+        """
+        registry_url = (
+            f"{self._agent_service_url.rstrip('/')}/api/v1/agents/registry"
+        )
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(registry_url)
@@ -383,24 +443,61 @@ class DirectHTTPStrategy(CommunicationStrategy):
                 endpoint = info.get("endpoint")
                 if endpoint:
                     endpoints[name] = endpoint
-
-            if endpoints:
-                self.agent_client.agent_endpoints = endpoints
-                logger.info(
-                    "Agent registry loaded",
-                    agent_count=len(endpoints),
-                    agents=list(endpoints.keys()),
-                )
-            else:
-                logger.info("Agent registry loaded (all agents local)")
+            return endpoints
 
         except Exception as e:
             logger.warning(
-                "Failed to fetch agent registry, using default agent-service URL for all agents",
+                "Tier-3 YAML registry unavailable — all agents will use "
+                "default agent-service URL",
                 registry_url=registry_url,
                 error=str(e),
                 error_type=type(e).__name__,
             )
+            return {}
+
+    async def _fetch_wellknown_cards(
+        self, known_endpoints: Dict[str, str]
+    ) -> Dict[str, str]:
+        """Tier 2: enrich invoke URLs by reading each agent's A2A card.
+
+        For every agent whose base URL is known (from YAML registry or env),
+        attempts GET {base_url}/.well-known/agent-card.json.  If the card is
+        reachable, uses its ``url`` field as the authoritative invoke endpoint.
+        This allows agents to self-describe their invoke URL rather than
+        relying solely on the YAML ``endpoint`` field.
+
+        Returns a dict of {agent_name: invoke_url} for agents whose card
+        was successfully fetched.  Empty dict on complete failure.
+        """
+        enriched: Dict[str, str] = {}
+        # Derive candidate base URLs from known endpoints or env
+        base_urls: Dict[str, str] = {}
+        for name, invoke_url in known_endpoints.items():
+            # strip /api/v1/agents/{name}/invoke suffix to get base URL
+            base = invoke_url.split("/api/v1/agents/")[0] if "/api/v1/agents/" in invoke_url else invoke_url.rstrip("/")
+            base_urls[name] = base
+
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            for name, base_url in base_urls.items():
+                card_url = f"{base_url}/.well-known/agent-card.json"
+                try:
+                    resp = await client.get(card_url)
+                    if resp.status_code == 200:
+                        card = resp.json()
+                        invoke_url = card.get("url")
+                        if invoke_url:
+                            enriched[name] = invoke_url
+                            logger.debug(
+                                "Agent card enriched invoke URL",
+                                agent=name,
+                                card_url=card_url,
+                                invoke_url=invoke_url,
+                            )
+                except Exception:
+                    # Card not available — silently skip, YAML URL stays
+                    pass
+
+        return enriched
 
     async def send_request(self, normalized_request: NormalizedRequest) -> bool:
         """Send request via direct HTTP call to agent.
@@ -455,12 +552,13 @@ class DirectHTTPStrategy(CommunicationStrategy):
         transfer_context: Dict[str, Any] = {}
         max_routing_hops = 5  # Prevent infinite routing loops
 
-        # Extract departments for OPA-based authorization enforcement
+        # Extract departments and act_claim for OPA-based authorization enforcement
         # departments is nested: user_context -> user_context -> departments
         # because adk_endpoints passes user_context inside request.metadata
         # which gets merged into normalized_request.user_context by the normalizer
         inner_ctx = normalized_request.user_context.get("user_context", {})
         departments = inner_ctx.get("departments", [])
+        act_claim = inner_ctx.get("act_claim")
         user_spiffe_id = inner_ctx.get("spiffe_id") or ""
         user_email = inner_ctx.get("email", normalized_request.user_id)
         logger.info(
@@ -487,9 +585,25 @@ class DirectHTTPStrategy(CommunicationStrategy):
         # can make permission-aware routing decisions
         transfer_context["departments"] = departments
 
+        # Include act_claim in transfer_context for delegation chain tracking
+        if act_claim:
+            transfer_context["act_claim"] = act_claim
+
         # Include delegation headers for specialist calls only (not routing-agent).
         # When target_agent is pre-determined, we're going directly to a specialist.
         include_delegation = target_agent is not None
+
+        # Extract the current token from request context for delegation chain.
+        # This token will be passed through each hop, with token exchange
+        # building a nested act claim to track the delegation path.
+        from .credential_service import CredentialService
+
+        current_token = CredentialService.get_token()
+        logger.debug(
+            "Extracted current token from request context",
+            session_id=normalized_request.session_id,
+            has_token=bool(current_token),
+        )
 
         for hop in range(max_routing_hops):
             logger.info(
@@ -500,11 +614,14 @@ class DirectHTTPStrategy(CommunicationStrategy):
                 previous_agent=previous_agent,
                 has_conversation_history=bool(conversation_history),
                 include_delegation=include_delegation,
+                has_token=bool(current_token),
             )
 
             # Invoke agent via HTTP with conversation history.
             # delegation_user_spiffe_id is set for specialist calls so
             # agent-service can independently verify authorization via OPA.
+            # current_token threads the delegation chain through each hop,
+            # with token exchange building nested act claims.
             response = await self.agent_client.invoke_agent(
                 agent_name=current_agent,
                 session_id=normalized_request.session_id,
@@ -516,6 +633,7 @@ class DirectHTTPStrategy(CommunicationStrategy):
                 delegation_user_spiffe_id=(
                     user_spiffe_for_delegation if include_delegation else None
                 ),
+                current_token=current_token,
             )
 
             # Check for routing decision
@@ -536,6 +654,7 @@ class DirectHTTPStrategy(CommunicationStrategy):
                     user_spiffe_id=user_spiffe_id or make_spiffe_id("user", user_email),
                     agent_spiffe_id=make_spiffe_id("agent", routing_decision),
                     user_departments=departments,
+                    act_claim=act_claim,
                 )
 
                 opa_decision = await check_agent_authorization(
@@ -616,6 +735,31 @@ class DirectHTTPStrategy(CommunicationStrategy):
                 transfer_context["departments"] = (
                     opa_decision.effective_departments or departments
                 )
+
+                # Preserve act_claim for delegation chain tracking
+                if act_claim:
+                    transfer_context["act_claim"] = act_claim
+
+                # Extract the exchanged token from response metadata for delegation chain.
+                # The agent-service returns the exchanged token so subsequent hops
+                # can build nested act claims, creating an audit trail of delegation.
+                response_metadata = response.get("metadata", {})
+                if response_metadata.get("exchanged_token"):
+                    current_token = response_metadata["exchanged_token"]
+                    logger.debug(
+                        "Updated current_token from response for delegation chain",
+                        session_id=normalized_request.session_id,
+                        hop=hop + 1,
+                    )
+
+                # Include delegation chain in transfer_context if available
+                if response_metadata.get("delegation_chain"):
+                    transfer_context["delegation_chain"] = response_metadata["delegation_chain"]
+                    logger.debug(
+                        "Added delegation chain to transfer_context",
+                        session_id=normalized_request.session_id,
+                        chain_length=len(response_metadata["delegation_chain"]),
+                    )
 
                 # Track previous agent for context optimization
                 previous_agent = current_agent

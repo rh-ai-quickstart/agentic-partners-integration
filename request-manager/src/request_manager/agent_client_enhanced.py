@@ -9,10 +9,12 @@ import os
 from typing import Any, Dict, List, Optional
 
 import httpx
+import jwt
 from shared_models import configure_logging
 from shared_models.identity import make_spiffe_id, outbound_identity_headers
 
 from .credential_service import CredentialService
+from .token_exchange import TokenExchangeClient, TokenExchangeError
 
 logger = configure_logging("request-manager")
 
@@ -73,6 +75,7 @@ class EnhancedAgentClient:
         conversation_history: Optional[List[Dict[str, str]]] = None,
         previous_agent: Optional[str] = None,
         delegation_user_spiffe_id: Optional[str] = None,
+        current_token: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Invoke an agent via HTTP with structured context support.
@@ -85,6 +88,8 @@ class EnhancedAgentClient:
             transfer_context: Optional context from previous agent
             conversation_history: Optional conversation history for context extraction
             previous_agent: Optional name of the agent that handled previous turn
+            delegation_user_spiffe_id: Optional SPIFFE ID for delegation headers
+            current_token: Optional token from previous hop (for delegation chain)
 
         Returns:
             Dictionary with agent response:
@@ -148,6 +153,129 @@ class EnhancedAgentClient:
             "transfer_context": enhanced_context,
         }
 
+        # Token exchange: get agent-scoped token via RFC 8693
+        exchanged_token = None
+        token_exchanged = False
+        token_id = None
+
+        try:
+            # Determine subject token: use current_token (from previous hop) if provided,
+            # otherwise get the original user token
+            raw_token = current_token if current_token else CredentialService.get_token()
+
+            # Strip "Bearer " prefix if present (CredentialService stores full auth header)
+            if raw_token and raw_token.startswith("Bearer "):
+                subject_token = raw_token[7:]  # Remove "Bearer " prefix
+            else:
+                subject_token = raw_token
+
+            if subject_token:
+                # Initialize token exchange client
+                token_exchange_client = TokenExchangeClient()
+
+                # Use agent SPIFFE ID as the target audience
+                target_agent = make_spiffe_id("agent", agent_name)
+
+                # If we have a current_token, extract its act claim for delegation chain
+                if current_token:
+                    # Extract act claim from subject_token (current_token with Bearer prefix stripped)
+                    existing_act_claim = None
+                    try:
+                        unverified_payload = jwt.decode(
+                            subject_token,
+                            options={"verify_signature": False},
+                        )
+                        existing_act_claim = unverified_payload.get("act")
+                        logger.debug(
+                            "Extracted act claim from subject_token",
+                            agent_name=agent_name,
+                            has_act_claim=existing_act_claim is not None,
+                            session_id=session_id,
+                        )
+                    except Exception as decode_err:
+                        logger.warning(
+                            "Failed to decode subject_token for act extraction",
+                            agent_name=agent_name,
+                            session_id=session_id,
+                            error=str(decode_err),
+                        )
+
+                    # Exchange with delegation (builds nested act claim)
+                    result = await token_exchange_client.exchange_with_delegation(
+                        subject_token=subject_token,
+                        target_agent=target_agent,
+                        actor_service="request-manager",
+                        existing_act_claim=existing_act_claim,
+                    )
+                    exchanged_token = result["access_token"]
+                    token_exchanged = True
+
+                    # Extract token ID for audit (first 20 + last 8 chars)
+                    if len(exchanged_token) >= 28:
+                        token_id = f"{exchanged_token[:20]}...{exchanged_token[-8:]}"
+                    else:
+                        token_id = exchanged_token[:28]
+
+                    logger.debug(
+                        "Token exchange with delegation successful",
+                        agent_name=agent_name,
+                        target_agent=target_agent,
+                        session_id=session_id,
+                        delegation_chain=result.get("delegation_chain", []),
+                        token_id=token_id,
+                    )
+                else:
+                    # First hop: exchange user token for agent-scoped token
+                    result = await token_exchange_client.exchange_for_agent(
+                        subject_token=subject_token,
+                        target_agent=target_agent,
+                        actor_service="request-manager"
+                    )
+                    exchanged_token = result["access_token"]
+                    token_exchanged = True
+
+                    # Extract token ID for audit (first 20 + last 8 chars)
+                    if len(exchanged_token) >= 28:
+                        token_id = f"{exchanged_token[:20]}...{exchanged_token[-8:]}"
+                    else:
+                        token_id = exchanged_token[:28]
+
+                    logger.debug(
+                        "Token exchange successful",
+                        agent_name=agent_name,
+                        target_agent=target_agent,
+                        session_id=session_id,
+                        token_id=token_id,
+                    )
+        except TokenExchangeError as e:
+            logger.error(
+                "Token exchange failed - NO FALLBACK",
+                agent_name=agent_name,
+                session_id=session_id,
+                error=str(e),
+                error_type=type(e).__name__,
+                status_code=e.status_code,
+                detail=e.detail,
+            )
+            # NO FALLBACK: Raise the exception to fail the request
+            raise RuntimeError(
+                f"Token exchange failed for agent '{agent_name}': {e.detail or str(e)}. "
+                "Token exchange is REQUIRED - no fallback allowed."
+            ) from e
+        except Exception as e:
+            logger.error(
+                "Unexpected error during token exchange - NO FALLBACK",
+                agent_name=agent_name,
+                session_id=session_id,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            # NO FALLBACK: Raise the exception to fail the request
+            raise RuntimeError(
+                f"Unexpected error during token exchange for agent '{agent_name}': {str(e)}. "
+                "Token exchange is REQUIRED - no fallback allowed."
+            ) from e
+
         # Build headers: SPIFFE identity for service-to-service auth,
         # delegation headers to carry user authority, and JWT for token propagation.
         headers = outbound_identity_headers(
@@ -159,9 +287,15 @@ class EnhancedAgentClient:
                 else None
             ),
         )
-        auth_header = CredentialService.get_auth_header()
-        if auth_header:
-            headers["Authorization"] = auth_header
+
+        # Use exchanged token - NO FALLBACK
+        if exchanged_token:
+            headers["Authorization"] = f"Bearer {exchanged_token}"
+        else:
+            # This should never happen as token exchange errors now raise exceptions
+            raise RuntimeError(
+                f"No exchanged token available for agent '{agent_name}' - this indicates a bug in token exchange logic"
+            )
 
         logger.info(
             "Invoking agent",
@@ -169,9 +303,13 @@ class EnhancedAgentClient:
             session_id=session_id,
             url=url,
             message_length=len(message),
-            has_auth=bool(auth_header),
+            has_auth=bool(exchanged_token or headers.get("Authorization")),
+            token_exchanged=token_exchanged,
+            target_agent=make_spiffe_id("agent", agent_name) if token_exchanged else None,
             has_conversation_history=bool(conversation_history),
             structured_context_enabled=STRUCTURED_CONTEXT_ENABLED,
+            token_id=token_id,
+            is_delegated_token=bool(current_token),
         )
 
         try:

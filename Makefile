@@ -8,14 +8,11 @@ help:
 	@echo "Partner Agent Integration - Available Targets"
 	@echo ""
 	@echo "Setup & Deploy:"
-	@echo "  setup                    - Build, start services, initialize data (full stack)"
-	@echo "  build                    - Build all container images (no start)"
-	@echo "  sync-agents              - Sync OPA capabilities from agent YAML configs"
+	@echo "  setup                    - Complete setup: build, start services, initialize data"
 	@echo "  stop                     - Stop all running containers"
 	@echo "  clean                    - Stop and remove all containers, volumes, and network"
 	@echo ""
 	@echo "Testing:"
-	@echo "  test                     - Run end-to-end tests against running services"
 	@echo "  test-unit                - Run unit tests for all packages"
 	@echo "  test-shared-models       - Run shared-models unit tests"
 	@echo "  test-request-manager     - Run request-manager unit tests"
@@ -39,14 +36,12 @@ help:
 	@echo "  lint-request-manager     - Run mypy on request-manager"
 	@echo "  lint-k8s-partner         - Run mypy on kubernetes-partner-agent"
 	@echo ""
-	@echo "Documentation:"
-	@echo "  diagrams                 - Generate SVG diagrams from mermaid sources"
-	@echo "  extract-mermaid          - Extract mermaid diagrams from markdown files"
-	@echo "  validate-diagrams        - Validate all SVG files have .mmd sources"
-	@echo ""
 	@echo "Lockfile Management:"
 	@echo "  check-lockfiles          - Check if all uv.lock files are up-to-date"
 	@echo "  update-lockfiles         - Update all uv.lock files"
+	@echo ""
+	@echo "Publishing:"
+	@echo "  publish                  - Build and publish container images to ghcr.io"
 	@echo ""
 	@echo "Logs:"
 	@echo "  logs-request-manager     - Tail request-manager logs"
@@ -58,42 +53,74 @@ help:
 # ============================================================
 
 .PHONY: setup
-setup: build
-	@SKIP_BUILD=true bash scripts/setup.sh
+setup:
+	@echo "Running complete setup (build, start, seed)..."
+	@bash scripts/setup.sh
 
-.PHONY: build
-build: sync-agents
-	@bash scripts/build_containers.sh
-
-.PHONY: sync-agents
-sync-agents:
-	@python3 scripts/sync_agent_capabilities.py
+.PHONY: publish
+publish:
+	@echo "Building and publishing container images to ghcr.io/rh-ai-quickstart..."
+	@echo ""
+	@echo "Step 1: Building images..."
+	@bash scripts/setup.sh 2>&1 | grep -E "Building|built" || true
+	@echo ""
+	@echo "Step 2: Tagging images..."
+	@docker tag partner-rag-api:latest ghcr.io/rh-ai-quickstart/partner-rag-api:latest
+	@docker tag partner-agent-service:latest ghcr.io/rh-ai-quickstart/partner-agent-service:latest
+	@docker tag partner-request-manager:latest ghcr.io/rh-ai-quickstart/partner-request-manager:latest
+	@docker tag partner-pf-chat-ui:latest ghcr.io/rh-ai-quickstart/partner-pf-chat-ui:latest
+	@echo "✓ Images tagged"
+	@echo ""
+	@echo "Step 3: Pushing images..."
+	@docker push ghcr.io/rh-ai-quickstart/partner-rag-api:latest
+	@docker push ghcr.io/rh-ai-quickstart/partner-agent-service:latest
+	@docker push ghcr.io/rh-ai-quickstart/partner-request-manager:latest
+	@docker push ghcr.io/rh-ai-quickstart/partner-pf-chat-ui:latest
+	@echo ""
+	@echo "✓ All images published to ghcr.io/rh-ai-quickstart"
+	@echo ""
+	@echo "Published images:"
+	@echo "  • ghcr.io/rh-ai-quickstart/partner-rag-api:latest"
+	@echo "  • ghcr.io/rh-ai-quickstart/partner-agent-service:latest"
+	@echo "  • ghcr.io/rh-ai-quickstart/partner-request-manager:latest"
+	@echo "  • ghcr.io/rh-ai-quickstart/partner-pf-chat-ui:latest"
 
 .PHONY: stop
 stop:
 	@echo "Stopping all containers..."
-	@docker stop partner-pf-chat-ui partner-request-manager-full partner-agent-service-full partner-kubernetes-agent-full partner-rag-api-full partner-postgres-full partner-keycloak-full partner-opa-full 2>/dev/null || true
-	@echo "All containers stopped."
+	@if command -v docker-compose >/dev/null 2>&1; then \
+		docker-compose down; \
+	elif docker compose version >/dev/null 2>&1; then \
+		docker compose down; \
+	else \
+		echo "Stopping containers manually..."; \
+		docker stop $$(docker ps -q --filter "name=partner-") 2>/dev/null || true; \
+	fi
+	@echo "✓ All containers stopped"
 
 .PHONY: clean
-clean: stop
-	@echo "Removing containers..."
-	@docker rm partner-pf-chat-ui partner-request-manager-full partner-agent-service-full partner-kubernetes-agent-full partner-rag-api-full partner-postgres-full partner-keycloak-full partner-opa-full 2>/dev/null || true
-	@echo "Removing network..."
-	@docker network rm partner-agent-network 2>/dev/null || true
-	@echo "Clean complete."
+clean:
+	@echo "Stopping and removing all containers, networks, and volumes..."
+	@if command -v docker-compose >/dev/null 2>&1; then \
+		docker-compose down -v; \
+	elif docker compose version >/dev/null 2>&1; then \
+		docker compose down -v; \
+	else \
+		echo "Removing containers manually..."; \
+		docker stop $$(docker ps -q --filter "name=partner-") 2>/dev/null || true; \
+		docker rm $$(docker ps -aq --filter "name=partner-") 2>/dev/null || true; \
+		docker volume rm $$(docker volume ls -q --filter "name=partner-") 2>/dev/null || true; \
+		docker network rm partner-agent-network 2>/dev/null || true; \
+	fi
+	@echo "✓ Clean complete"
 
 # ============================================================
 # Testing
 # ============================================================
 
-.PHONY: test
-test: test-unit
-	@bash scripts/test.sh
-
 .PHONY: test-unit
 test-unit: test-shared-models test-request-manager test-agent-service test-k8s-partner
-	@echo "All unit tests completed."
+	@echo "✓ All unit tests completed."
 
 .PHONY: test-shared-models
 test-shared-models:
@@ -218,25 +245,6 @@ lint-request-manager:
 lint-k8s-partner:
 	$(call lint_mypy,kubernetes-partner-agent)
 
-# ============================================================
-# Documentation
-# ============================================================
-
-.PHONY: diagrams
-diagrams:
-	@echo "Generating SVG diagrams from mermaid sources..."
-	@python3 scripts/generate-diagrams.py
-	@echo "Diagram generation complete."
-
-.PHONY: extract-mermaid
-extract-mermaid:
-	@echo "Extracting mermaid diagrams from markdown files..."
-	@python3 scripts/extract-mermaid.py
-	@echo "Mermaid extraction complete."
-
-.PHONY: validate-diagrams
-validate-diagrams:
-	@bash scripts/validate-diagrams.sh
 
 # ============================================================
 # Lockfile Management

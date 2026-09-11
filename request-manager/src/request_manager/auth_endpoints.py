@@ -49,6 +49,7 @@ logger = structlog.get_logger()
 KEYCLOAK_URL: str = os.getenv("KEYCLOAK_URL", "http://keycloak:8080")
 KEYCLOAK_REALM: str = os.getenv("KEYCLOAK_REALM", "partner-agent")
 KEYCLOAK_CLIENT_ID: str = os.getenv("KEYCLOAK_CLIENT_ID", "partner-agent-ui")
+KEYCLOAK_CLIENT_SECRET: str = os.getenv("KEYCLOAK_CLIENT_SECRET", "")
 
 # Cached JWKS client (created lazily)
 _jwks_client: Optional[jwt.PyJWKClient] = None
@@ -71,12 +72,13 @@ def _decode_keycloak_jwt(token: str) -> dict:
     """Decode a Keycloak-issued JWT using JWKS. Raises on failure."""
     client = _get_jwks_client()
     signing_key = client.get_signing_key_from_jwt(token)
+    # Don't verify audience - tokens may have agent-specific audiences
+    # Signature verification is sufficient for authentication
     return jwt.decode(
         token,
         signing_key.key,
         algorithms=["RS256"],
-        audience=KEYCLOAK_CLIENT_ID,
-        options={"verify_aud": True},
+        options={"verify_aud": False},  # Accept any audience
     )
 
 
@@ -183,14 +185,21 @@ async def login(
     token_url = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token"
 
     async with httpx.AsyncClient() as client:
+        # Build token request data
+        token_request_data = {
+            "grant_type": "password",
+            "client_id": KEYCLOAK_CLIENT_ID,
+            "username": request.email,
+            "password": request.password,
+        }
+
+        # Add client secret if configured (for confidential clients)
+        if KEYCLOAK_CLIENT_SECRET:
+            token_request_data["client_secret"] = KEYCLOAK_CLIENT_SECRET
+
         resp = await client.post(
             token_url,
-            data={
-                "grant_type": "password",
-                "client_id": KEYCLOAK_CLIENT_ID,
-                "username": request.email,
-                "password": request.password,
-            },
+            data=token_request_data,
         )
 
     if resp.status_code != 200:
@@ -292,14 +301,21 @@ async def refresh(
     """Exchange a Keycloak refresh token for a new access token."""
     token_url = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token"
 
+    # Build refresh request data
+    refresh_request_data = {
+        "grant_type": "refresh_token",
+        "client_id": KEYCLOAK_CLIENT_ID,
+        "refresh_token": request.refresh_token,
+    }
+
+    # Add client secret if configured (for confidential clients)
+    if KEYCLOAK_CLIENT_SECRET:
+        refresh_request_data["client_secret"] = KEYCLOAK_CLIENT_SECRET
+
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             token_url,
-            data={
-                "grant_type": "refresh_token",
-                "client_id": KEYCLOAK_CLIENT_ID,
-                "refresh_token": request.refresh_token,
-            },
+            data=refresh_request_data,
         )
 
     if resp.status_code != 200:

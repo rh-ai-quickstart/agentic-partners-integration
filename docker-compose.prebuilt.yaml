@@ -78,7 +78,7 @@ services:
       - KC_HTTP_ENABLED=true
       - KC_HEALTH_ENABLED=true
     volumes:
-      - ./keycloak/realm-partner.json:/opt/keycloak/data/import/realm-partner.json:ro
+      - ./keycloak/realm-base.json:/opt/keycloak/data/import/realm-base.json:ro
     ports:
       - "8090:8080"
       - "9090:9000"

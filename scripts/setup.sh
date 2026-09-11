@@ -1,388 +1,196 @@
 #!/bin/bash
-# Complete setup - builds, starts, and initializes everything
+# Complete Setup Script - Single command to set up everything
+# Usage: bash scripts/setup.sh
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+SEED_DIR="$SCRIPT_DIR/seed"
+
 echo "════════════════════════════════════════════════════════════"
-echo "Partner Agent System - Complete Setup"
+echo "  PARTNER AGENT INTEGRATION - COMPLETE SETUP"
 echo "════════════════════════════════════════════════════════════"
 echo ""
 
-# Get project root (parent of scripts/)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Load environment from .env
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    echo "Loading environment from .env..."
+    source "$PROJECT_ROOT/.env"
+fi
+
+# Verify required environment variables
+if [ -z "$GOOGLE_API_KEY" ]; then
+    echo "ERROR: GOOGLE_API_KEY not set in .env"
+    exit 1
+fi
+
 cd "$PROJECT_ROOT"
 
-# Auto-load .env if GOOGLE_API_KEY not set
-if [ -z "$GOOGLE_API_KEY" ] && [ -f ".env" ]; then
-    echo "Loading environment from .env..."
-    source .env
-    export GOOGLE_API_KEY
-fi
-
-# Prompt for GOOGLE_API_KEY if still not set
-if [ -z "$GOOGLE_API_KEY" ]; then
-    echo "GOOGLE_API_KEY is not set."
-    echo ""
-    read -rp "Enter your Google API key: " GOOGLE_API_KEY
-    if [ -z "$GOOGLE_API_KEY" ]; then
-        echo "ERROR: GOOGLE_API_KEY is required."
-        exit 1
-    fi
-    export GOOGLE_API_KEY
-    # Save to .env so future runs pick it up automatically
-    echo "GOOGLE_API_KEY=${GOOGLE_API_KEY}" >> .env
-    echo "Saved to .env"
-fi
-
-# Colors
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-
-# ============================================
-# 1. BUILD CONTAINERS (skip if SKIP_BUILD=true)
-# ============================================
-if [ "${SKIP_BUILD}" = "true" ]; then
-    echo -e "${YELLOW}Skipping build (SKIP_BUILD=true)${NC}"
-else
-    echo -e "${YELLOW}Building containers...${NC}"
-    bash scripts/build_containers.sh
-fi
-
-# ============================================
-# 2. START INFRASTRUCTURE
-# ============================================
+# =============================================================================
+# STEP 1: Rebuild Containers (use cache for speed)
+# =============================================================================
 echo ""
-echo -e "${YELLOW}Starting infrastructure...${NC}"
-
-# Create network
-docker network inspect partner-agent-network > /dev/null 2>&1 || \
-    docker network create partner-agent-network
-
-# Start PostgreSQL
-docker rm -f partner-postgres-full 2>/dev/null || true
-docker run -d \
-    --name partner-postgres-full \
-    --network partner-agent-network \
-    -e POSTGRES_USER=user \
-    -e POSTGRES_PASSWORD=pass \
-    -e POSTGRES_DB=partner_agent \
-    -p 5433:5432 \
-    pgvector/pgvector:pg16
-echo "  PostgreSQL started"
-
-# Start Keycloak (OIDC Identity Provider)
-docker rm -f partner-keycloak-full 2>/dev/null || true
-docker run -d \
-    --name partner-keycloak-full \
-    --network partner-agent-network \
-    -e KC_BOOTSTRAP_ADMIN_USERNAME=admin \
-    -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin123 \
-    -e KC_HTTP_ENABLED=true \
-    -e KC_HEALTH_ENABLED=true \
-    -v "${PROJECT_ROOT}/keycloak/realm-partner.json:/opt/keycloak/data/import/realm-partner.json:ro" \
-    -p 8090:8080 \
-    -p 9090:9000 \
-    quay.io/keycloak/keycloak:26.5 \
-    start-dev --import-realm
-echo "  Keycloak started"
-
-# Sync OPA agent capabilities from YAML configs
-echo "  Syncing OPA agent capabilities from agent configs..."
-python3 "${PROJECT_ROOT}/scripts/sync_agent_capabilities.py"
-
-# Start OPA (Open Policy Agent)
-docker rm -f partner-opa-full 2>/dev/null || true
-docker run -d \
-    --name partner-opa-full \
-    --network partner-agent-network \
-    -v "${PROJECT_ROOT}/policies:/policies:ro" \
-    -p 8181:8181 \
-    openpolicyagent/opa:latest \
-    run --server --addr :8181 /policies
-echo "  OPA started"
-
-# Wait for databases
-echo "  Waiting for PostgreSQL to be ready..."
-for i in {1..30}; do
-    if docker exec partner-postgres-full pg_isready -U user -d partner_agent >/dev/null 2>&1; then
-        echo "  PostgreSQL ready"
-        break
-    fi
-    sleep 1
-    if [ $i -eq 30 ]; then
-        echo "  PostgreSQL failed to start"
-        exit 1
-    fi
-done
-
-# Wait for Keycloak
-echo "  Waiting for Keycloak to be ready (this takes ~30-60s)..."
-for i in {1..90}; do
-    if curl -sf http://localhost:9090/health/ready > /dev/null 2>&1; then
-        echo "  Keycloak ready"
-        break
-    fi
-    sleep 2
-    if [ $i -eq 90 ]; then
-        echo "  Keycloak failed to start"
-        exit 1
-    fi
-done
-
-# Wait for OPA
-echo "  Waiting for OPA to be ready..."
-for i in {1..15}; do
-    if curl -sf http://localhost:8181/health > /dev/null 2>&1; then
-        echo "  OPA ready"
-        break
-    fi
-    sleep 1
-    if [ $i -eq 15 ]; then
-        echo "  OPA failed to start"
-        exit 1
-    fi
-done
-
-# ============================================
-# 3. RUN DATABASE MIGRATIONS
-# ============================================
-echo ""
-echo -e "${YELLOW}Running database migrations...${NC}"
-docker run --rm \
-    --name partner-migrations-temp \
-    --network partner-agent-network \
-    -e DATABASE_URL=postgresql+asyncpg://user:pass@partner-postgres-full:5432/partner_agent \
-    -w /app/shared-models \
-    partner-request-manager:latest \
-    python3 -m alembic upgrade head
-
-echo "  Migrations complete"
-
-# ============================================
-# 4. START SERVICES
-# ============================================
-echo ""
-echo -e "${YELLOW}Starting services...${NC}"
-
-# Kubernetes Partner Agent (standalone remote agent — uses OpenAI SDK)
-docker rm -f partner-kubernetes-agent-full 2>/dev/null || true
-docker run -d \
-    --name partner-kubernetes-agent-full \
-    --network partner-agent-network \
-    -e OPENAI_API_KEY="${GOOGLE_API_KEY}" \
-    -e OPENAI_BASE_URL="https://generativelanguage.googleapis.com/v1beta/openai/" \
-    -e OPENAI_MODEL="${GEMINI_MODEL:-gemini-2.5-flash}" \
-    -e LOG_LEVEL=INFO \
-    -e RAG_API_ENDPOINT=http://partner-rag-api-full:8080/answer \
-    -p 8002:8080 \
-    partner-kubernetes-agent:latest
-echo "  Kubernetes partner agent starting..."
-
-# Agent Service
-docker rm -f partner-agent-service-full 2>/dev/null || true
-docker run -d \
-    --name partner-agent-service-full \
-    --network partner-agent-network \
-    -e DATABASE_URL=postgresql+asyncpg://user:pass@partner-postgres-full:5432/partner_agent \
-    -e LLM_BACKEND=gemini \
-    -e GOOGLE_API_KEY="${GOOGLE_API_KEY}" \
-    -e GEMINI_MODEL=gemini-2.5-flash \
-    -e LOG_LEVEL=INFO \
-    -e RAG_API_ENDPOINT=http://partner-rag-api-full:8080/answer \
-    -e MOCK_SPIFFE=true \
-    -e SPIFFE_TRUST_DOMAIN=partner.example.com \
-    -e OPA_URL=http://partner-opa-full:8181 \
-    -p 8001:8080 \
-    partner-agent-service:latest
-echo "  Agent service starting..."
-
-# Request Manager
-docker rm -f partner-request-manager-full 2>/dev/null || true
-docker run -d \
-    --name partner-request-manager-full \
-    --network partner-agent-network \
-    -e DATABASE_URL=postgresql+asyncpg://user:pass@partner-postgres-full:5432/partner_agent \
-    -e LLM_BACKEND=gemini \
-    -e GOOGLE_API_KEY="${GOOGLE_API_KEY}" \
-    -e GEMINI_MODEL=gemini-2.5-flash \
-    -e AGENT_SERVICE_URL=http://partner-agent-service-full:8080 \
-    -e AGENT_TIMEOUT=120 \
-    -e LOG_LEVEL=INFO \
-    -e STRUCTURED_CONTEXT_ENABLED=true \
-    -e MOCK_SPIFFE=true \
-    -e SPIFFE_TRUST_DOMAIN=partner.example.com \
-    -e OPA_URL=http://partner-opa-full:8181 \
-    -e KEYCLOAK_URL=http://partner-keycloak-full:8080 \
-    -e KEYCLOAK_REALM=partner-agent \
-    -e KEYCLOAK_CLIENT_ID=partner-agent-ui \
-    -p 8000:8080 \
-    partner-request-manager:latest
-echo "  Request manager starting..."
-
-# RAG API (must have GOOGLE_API_KEY for embeddings)
-echo "  Starting RAG API with Gemini API key: ${GOOGLE_API_KEY:0:10}...${GOOGLE_API_KEY: -4}"
-docker rm -f partner-rag-api-full 2>/dev/null || true
-docker run -d \
-    --name partner-rag-api-full \
-    --network partner-agent-network \
-    -e "GOOGLE_API_KEY=${GOOGLE_API_KEY}" \
-    -e DATABASE_URL=postgresql+asyncpg://user:pass@partner-postgres-full:5432/partner_agent \
-    -e EMBEDDING_MODEL=models/gemini-embedding-001 \
-    -e LLM_MODEL=gemini-2.5-flash \
-    -p 8003:8080 \
-    partner-rag-api:latest
-echo "  RAG API starting..."
-
-# Wait for all services to be ready
-echo "  Waiting for services to be ready..."
-AGENT_READY=false
-K8S_READY=false
-RM_READY=false
-RAG_READY=false
-for i in {1..60}; do
-    if [ "$AGENT_READY" = false ] && curl -sf http://localhost:8001/health > /dev/null 2>&1; then
-        echo "  Agent service ready"
-        AGENT_READY=true
-    fi
-    if [ "$K8S_READY" = false ] && curl -sf http://localhost:8002/health > /dev/null 2>&1; then
-        echo "  Kubernetes partner agent ready"
-        K8S_READY=true
-    fi
-    if [ "$RM_READY" = false ] && curl -sf http://localhost:8000/health > /dev/null 2>&1; then
-        echo "  Request manager ready"
-        RM_READY=true
-    fi
-    if [ "$RAG_READY" = false ] && curl -sf http://localhost:8003/health > /dev/null 2>&1; then
-        echo "  RAG API ready"
-        RAG_READY=true
-    fi
-    if [ "$AGENT_READY" = true ] && [ "$K8S_READY" = true ] && [ "$RM_READY" = true ] && [ "$RAG_READY" = true ]; then
-        break
-    fi
-    sleep 2
-done
-
-if [ "$AGENT_READY" = false ] || [ "$K8S_READY" = false ] || [ "$RM_READY" = false ] || [ "$RAG_READY" = false ]; then
-    echo -e "  ${YELLOW}WARNING: Some services failed to start:${NC}"
-    [ "$AGENT_READY" = false ] && echo "    - Agent service (port 8001)"
-    [ "$K8S_READY" = false ] && echo "    - Kubernetes partner agent (port 8002)"
-    [ "$RM_READY" = false ] && echo "    - Request manager (port 8000)"
-    [ "$RAG_READY" = false ] && echo "    - RAG API (port 8003)"
-    echo "  Check logs: docker logs <container-name>"
-fi
-
-# ============================================
-# 5. INITIALIZE DATA
-# ============================================
-echo ""
-echo -e "${YELLOW}Initializing data...${NC}"
-
-# Ingest RAG knowledge
-docker cp rag-service/ingest_knowledge.py partner-rag-api-full:/app/
-docker cp data partner-rag-api-full:/app/ 2>/dev/null || true
-
-echo "  Ingesting RAG knowledge..."
-INGEST_OK=false
-for attempt in 1 2 3; do
-    if docker exec -e "GOOGLE_API_KEY=${GOOGLE_API_KEY}" partner-rag-api-full python /app/ingest_knowledge.py 2>&1; then
-        INGEST_OK=true
-        break
-    fi
-    echo "  Ingestion attempt $attempt failed, retrying in 10s..."
-    sleep 10
-done
-if [ "$INGEST_OK" = true ]; then
-    echo "  RAG knowledge ingested"
-else
-    echo -e "  ${YELLOW}WARNING: RAG ingestion failed after 3 attempts. RAG queries may return empty results.${NC}"
-    echo "  You can retry manually: source .env && docker exec -e GOOGLE_API_KEY=\${GOOGLE_API_KEY} partner-rag-api-full python /app/ingest_knowledge.py"
-fi
-
-# Start PF Chat UI
-echo "  Starting PF Chat UI..."
-docker rm -f partner-pf-chat-ui 2>/dev/null || true
-docker run -d \
-    --name partner-pf-chat-ui \
-    --network partner-agent-network \
-    -p 3000:8080 \
-    partner-pf-chat-ui:latest
-echo "  PF Chat UI started"
-
-# ============================================
-# 6. VERIFY & DONE
-# ============================================
-echo ""
-echo -e "${YELLOW}Verifying setup...${NC}"
-
-CHECKS_PASSED=0
-CHECKS_TOTAL=7
-
-# Check each service
-for svc in "PostgreSQL:partner-postgres-full:5433" "Keycloak:localhost:9090/health/ready" "OPA:localhost:8181/health"; do
-    name="${svc%%:*}"
-    if echo "$svc" | grep -q "postgres"; then
-        docker exec partner-postgres-full pg_isready -U user -d partner_agent >/dev/null 2>&1 && \
-            CHECKS_PASSED=$((CHECKS_PASSED + 1)) && echo -e "  ${GREEN}OK${NC}  $name" || echo -e "  FAIL  $name"
+echo "[1/8] Rebuilding application containers (using cache)..."
+if command -v docker &> /dev/null; then
+    echo "  - Building request-manager..."
+    docker build -t partner-request-manager:latest -f request-manager/Containerfile . > /tmp/build-request-manager.log 2>&1
+    if [ $? -eq 0 ]; then
+        echo "  ✓ Request Manager built"
     else
-        endpoint="${svc#*:}"
-        curl -sf "http://$endpoint" > /dev/null 2>&1 && \
-            CHECKS_PASSED=$((CHECKS_PASSED + 1)) && echo -e "  ${GREEN}OK${NC}  $name" || echo -e "  FAIL  $name"
+        echo "  ✗ Request Manager build FAILED - check /tmp/build-request-manager.log"
+        tail -20 /tmp/build-request-manager.log
+        exit 1
     fi
-done
-for svc in "Request Manager:8000" "Agent Service:8001" "K8s Partner Agent:8002" "RAG API:8003"; do
-    name="${svc%%:*}"
-    port="${svc#*:}"
-    curl -sf "http://localhost:$port/health" > /dev/null 2>&1 && \
-        CHECKS_PASSED=$((CHECKS_PASSED + 1)) && echo -e "  ${GREEN}OK${NC}  $name" || echo -e "  FAIL  $name"
-done
 
-# Check RAG data
-RAG_DOCS=$(curl -sf http://localhost:8003/stats 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('total_documents', 0))" 2>/dev/null || echo "0")
-if [ "$RAG_DOCS" -gt 0 ] 2>/dev/null; then
-    echo -e "  ${GREEN}OK${NC}  RAG knowledge base ($RAG_DOCS documents)"
+    echo "  - Building agent-service..."
+    docker build -t partner-agent-service:latest -f agent-service/Containerfile . > /tmp/build-agent-service.log 2>&1
+    if [ $? -eq 0 ]; then
+        echo "  ✓ Agent Service built"
+    else
+        echo "  ✗ Agent Service build FAILED - check /tmp/build-agent-service.log"
+        tail -20 /tmp/build-agent-service.log
+        exit 1
+    fi
+
+    # Rebuild RAG API (rag-service directory, partner-rag-api image)
+    # NOTE: Always rebuild with --no-cache to ensure no stale chromadb code (we use pgvector only)
+    echo "  - Building rag-api (from rag-service/)..."
+    docker build --no-cache -t partner-rag-api:latest -f rag-service/Containerfile . > /tmp/build-rag-api.log 2>&1
+    if [ $? -eq 0 ]; then
+        echo "  ✓ RAG API built (pgvector only, no chromadb)"
+    else
+        echo "  ✗ RAG API build FAILED - check /tmp/build-rag-api.log"
+        tail -20 /tmp/build-rag-api.log
+        exit 1
+    fi
+
+    # Rebuild chat UI
+    if [ -f "pf-chat-ui/Containerfile" ]; then
+        echo "  - Building pf-chat-ui..."
+        docker build -t partner-pf-chat-ui:latest -f pf-chat-ui/Containerfile . > /tmp/build-pf-chat-ui.log 2>&1
+        if [ $? -eq 0 ]; then
+            echo "  ✓ Chat UI built"
+        else
+            echo "  ⚠ Chat UI build failed (non-critical)"
+        fi
+    fi
 else
-    echo -e "  ${YELLOW}WARN${NC}  RAG knowledge base is empty"
+    echo "  ✗ Docker not available!"
+    exit 1
 fi
 
+echo "  💡 Tip: Use SKIP_BUILD=true to skip rebuilds if images are up-to-date"
+
+# =============================================================================
+# STEP 2: Infrastructure Containers
+# =============================================================================
 echo ""
-echo "════════════════════════════════════════════════════════════"
-if [ "$CHECKS_PASSED" -eq "$CHECKS_TOTAL" ]; then
-    echo -e "${GREEN}Setup Complete! All $CHECKS_TOTAL services running.${NC}"
-else
-    echo -e "${YELLOW}Setup Complete ($CHECKS_PASSED/$CHECKS_TOTAL services running)${NC}"
+echo "[2/8] Starting infrastructure containers..."
+bash "$SEED_DIR/seed-containers.sh"
+
+# =============================================================================
+# STEP 3: Seed Keycloak
+# =============================================================================
+echo ""
+echo "[3/8] Seeding Keycloak (users, groups, roles)..."
+bash "$SEED_DIR/seed-keycloak.sh"
+
+# =============================================================================
+# STEP 4: Configure Client & Get Secret
+# =============================================================================
+echo ""
+echo "[4/8] Configuring Keycloak client..."
+CLIENT_SECRET=$(bash "$SEED_DIR/seed-client.sh" 2>&1 | tail -1)
+
+if [ -z "$CLIENT_SECRET" ] || [ "$CLIENT_SECRET" = "null" ]; then
+    echo "ERROR: Failed to get client secret"
+    exit 1
 fi
+
+echo "  ✓ Client secret obtained"
+export CLIENT_SECRET
+
+# =============================================================================
+# STEP 5: Export All Environment Variables
+# =============================================================================
+echo ""
+echo "[5/8] Exporting environment variables..."
+export GOOGLE_API_KEY
+export DATABASE_URL
+export GEMINI_MODEL
+export LLM_BACKEND
+export KEYCLOAK_URL
+export REALM
+echo "  ✓ Environment variables exported"
+
+# =============================================================================
+# STEP 6: Application Services + SPIRE Registration
+# =============================================================================
+echo ""
+echo "[6/8] Starting application services..."
+bash "$SEED_DIR/seed-services.sh"
+
+# =============================================================================
+# STEP 7: Verify SPIRE Registration
+# =============================================================================
+echo ""
+echo "[7/8] Verifying SPIRE workload registration..."
+ENTRY_COUNT=$(docker exec spire-server /opt/spire/bin/spire-server entry show 2>/dev/null | grep -c "^Entry ID" || echo "0")
+if [ "$ENTRY_COUNT" -ge 2 ]; then
+    echo "  ✓ SPIRE workload entries: $ENTRY_COUNT"
+else
+    echo "  ✗ Expected at least 2 SPIRE workload entries, found: $ENTRY_COUNT"
+    echo "    Workloads cannot obtain SVIDs — chat will fail with SPIRE errors."
+    echo "    Run: bash scripts/seed/seed-services.sh  to re-register."
+    # Don't exit — let health checks run so the user sees which services are up
+fi
+
+# =============================================================================
+# STEP 8: Health Checks
+# =============================================================================
+echo ""
+echo "[8/8] Running health checks..."
+sleep 5  # Give services time to start
+
+# Check request-manager
+if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+    echo "  ✓ Request Manager healthy"
+else
+    echo "  ✗ Request Manager not responding"
+fi
+
+# Check agent-service
+if curl -sf http://localhost:8001/health > /dev/null 2>&1; then
+    echo "  ✓ Agent Service healthy"
+else
+    echo "  ✗ Agent Service not responding"
+fi
+
+# Check Web UI
+if curl -sf http://localhost:3000 > /dev/null 2>&1; then
+    echo "  ✓ Web UI healthy"
+else
+    echo "  ✗ Web UI not responding"
+fi
+
+# =============================================================================
+# COMPLETE
+# =============================================================================
+echo ""
+echo "════════════════════════════════════════════════════════════"
+echo "✓ SETUP COMPLETE"
 echo "════════════════════════════════════════════════════════════"
 echo ""
-echo "Open the Web UI to get started:"
+echo "System ready at:"
+echo "  • Web UI:          http://localhost:3000"
+echo "  • Request Manager: http://localhost:8000"
+echo "  • Agent Service:   http://localhost:8001"
+echo "  • RAG API:         http://localhost:8080"
+echo "  • Keycloak:        http://localhost:8090"
+echo "  • OPA:             http://localhost:8181"
 echo ""
-echo -e "  ${GREEN}http://localhost:3000${NC}"
+echo "Test users: carlos, luis, sharon, josh (password: <name>123)"
 echo ""
-echo "Login with one of these test users:"
-echo ""
-echo "  Email                    Password     Departments"
-echo "  ───────────────────────  ───────────  ──────────────────────"
-echo "  carlos@example.com       carlos123    software, kubernetes"
-echo "  luis@example.com         luis123       network"
-echo "  sharon@example.com       sharon123    software, network, kubernetes (admin)"
-echo "  josh@example.com         josh123      (none - access denied)"
-echo ""
-echo "Each user can only chat with agents matching their departments."
-echo "Authorization is enforced by OPA policy (departments x agent capabilities)."
-echo ""
-echo "Other Services:"
-echo "  API:        http://localhost:8000    Request Manager"
-echo "  Agent:      http://localhost:8001    Agent Service"
-echo "  K8s Agent:  http://localhost:8002    Kubernetes Partner Agent (remote)"
-echo "  RAG:        http://localhost:8003    Knowledge Base API"
-echo "  Keycloak:   http://localhost:8090    Identity Provider (admin/admin123)"
-echo "  OPA:        http://localhost:8181    Policy Engine"
-echo ""
-echo "Commands:"
-echo "  make test          Run E2E tests against running services"
-echo "  make test-unit     Run unit tests (no containers needed)"
-echo "  make stop          Stop all containers"
-echo "  make clean         Stop and remove all containers"
-echo "  make logs-*        Tail service logs (e.g. make logs-request-manager)"
+echo "To monitor: bash scripts/monitor.sh"
 echo ""

@@ -5,6 +5,7 @@ on:
     branches:
       - 'main'
       - 'dev'
+      - 'integration-services'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.sha }}
@@ -49,6 +50,13 @@ jobs:
             context: pf-chat-ui
             image: partner-pf-chat-ui
             build-args: ""
+          - name: kubernetes-partner-agent
+            containerfile: kubernetes-partner-agent/Containerfile
+            context: .
+            image: partner-kubernetes-agent
+            build-args: |
+              SERVICE_NAME=kubernetes-partner-agent
+              MODULE_NAME=kubernetes_agent.main
 
     steps:
       - uses: actions/checkout@v4

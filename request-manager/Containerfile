@@ -70,15 +70,22 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV MODULE_NAME=${MODULE_NAME}
 
-# Ensure arbitrary UID in group 0 can access all files (OpenShift compatibility)
+# Install SPIRE agent CLI for workload identity
 USER 0
-RUN chgrp -R 0 /app && chmod -R g=u /app
+RUN microdnf install -y tar gzip && \
+    curl -sSL https://github.com/spiffe/spire/releases/download/v1.9.0/spire-1.9.0-linux-amd64-musl.tar.gz | \
+    tar -xz -C /tmp && \
+    mkdir -p /opt/spire/bin && \
+    install -m 755 /tmp/spire-1.9.0/bin/spire-agent /opt/spire/bin/spire-agent && \
+    rm -rf /tmp/spire-* && \
+    microdnf remove -y tar gzip && \
+    microdnf clean all
 
-# Run as non-root (OpenShift will override with an arbitrary UID in group 0)
+# Run as non-root (OpenShift compatible)
 USER 1001
 
 # Expose port
 EXPOSE 8080
 
-# Run the application
-CMD python3 -m uvicorn $MODULE_NAME:app --host 0.0.0.0 --port 8080
+# Run application directly (SPIRE socket provided by shared agent via volume mount)
+CMD ["python3", "-m", "uvicorn", "request_manager.main:app", "--host", "0.0.0.0", "--port", "8080"]
