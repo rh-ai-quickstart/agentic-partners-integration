@@ -26,17 +26,17 @@ An AI quickstart that routes partner support requests to the right specialist ag
 
 ## Detailed Description
 
-> **Based on** the [IT Self-Service Agent Quickstart](https://github.com/rh-ai-quickstart/it-self-service-agent) by Red Hat® AI — adapted into a standalone POC focused on partner support with a pluggable LLM backend, PatternFly UI, and simplified A2A HTTP communication.
+> **Based on** the [IT Self-Service Agent Quickstart](https://github.com/rh-ai-quickstart/it-self-service-agent) by Red Hat AI — adapted into a standalone POC focused on partner support with a pluggable LLM backend, PatternFly UI, and simplified A2A HTTP communication.
 
 Partner support teams waste time triaging and routing issues manually. Users don't know which team to contact, and when they guess wrong, the back-and-forth delays resolution. There's no guarantee the answer they get is grounded in what's actually worked before.
 
-This AI quickstart puts an intelligent routing layer between the user and your specialist teams. A user describes their problem in plain language. The system figures out which specialist can help, checks that the user is authorized to access that team, and returns an answer grounded in your historical support data — not hallucinated. The solution runs on Red Hat OpenShift with a pluggable LLM backend (any OpenAI-compatible endpoint), using PatternFly for the web interface and A2A (Agent-to-Agent) HTTP for inter-agent communication.
+This AI quickstart puts an intelligent routing layer between the user and your specialist teams. A user describes their problem in plain language. The system figures out which specialist can help, checks that the user is authorized to access that team, and returns an answer grounded in your historical support data — not hallucinated. The solution runs on Red Hat® OpenShift® with a pluggable LLM backend (any OpenAI-compatible endpoint), using PatternFly for the web interface and A2A (Agent-to-Agent) HTTP for inter-agent communication.
 
 The framework demonstrates how to build a multi-agent AI system with real enterprise patterns: SPIFFE workload identity, OPA policy-as-code authorization, Keycloak OIDC authentication, RAG-backed knowledge retrieval, and full audit logging. Every response references real past cases and known solutions — not generic advice the LLM invented.
 
 ### See It in Action
 
-Once deployed, sign in with one of the test users and try the following queries:
+> **Demo:** Watch the [Microsoft Build session ODSP915](https://build.microsoft.com/en-US/sessions/ODSP915) for a live walkthrough of this quickstart. Once deployed locally, sign in with one of the test users below and try the following queries:
 
 | User | Access | Try |
 |------|--------|-----|
