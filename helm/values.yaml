@@ -6,10 +6,11 @@ logLevel: "INFO"
 # Custom images (built via GitHub Actions)
 image:
   registry: ghcr.io/rh-ai-quickstart
-  agentService: agent-service
-  requestManager: request-manager
-  ragApi: rag-api
-  pfChatUi: pf-chat-ui
+  agentService: partner-agent-service
+  requestManager: partner-request-manager
+  ragApi: partner-rag-api
+  pfChatUi: partner-pf-chat-ui
+  kubernetesAgent: partner-kubernetes-agent
   pullPolicy: Always
   tag: "latest"
 
@@ -142,3 +143,43 @@ networkPolicies:
   enabled: true
   # Platform: "openshift", "kind", or "none"
   platform: "openshift"
+
+# Keycloak OIDC authentication
+keycloak:
+  enabled: true
+  image: quay.io/keycloak/keycloak
+  tag: "26.5"
+  adminUsername: admin
+  adminPassword: admin123  # Change in production - use external secret
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+
+# OPA policy engine
+opa:
+  enabled: true
+  image: openpolicyagent/opa
+  tag: "latest"
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+
+# Kubernetes Partner Agent
+kubernetesAgent:
+  enabled: true
+  replicas: 1
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"

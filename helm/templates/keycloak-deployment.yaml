@@ -1,0 +1,115 @@
+{{- $fullName := include "partner-agent.fullname" . -}}
+{{- if .Values.keycloak.enabled -}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-keycloak
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+    app: {{ $fullName }}-keycloak
+    component: keycloak
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "partner-agent.selectorLabels" . | nindent 6 }}
+      app: {{ $fullName }}-keycloak
+  template:
+    metadata:
+      labels:
+        {{- include "partner-agent.labels" . | nindent 8 }}
+        app: {{ $fullName }}-keycloak
+        component: keycloak
+    spec:
+      serviceAccountName: {{ include "partner-agent.serviceAccountName" . }}
+      containers:
+      - name: keycloak
+        image: "{{ .Values.keycloak.image }}:{{ .Values.keycloak.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        args:
+          - start-dev
+          - --import-realm
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+          name: http
+        - containerPort: 9000
+          protocol: TCP
+          name: management
+        env:
+        - name: KC_BOOTSTRAP_ADMIN_USERNAME
+          value: {{ .Values.keycloak.adminUsername | quote }}
+        - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-keycloak-credentials
+              key: admin-password
+        - name: KC_HTTP_ENABLED
+          value: "true"
+        - name: KC_HEALTH_ENABLED
+          value: "true"
+        volumeMounts:
+        - name: realm-config
+          mountPath: /opt/keycloak/data/import
+          readOnly: true
+        {{- if .Values.keycloak.resources }}
+        resources:
+          {{- toYaml .Values.keycloak.resources | nindent 10 }}
+        {{- end }}
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 9000
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 9000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+      volumes:
+      - name: realm-config
+        configMap:
+          name: {{ $fullName }}-keycloak-realm
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-keycloak
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+    app: {{ $fullName }}-keycloak
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "partner-agent.selectorLabels" . | nindent 4 }}
+    app: {{ $fullName }}-keycloak
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  - name: management
+    port: 9000
+    targetPort: 9000
+    protocol: TCP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullName }}-keycloak-realm
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+data:
+  realm-partner.json: |
+{{ .Files.Get "keycloak/realm-partner.json" | nindent 4 }}
+{{- end }}
