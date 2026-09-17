@@ -208,6 +208,12 @@ New partner agents and integrations are developed in dedicated branches. Each br
 
 To explore a use case, check out its branch and refer to the agent's own README for setup and usage instructions. Each agent is a fully independent black box — it communicates with the orchestrator solely through the A2A HTTP contract and can be written in any language or framework.
 
+### Deploying MCP Servers on OpenShift AI
+
+![Red Hat OpenShift AI interface showing the MCP server deployment dialog with deployment name, OCI image, project selection, and YAML configuration for the Azure MCP server](docs/images/mcp-server-deployment.png)
+
+For production deployments, MCP servers can be deployed directly through the Red Hat OpenShift AI interface. The MCP servers catalog provides one-click deployment with pre-configured container images, allowing you to deploy Azure MCP servers (or other MCP servers) with automated YAML generation for environment variables, transport configuration, and service endpoints. This is particularly useful for the [`aro`](https://github.com/rh-ai-quickstart/agentic-partners-integration/tree/aro) branch which integrates with the Azure MCP server for live infrastructure troubleshooting.
+
 ## Tags
 
 - **Industry:** Telecommunications
