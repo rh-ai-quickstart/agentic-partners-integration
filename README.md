@@ -89,12 +89,11 @@ For production deployments, MCP servers can be deployed directly through the Red
 
 This quickstart supports both local open-weight models (via Ollama on CPU) and external LLM APIs. Minimum specs work for small models (Llama 3.2 3B) or external APIs. Recommended specs provide better performance for larger local models (8B+) or faster response times.
 
-### Software Requirements
+### Minimum Software Requirements
 
 | Software | Version | Purpose |
 |----------|---------|---------|
 | [Docker](https://docs.docker.com/get-docker/) | 24.0+ | Container runtime for all services |
-| [Docker Compose](https://docs.docker.com/compose/install/) | 2.20+ | Multi-container orchestration |
 | [Git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git) | 2.30+ | Clone the repository |
 | [Make](https://www.gnu.org/software/make/) | 4.0+ | Build automation (included on Linux/Mac) |
 | [Ollama](https://ollama.com/) | Latest | **Recommended:** Run local open-weight models (Llama 3.2, Mistral, etc.) |
@@ -246,29 +245,14 @@ The Azure MCP server exposes 110+ tools across 40+ Azure services. A configurabl
 
 The Azure MCP server can run via npm locally, as a container, or deployed from the Red Hat AI on OpenShift catalog. Each option supports the same MCP protocol — the agent doesn't need to know how the server is deployed.
 
-### Graceful Degradation
-
-If no MCP server is configured, the agent falls back to answering from LLM knowledge alone. This lets you deploy and demo the agent immediately, then add live Azure access when credentials are available.
-
 ### Ecosystem Extensibility
 
 The MCP integration is not Azure-specific. The same pattern works for any external service that publishes an MCP server. Each new MCP server from any vendor instantly becomes a potential new agent capability — with no framework changes required.
 
-## What Changed from main
-
-| Area | Change |
-|------|--------|
-| `aro-partner-agent/` | New self-contained Python agent with MCP client, OpenAI SDK, and full test suite |
-| `azure-mcp-server/` | Container build and MCP proxy utilities for the Azure MCP server |
-| `docker-compose.yaml` | Added ARO agent and Azure MCP server services |
-| `agent-service/config/` | ARO support agent YAML registration |
-| `keycloak/realm-partner.json` | Added `azure` department for ARO agent authorization |
-| `policies/` | Updated OPA rules for ARO agent delegation |
-
 ## Tags
 
-- **Industry:** Media and IT services
+- **Industry:** Telecommunications
 - **Partner:** Microsoft
 - **Product:** Red Hat® OpenShift® AI
-- **Use case:** Productivity
-- **Status:** work-in-progress
+- **Use case:** Support
+- **Status:** production-ready
