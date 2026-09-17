@@ -1,0 +1,12 @@
+flowchart LR
+    User["User asks:\n'My pods are OOMKilled'"]
+    Agent["ARO Agent\nconnects to Azure\nvia MCP"]
+    Investigate["AI investigates:\n1. Check cluster metrics\n2. Read memory limits\n3. Correlate peak traffic"]
+    Answer["Specific answer:\n'Pods use 240Mi of 256Mi limit.\nSpikes at 14:00 UTC.\nIncrease to 512Mi.'"]
+
+    User --> Agent --> Investigate --> Answer
+
+    style User fill:#e3f2fd,stroke:#1565c0
+    style Agent fill:#e8eaf6,stroke:#283593
+    style Investigate fill:#fff3e0,stroke:#e65100
+    style Answer fill:#e8f5e9,stroke:#2e7d32
