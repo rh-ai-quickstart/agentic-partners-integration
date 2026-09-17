@@ -19,9 +19,9 @@ An AI quickstart that troubleshoots Azure Red Hat® OpenShift® issues by connec
   - [Software Requirements](#software-requirements)
 - [Deploy](#deploy)
   - [Delete](#delete)
+- [Troubleshooting](#troubleshooting)
 - [Reference](#reference)
 - [Key Capabilities](#key-capabilities)
-- [What Changed from main](#what-changed-from-main)
 - [Tags](#tags)
 
 ## Detailed Description
@@ -49,6 +49,8 @@ Once deployed, sign in with one of the test users that have Azure department acc
 | `luis@example.com` / `luis123` | Network support only | Azure queries denied (no `azure` department) |
 
 The ARO agent inspects live Azure resources and returns answers grounded in real data — not hallucinated. The user can verify every claim by checking the same metrics themselves.
+
+**AI Transparency:** All responses in the chat interface are clearly labeled as AI-generated with a persistent "AI Assistant" badge. Users see disclaimers prompting them to verify agent outputs against actual Azure resources, and the UI displays which tools the agent invoked to generate each response.
 
 ### Architecture
 
