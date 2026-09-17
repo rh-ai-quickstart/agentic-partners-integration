@@ -7,7 +7,7 @@
 [![request-manager](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/rh-ai-quickstart/agentic-partners-integration/gh-pages/request-manager-coverage.json)](https://github.com/rh-ai-quickstart/agentic-partners-integration/actions/workflows/ci.yaml)
 [![kubernetes-partner-agent](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/rh-ai-quickstart/agentic-partners-integration/gh-pages/kubernetes-partner-agent-coverage.json)](https://github.com/rh-ai-quickstart/agentic-partners-integration/actions/workflows/ci.yaml)
 
-An AI quickstart that troubleshoots Azure Red Hat® OpenShift® issues by connecting to live Azure infrastructure via MCP tool calling.
+An AI quickstart that troubleshoots Azure Red Hat® OpenShift® (ARO) issues by connecting to live Azure infrastructure via MCP tool calling.
 
 ## Table of Contents
 
@@ -16,8 +16,14 @@ An AI quickstart that troubleshoots Azure Red Hat® OpenShift® issues by connec
   - [Architecture](#architecture)
 - [Requirements](#requirements)
   - [Hardware Requirements](#hardware-requirements)
-  - [Software Requirements](#software-requirements)
+  - [Minimum Software Requirements](#minimum-software-requirements)
 - [Deploy](#deploy)
+  - [1. Clone the repository](#1-clone-the-repository)
+  - [2. Set up your LLM backend](#2-set-up-your-llm-backend)
+  - [3. Build and start all services](#3-build-and-start-all-services)
+  - [4. Open the application](#4-open-the-application)
+  - [5. (Optional) Connect the Azure MCP server for live tools](#5-optional-connect-the-azure-mcp-server-for-live-tools)
+  - [6. Verify the deployment](#6-verify-the-deployment)
   - [Delete](#delete)
 - [Troubleshooting](#troubleshooting)
 - [Reference](#reference)
@@ -30,7 +36,7 @@ An AI quickstart that troubleshoots Azure Red Hat® OpenShift® issues by connec
 >
 > For the core framework (routing, security, RAG, A2A protocol), see the [`main` branch README](https://github.com/rh-ai-quickstart/agentic-partners-integration/tree/main).
 
-When users report Azure Red Hat OpenShift (ARO) infrastructure issues, traditional support agents search a static knowledge base for documented solutions. But infrastructure problems are often unique to the user's environment — a generic runbook can't tell you that *your* pods are using 240Mi of a 256Mi memory limit with traffic spikes at 14:00 UTC.
+When users report ARO infrastructure issues, traditional support agents search a static knowledge base for documented solutions. But infrastructure problems are often unique to the user's environment — a generic runbook can't tell you that *your* pods are using 240Mi of a 256Mi memory limit with traffic spikes at 14:00 UTC.
 
 The ARO Support Agent takes a different approach. Instead of searching tickets, it connects to a live Azure MCP server exposing 40+ tools across Azure services (AKS, Storage, Cosmos DB, Key Vault, Monitor, and more). The LLM dynamically discovers available tools, decides which to invoke based on the user's question, and executes them via the MCP protocol to inspect real infrastructure state before generating a grounded response.
 
@@ -38,7 +44,7 @@ This quickstart demonstrates how to integrate live cloud infrastructure tooling 
 
 ### See It in Action
 
-**[▶️ Watch the 45-minute demo video](https://build.microsoft.com/en-US/sessions/ODSP915)** from Microsoft Build 2025 to see the ARO Support Agent troubleshooting live Azure infrastructure, or deploy locally and try it yourself with the test users below.
+**[Watch the 45-minute demo video](https://build.microsoft.com/en-US/sessions/ODSP915)** from Microsoft Build 2025 to see the ARO Support Agent troubleshooting live Azure infrastructure, or deploy locally and try it yourself with the test users below.
 
 Once deployed, sign in with one of the test users that have Azure department access:
 
@@ -72,7 +78,7 @@ The green agents (Software, Network) use **RAG** — they search historical tick
 
 For detailed architecture diagrams and the ARO agent's internal structure, see [`aro-partner-agent/README.md`](aro-partner-agent/README.md).
 
-#### Deploying MCP Servers on OpenShift AI
+#### Deploying MCP Servers on Red Hat OpenShift AI
 
 ![Red Hat OpenShift AI interface showing the MCP server deployment dialog with deployment name, OCI image, project selection, and YAML configuration for the Azure MCP server](docs/images/mcp-server-deployment.png)
 
@@ -197,7 +203,7 @@ docker run -d \
 
 **Option C — OpenShift production deployment:**
 
-Deploy from the Red Hat AI on OpenShift MCP servers catalog. See [`aro-partner-agent/README.md`](aro-partner-agent/README.md) for full deployment instructions including secret creation.
+Deploy from the Red Hat AI MCP servers catalog. See [`aro-partner-agent/README.md`](aro-partner-agent/README.md) for full deployment instructions including secret creation.
 
 Then restart the ARO agent pointing at the MCP server:
 
@@ -321,7 +327,7 @@ The Azure MCP server exposes 110+ tools across 40+ Azure services. A configurabl
 
 ### Multiple MCP Deployment Options
 
-The Azure MCP server can run via npm locally, as a container, or deployed from the Red Hat AI on OpenShift catalog. Each option supports the same MCP protocol — the agent doesn't need to know how the server is deployed.
+The Azure MCP server can run via npm locally, as a container, or deployed from the Red Hat AI MCP catalog. Each option supports the same MCP protocol — the agent doesn't need to know how the server is deployed.
 
 ### Ecosystem Extensibility
 
