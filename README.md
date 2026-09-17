@@ -30,15 +30,15 @@ An AI quickstart that troubleshoots Azure Red Hat® OpenShift® issues by connec
 >
 > For the core framework (routing, security, RAG, A2A protocol), see the [`main` branch README](https://github.com/rh-ai-quickstart/agentic-partners-integration/tree/main).
 
-When users report Azure Red Hat® OpenShift® (ARO) infrastructure issues, traditional support agents search a static knowledge base for documented solutions. But infrastructure problems are often unique to the user's environment — a generic runbook can't tell you that *your* pods are using 240Mi of a 256Mi memory limit with traffic spikes at 14:00 UTC.
+When users report Azure Red Hat OpenShift (ARO) infrastructure issues, traditional support agents search a static knowledge base for documented solutions. But infrastructure problems are often unique to the user's environment — a generic runbook can't tell you that *your* pods are using 240Mi of a 256Mi memory limit with traffic spikes at 14:00 UTC.
 
 The ARO Support Agent takes a different approach. Instead of searching tickets, it connects to a live Azure MCP server exposing 40+ tools across Azure services (AKS, Storage, Cosmos DB, Key Vault, Monitor, and more). The LLM dynamically discovers available tools, decides which to invoke based on the user's question, and executes them via the MCP protocol to inspect real infrastructure state before generating a grounded response.
 
-This quickstart demonstrates how to integrate live cloud infrastructure tooling into a multi-agent AI system built on Red Hat® OpenShift®, using MCP as the standard protocol for tool discovery and execution. The same pattern works for any cloud provider or external service that publishes an MCP server — no framework changes required.
+This quickstart demonstrates how to integrate live cloud infrastructure tooling into a multi-agent AI system built on Red Hat OpenShift, using MCP as the standard protocol for tool discovery and execution. The same pattern works for any cloud provider or external service that publishes an MCP server — no framework changes required.
 
 ### See It in Action
 
-> **Demo:** Watch the [Microsoft Build session ODSP915](https://build.microsoft.com/en-US/sessions/ODSP915) for a live walkthrough of this quickstart.
+**[▶️ Watch the 45-minute demo video](https://build.microsoft.com/en-US/sessions/ODSP915)** from Microsoft Build 2025 to see the ARO Support Agent troubleshooting live Azure infrastructure, or deploy locally and try it yourself with the test users below.
 
 Once deployed, sign in with one of the test users that have Azure department access:
 
@@ -74,20 +74,22 @@ For detailed architecture diagrams and the ARO agent's internal structure, see [
 
 ![Red Hat OpenShift AI interface showing the MCP server deployment dialog with deployment name, OCI image, project selection, and YAML configuration for the Azure MCP server](docs/images/mcp-server-deployment.png)
 
-For production deployments, MCP servers can be deployed directly through the Red Hat® OpenShift® AI interface. The MCP servers catalog provides one-click deployment with pre-configured container images, allowing you to deploy Azure MCP servers (or other MCP servers) with automated YAML generation for environment variables, transport configuration, and service endpoints.
+For production deployments, MCP servers can be deployed directly through the Red Hat OpenShift AI interface. The MCP servers catalog provides one-click deployment with pre-configured container images, allowing you to deploy Azure MCP servers (or other MCP servers) with automated YAML generation for environment variables, transport configuration, and service endpoints.
 
 ## Requirements
 
 ### Hardware Requirements
 
-| Resource | Minimum | Recommended |
-|----------|---------|-------------|
-| CPU | 4 cores | 8 cores |
-| RAM | 8 GB | 16 GB (24 GB for larger local models) |
-| Disk | 10 GB free | 30 GB free (for local model storage) |
-| GPU | Not required | Not required |
+| Deployment Scenario | CPU | RAM | Disk | GPU |
+|---------------------|-----|-----|------|-----|
+| **External LLM API only** (no local models) | 4 cores | 8 GB | 10 GB free | Not required |
+| **Local LLM** (Llama 3.2 3B) + external API fallback | 4 cores | 12 GB | 20 GB free | Not required |
+| **Local LLM** (8B+ models) + Azure MCP server | 8 cores | 24 GB | 30 GB free | Not required |
 
-This quickstart supports both local open-weight models (via Ollama on CPU) and external LLM APIs. Minimum specs work for small models (Llama 3.2 3B) or external APIs. Recommended specs provide better performance for larger local models (8B+) or faster response times.
+**Guidance:**
+- **Minimum (4 cores, 8 GB):** External LLM APIs (OpenAI, Gemini, Anthropic) without local models
+- **Recommended (8 cores, 16-24 GB):** Local open-weight models (Llama 3.2, Mistral) for fully open-source deployment
+- **Azure MCP server:** Adds ~2 GB RAM overhead when deployed locally as a container
 
 ### Minimum Software Requirements
 
@@ -156,9 +158,13 @@ Navigate to [http://localhost:3000](http://localhost:3000) and sign in with one 
 
 ### 5. (Optional) Connect the Azure MCP server for live tools
 
-To enable live Azure infrastructure access, start the Azure MCP server:
+**The ARO agent works without Azure credentials** — it answers questions using LLM knowledge. To enable **live Azure infrastructure inspection** (list clusters, check resource metrics, query logs), deploy the Azure MCP server using one of the following methods:
 
-**Option A — npm (local development):**
+**Choose your deployment method:**
+
+**Option A — Local development (Azure CLI already configured):**
+
+Use this if you've already run `az login` on your machine. The MCP server piggybacks on your existing Azure CLI session — no service principal needed.
 
 ```bash
 az login
@@ -166,16 +172,18 @@ npx -y @azure/mcp@latest server start --transport http
 # Starts on http://localhost:5008/mcp
 ```
 
-**Option B — container:**
+**Option B — Containerized deployment (requires Azure service principal):**
+
+Use this for isolated deployments or when you don't have Azure CLI installed. You'll need to [create an Azure service principal](https://learn.microsoft.com/en-us/cli/azure/azure-cli-sp-tutorial-1) first to obtain these credentials:
 
 ```bash
 docker run -d \
   --name azure-mcp-server \
   --network partner-agent-network \
-  -e AZURE_TENANT_ID=<TENANT_ID> \
-  -e AZURE_CLIENT_ID=<CLIENT_ID> \
-  -e AZURE_CLIENT_SECRET=<CLIENT_SECRET> \
-  -e AZURE_SUBSCRIPTION_ID=<SUBSCRIPTION_ID> \
+  -e AZURE_TENANT_ID=<YOUR_TENANT_ID> \
+  -e AZURE_CLIENT_ID=<YOUR_CLIENT_ID> \
+  -e AZURE_CLIENT_SECRET=<YOUR_CLIENT_SECRET> \
+  -e AZURE_SUBSCRIPTION_ID=<YOUR_SUBSCRIPTION_ID> \
   -e ASPNETCORE_URLS=http://+:8080 \
   -e DOTNET_BUNDLE_EXTRACT_BASE_DIR=/tmp/.net \
   -e HOME=/tmp \
@@ -185,9 +193,9 @@ docker run -d \
   --transport http
 ```
 
-**Option C — Red Hat AI on OpenShift catalog:**
+**Option C — OpenShift production deployment:**
 
-Deploy the Azure MCP server from the Red Hat AI on OpenShift MCP catalog. See [`aro-partner-agent/README.md`](aro-partner-agent/README.md) for full deployment instructions including secret creation.
+Deploy from the Red Hat AI on OpenShift MCP servers catalog. See [`aro-partner-agent/README.md`](aro-partner-agent/README.md) for full deployment instructions including secret creation.
 
 Then restart the ARO agent pointing at the MCP server:
 
@@ -212,6 +220,74 @@ make clean
 ```
 
 This stops all running containers, removes them, deletes the Docker network and volumes, and cleans up any generated files. Your source code and `.env` file are not affected.
+
+## Troubleshooting
+
+### Azure MCP server connection fails
+
+**Symptom:** ARO agent responds but doesn't call any Azure tools.
+
+**Diagnosis:**
+```bash
+curl http://localhost:5008/mcp
+# Should return MCP server metadata
+```
+
+**Solutions:**
+- **Option A (npm):** Ensure `az login` completed successfully and you have an active Azure session
+- **Option B (container):** Verify all 4 Azure environment variables (`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_SUBSCRIPTION_ID`) are set correctly
+- **Network:** Check the ARO agent can reach the MCP server: `docker logs aro-partner-agent` should show MCP connection attempts
+
+### Ollama model not found
+
+**Symptom:** Error: `model 'llama3.2' not found`
+
+**Solution:**
+```bash
+docker exec ollama ollama pull llama3.2
+# Or switch to a different model
+export AI_MODEL=mistral
+```
+
+### Port 3000 already in use
+
+**Symptom:** Error: `bind: address already in use` for port 3000
+
+**Solution:**
+```bash
+# Find and stop the conflicting process
+lsof -ti:3000 | xargs kill -9
+# Or change the port in docker-compose.yaml
+```
+
+### Database migration errors
+
+**Symptom:** PostgreSQL connection errors or schema mismatch
+
+**Solution:**
+```bash
+# Reset the database
+make clean
+make setup
+```
+
+### Authentication fails (Keycloak errors)
+
+**Symptom:** Cannot log in with test users
+
+**Solution:**
+1. Verify Keycloak is running: `docker ps | grep keycloak`
+2. Check Keycloak logs: `docker logs keycloak`
+3. Reset Keycloak data: `make clean && make setup`
+
+### Agent responses are slow
+
+**Symptom:** Queries take 30+ seconds
+
+**Solutions:**
+- **Local models:** Upgrade to recommended hardware (8 cores, 16 GB RAM) or switch to a smaller model
+- **External APIs:** Check your network connection and API rate limits
+- **Azure MCP:** The first tool call is slower due to Azure authentication; subsequent calls use cached credentials
 
 ## Reference
 
@@ -253,6 +329,6 @@ The MCP integration is not Azure-specific. The same pattern works for any extern
 
 - **Industry:** Telecommunications
 - **Partner:** Microsoft
-- **Product:** Red Hat® OpenShift® AI
+- **Product:** Red Hat OpenShift AI
 - **Use case:** Support
 - **Status:** production-ready
