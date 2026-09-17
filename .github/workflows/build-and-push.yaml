@@ -5,6 +5,7 @@ on:
     branches:
       - 'main'
       - 'dev'
+      - 'aro'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.sha }}
@@ -65,7 +66,7 @@ jobs:
               MODULE_NAME=aro_agent.main
           - name: azure-mcp-server
             containerfile: azure-mcp-server/Containerfile
-            context: azure-mcp-server
+            context: .
             image: partner-azure-mcp-server
             build-args: ""
 
