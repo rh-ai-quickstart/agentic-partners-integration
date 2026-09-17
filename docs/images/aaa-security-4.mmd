@@ -1,0 +1,15 @@
+erDiagram
+    audit_events {
+        integer id PK "Auto-increment"
+        varchar event_id UK "UUID — unique event identifier"
+        varchar event_type "Dotted type (e.g. auth.login.success)"
+        varchar actor "Who — email or SPIFFE ID"
+        varchar action "What — login, invoke_agent, send_message"
+        varchar resource "Target — agent name, endpoint"
+        varchar outcome "success or failure"
+        varchar reason "Why — OPA reason, error message"
+        jsonb metadata "Extra context (departments, effective_departments)"
+        varchar source_ip "Client IP address"
+        varchar service "Emitting service (request-manager, agent-service)"
+        timestamp created_at "When — append-only, never updated"
+    }

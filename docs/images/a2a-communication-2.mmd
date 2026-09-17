@@ -1,0 +1,17 @@
+flowchart LR
+    RM["Request Manager"]
+
+    subgraph local["Agent Service (local agents)"]
+        sw["/api/v1/agents/software-support/invoke"]
+        nw["/api/v1/agents/network-support/invoke"]
+    end
+
+    subgraph remote["Kubernetes Partner Agent (remote)"]
+        k8s["/api/v1/agents/kubernetes-support/invoke"]
+    end
+
+    RM -->|"default AGENT_SERVICE_URL\n(no endpoint in registry)"| local
+    RM -->|"explicit endpoint URL\n(from registry)"| remote
+
+    style local fill:#e8f5e9,stroke:#2e7d32
+    style remote fill:#e8eaf6,stroke:#283593

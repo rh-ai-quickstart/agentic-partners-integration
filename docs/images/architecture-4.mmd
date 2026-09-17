@@ -1,0 +1,63 @@
+flowchart TD
+    root["agentic-partners-integration"]
+
+    root --> as["agent-service/\nAI agent processing service"]
+    as --> as_cfg["config/agents/\nAgent YAML configs\n(single source of truth for\nagent capabilities, descriptions,\nand A2A card metadata)"]
+    as --> as_src["src/agent_service/"]
+    as_src --> as_main["main.py — FastAPI app, /invoke endpoint, dynamic routing + RAG"]
+    as_src --> as_agents["agents.py — AgentManager: dynamic registry, dept map, descriptions"]
+    as_src --> as_llm["llm/ — Pluggable LLM clients (Gemini, OpenAI, Ollama)"]
+    as_src --> as_schemas["schemas.py — Request/response models for /invoke"]
+
+    root --> rm["request-manager/\nAAA enforcement, A2A orchestration"]
+    rm --> rm_src["src/request_manager/"]
+    rm_src --> rm_main["main.py — FastAPI app, IdentityMiddleware, session cleanup"]
+    rm_src --> rm_adk["adk_endpoints.py — /adk/chat, /adk/audit (chat + audit API)"]
+    rm_src --> rm_cs["communication_strategy.py — A2A invocation, OPA hard gate, audit"]
+    rm_src --> rm_ac["agent_client_enhanced.py — HTTP client for A2A calls"]
+    rm_src --> rm_cred["credential_service.py — Request-scoped credential management"]
+
+    root --> rag["rag-service/\nRAG API (pgvector + Gemini embeddings)"]
+    rag --> rag_svc["rag_service.py — FastAPI service for /answer endpoint"]
+    rag --> rag_ingest["ingest_knowledge.py — Data ingestion script"]
+
+    root --> ui["pf-chat-ui/\nPatternFly chat web UI"]
+    ui --> ui_static["static/"]
+    ui_static --> ui_index["index.html — Landing page (redirects to login or chat)"]
+    ui_static --> ui_login["login.html — Login page with JWT authentication"]
+    ui_static --> ui_chat["chat.html — Chat interface with PF6 components"]
+    ui_static --> ui_audit["audit.html — Request audit log viewer"]
+    ui_static --> ui_events["audit-events.html — Audit trail viewer"]
+    ui --> ui_nginx["nginx.conf — Reverse proxy to request-manager"]
+
+    root --> k8s["kubernetes-partner-agent/\nStandalone remote Kubernetes agent\n(no shared-models dependency)"]
+    k8s --> k8s_src["src/kubernetes_agent/"]
+    k8s_src --> k8s_main["main.py — FastAPI app, /invoke + A2A"]
+    k8s_src --> k8s_agent["agent.py — KubernetesAgent with LLM"]
+    k8s_src --> k8s_llm["llm/ — Self-contained LLM clients"]
+    k8s --> k8s_cfg["config/agents/ — Agent YAML config"]
+
+    root --> shared["shared-models/\nShared library: DB models, migrations, identity, OPA client"]
+    root --> kc["keycloak/\nKeycloak realm config (OIDC)"]
+
+    root --> pol["policies/\nOPA Rego policies (authorization rules)"]
+    pol --> pol_user["user_permissions.rego — User-to-department mappings"]
+    pol --> pol_agent["agent_permissions.rego — Auto-generated agent capabilities"]
+    pol --> pol_deleg["delegation.rego — Permission intersection logic"]
+    pol --> pol_test["delegation_test.rego — Policy tests"]
+
+    root --> data["data/ — Synthetic support tickets (JSON)"]
+    root --> scripts["scripts/ — Setup, build, test, sync_agent_capabilities"]
+    root --> helm["helm/ — Helm chart for Kubernetes/OpenShift deployment"]
+    root --> makefile["Makefile — Build, test, lint, and deploy targets"]
+    root --> compose["docker-compose.yaml — Full stack compose file"]
+
+    style root fill:#f5f5f5,stroke:#424242,font-weight:bold
+    style as fill:#e8f5e9,stroke:#2e7d32
+    style rm fill:#e3f2fd,stroke:#1565c0
+    style rag fill:#fff3e0,stroke:#e65100
+    style ui fill:#fce4ec,stroke:#c62828
+    style k8s fill:#e8eaf6,stroke:#283593
+    style shared fill:#f3e5f5,stroke:#6a1b9a
+    style kc fill:#e0f2f1,stroke:#00695c
+    style pol fill:#fffde7,stroke:#f9a825

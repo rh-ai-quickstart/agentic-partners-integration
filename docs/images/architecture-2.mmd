@@ -1,0 +1,22 @@
+flowchart LR
+    subgraph rm["Request Manager"]
+        strategy["communication_strategy.py"]
+    end
+
+    subgraph as["Agent Service · single process"]
+        invoke["/api/v1/agents/{name}/invoke"]
+        sw["software-support\n(in-process)"]
+        nw["network-support\n(in-process)"]
+        invoke --> sw & nw
+    end
+
+    subgraph k8s["Kubernetes Partner Agent · separate container"]
+        k8s_invoke["/api/v1/agents/kubernetes-support/invoke"]
+    end
+
+    strategy -->|"HTTP to agent-service\n(default URL)"| invoke
+    strategy -->|"HTTP to remote host\n(endpoint from registry)"| k8s_invoke
+
+    style sw fill:#e8f5e9,stroke:#2e7d32
+    style nw fill:#e8f5e9,stroke:#2e7d32
+    style k8s_invoke fill:#e8eaf6,stroke:#283593

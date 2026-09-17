@@ -1,0 +1,50 @@
+sequenceDiagram
+    autonumber
+    participant U as User (Browser)
+    participant KC as Keycloak<br/>OIDC Provider
+    participant RM as Request Manager<br/>(orchestrator)
+    participant OPA as OPA<br/>Policy Engine
+    participant RA as Agent Service<br/>routing-agent
+    participant SA as Agent Service<br/>specialist agent
+    participant RAG as RAG API
+
+    Note over U,RAG: ── Phase 1: Authentication — JWT acquisition ──
+
+    U->>KC: POST /realms/partner-agent/protocol/openid-connect/token<br/>{email, password} (Resource Owner Password Grant)
+    KC-->>U: Signed JWT (RS256)<br/>claims: {email, realm_access.roles: ["engineering","software"]}
+
+    Note over U,RAG: ── Phase 2: Chat request — credential capture ──
+
+    U->>RM: POST /adk/chat<br/>Authorization: Bearer JWT<br/>X-SPIFFE-ID: spiffe://…/user/carlos<br/>{message, user: {email}}
+    Note right of RM: IdentityMiddleware extracts SPIFFE identity<br/>decode_token() validates JWT via Keycloak JWKS<br/>CredentialService.set_token(JWT) — stores in context var<br/>CredentialService.set_user_id(email)<br/>Load user departments from DB
+
+    Note over U,RAG: ── Phase 3: Routing — service-to-service (no delegation) ──
+
+    RM->>RA: POST /api/v1/agents/routing-agent/invoke<br/>Headers: X-SPIFFE-ID: spiffe://…/service/request-manager<br/>(no delegation headers — OPA Rule 1: service-to-service allowed)<br/>{message, transfer_context: {departments: ["engineering","software"]}}
+    Note right of RA: IdentityMiddleware verifies caller SPIFFE<br/>No X-Delegation-User → skip OPA re-check<br/>LLM classifies intent
+    RA-->>RM: {routing_decision: "software-support"}
+
+    Note over U,RAG: ── Phase 4: Authorization — OPA permission intersection ──
+
+    RM->>OPA: POST /v1/data/partner/authorization/decision<br/>{caller: spiffe://…/service/request-manager,<br/>delegation: {user: spiffe://…/user/carlos,<br/>agent: spiffe://…/agent/software-support,<br/>user_departments: ["engineering","software"]}}
+    Note right of OPA: OPA Rule 2: Delegated agent access<br/>User depts ∩ Agent caps<br/>["engineering","software"] ∩ ["software"]<br/>= ["software"] (non-empty → allow)
+    OPA-->>RM: {allow: true,<br/>effective_departments: ["software"]}
+
+    Note over U,RAG: ── Phase 5: Specialist — full credential propagation + scope reduction ──
+
+    RM->>SA: POST /api/v1/agents/software-support/invoke<br/>Headers:<br/>  X-SPIFFE-ID: spiffe://…/service/request-manager<br/>  X-Delegation-User: spiffe://…/user/carlos<br/>  X-Delegation-Agent: spiffe://…/agent/software-support<br/>  Authorization: Bearer JWT (from CredentialService)<br/>{message, transfer_context:<br/>  {departments: ["software"] ← SCOPE REDUCED}}
+    Note right of SA: IdentityMiddleware verifies caller SPIFFE<br/>X-Delegation-User present → OPA re-check<br/>(defense-in-depth: blocks even if RM gate bypassed)
+
+    SA->>OPA: POST /v1/data/partner/authorization/decision<br/>(re-verify: same delegation, same intersection)
+    OPA-->>SA: {allow: true}
+
+    SA->>RAG: POST /answer<br/>{query: message, knowledge_base: "software_support"}
+    RAG-->>SA: {sources: [{id, content, similarity}]}
+    Note right of SA: LLM generates grounded response<br/>using RAG context + effective scope ["software"]
+
+    SA-->>RM: {content: "Based on ticket T-42…"}
+
+    Note over U,RAG: ── Phase 6: Cleanup ──
+
+    Note right of RM: _complete_request_log() → audit<br/>Store conversation turn in session<br/>CredentialService.clear_credentials()
+    RM-->>U: {response, agent: "software-support"}
