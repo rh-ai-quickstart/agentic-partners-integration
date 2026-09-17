@@ -6,10 +6,13 @@ logLevel: "INFO"
 # Custom images (built via GitHub Actions)
 image:
   registry: ghcr.io/rh-ai-quickstart
-  agentService: agent-service
-  requestManager: request-manager
-  ragApi: rag-api
-  pfChatUi: pf-chat-ui
+  agentService: partner-agent-service
+  requestManager: partner-request-manager
+  ragApi: partner-rag-api
+  pfChatUi: partner-pf-chat-ui
+  kubernetesAgent: partner-kubernetes-agent
+  aroAgent: partner-aro-agent
+  azureMcpServer: partner-azure-mcp-server
   pullPolicy: Always
   tag: "latest"
 
@@ -142,3 +145,74 @@ networkPolicies:
   enabled: true
   # Platform: "openshift", "kind", or "none"
   platform: "openshift"
+
+# Keycloak OIDC authentication
+keycloak:
+  enabled: true
+  image: quay.io/keycloak/keycloak
+  tag: "26.5"
+  adminUsername: admin
+  adminPassword: admin123  # Change in production - use external secret
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+
+# OPA policy engine
+opa:
+  enabled: true
+  image: openpolicyagent/opa
+  tag: "latest"
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+
+# Kubernetes Partner Agent
+kubernetesAgent:
+  enabled: true
+  replicas: 1
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+# Azure MCP Server (ARO-specific - disable for main branch)
+azureMcpServer:
+  enabled: true
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "300m"
+
+# ARO Partner Agent (ARO-specific - disable for main branch)
+aroAgent:
+  enabled: true
+  replicas: 1
+  mcpServerUrl: ""  # Auto-configures to azure-mcp-server service if empty
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+# Azure credentials (for Azure MCP server)
+azure:
+  tenantId: ""
+  clientId: ""
+  clientSecret: ""
+  subscriptionId: ""

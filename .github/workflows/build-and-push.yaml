@@ -49,6 +49,25 @@ jobs:
             context: pf-chat-ui
             image: partner-pf-chat-ui
             build-args: ""
+          - name: kubernetes-agent
+            containerfile: kubernetes-partner-agent/Containerfile
+            context: .
+            image: partner-kubernetes-agent
+            build-args: |
+              SERVICE_NAME=kubernetes-partner-agent
+              MODULE_NAME=kubernetes_agent.main
+          - name: aro-agent
+            containerfile: aro-partner-agent/Containerfile
+            context: .
+            image: partner-aro-agent
+            build-args: |
+              SERVICE_NAME=aro-partner-agent
+              MODULE_NAME=aro_agent.main
+          - name: azure-mcp-server
+            containerfile: azure-mcp-server/Containerfile
+            context: azure-mcp-server
+            image: partner-azure-mcp-server
+            build-args: ""
 
     steps:
       - uses: actions/checkout@v4

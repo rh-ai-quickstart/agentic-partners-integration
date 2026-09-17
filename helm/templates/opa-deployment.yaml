@@ -1,0 +1,98 @@
+{{- $fullName := include "partner-agent.fullname" . -}}
+{{- if .Values.opa.enabled -}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-opa
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+    app: {{ $fullName }}-opa
+    component: opa
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "partner-agent.selectorLabels" . | nindent 6 }}
+      app: {{ $fullName }}-opa
+  template:
+    metadata:
+      labels:
+        {{- include "partner-agent.labels" . | nindent 8 }}
+        app: {{ $fullName }}-opa
+        component: opa
+    spec:
+      serviceAccountName: {{ include "partner-agent.serviceAccountName" . }}
+      containers:
+      - name: opa
+        image: "{{ .Values.opa.image }}:{{ .Values.opa.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        args:
+          - run
+          - --server
+          - --addr
+          - ":8181"
+          - /policies
+        ports:
+        - containerPort: 8181
+          protocol: TCP
+          name: http
+        volumeMounts:
+        - name: policies
+          mountPath: /policies
+          readOnly: true
+        {{- if .Values.opa.resources }}
+        resources:
+          {{- toYaml .Values.opa.resources | nindent 10 }}
+        {{- end }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8181
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8181
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      volumes:
+      - name: policies
+        configMap:
+          name: {{ $fullName }}-opa-policies
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-opa
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+    app: {{ $fullName }}-opa
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "partner-agent.selectorLabels" . | nindent 4 }}
+    app: {{ $fullName }}-opa
+  ports:
+  - name: http
+    port: 8181
+    targetPort: 8181
+    protocol: TCP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullName }}-opa-policies
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+data:
+{{- (.Files.Glob "policies/*.rego").AsConfig | nindent 2 }}
+{{- end }}
