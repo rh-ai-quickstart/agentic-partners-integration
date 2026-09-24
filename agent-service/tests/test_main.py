@@ -37,6 +37,7 @@ def _make_mock_manager(**overrides: object) -> MagicMock:
     manager.get_agent_dept_map.return_value = _TEST_AGENT_DEPT_MAP
     manager.get_agent_descriptions.return_value = _TEST_AGENT_DESCRIPTIONS
     manager.get_specialist_agents.return_value = {}
+    manager.get_agent_endpoints.return_value = {}
     for key, value in overrides.items():
         setattr(manager, key, value)
     return manager
@@ -594,6 +595,10 @@ class TestAgentRegistry:
             "software-support": {"departments": ["software"]},
             "network-support": {"departments": ["network"]},
         }
+        mock_manager.get_agent_endpoints.return_value = {
+            "software-support": "http://localhost:8080/api/v1/agents/software-support/invoke",
+            "network-support": "http://localhost:8080/api/v1/agents/network-support/invoke",
+        }
         mock_agent_manager_cls.return_value = mock_manager
 
         client = TestClient(patched_app)
@@ -604,7 +609,7 @@ class TestAgentRegistry:
         assert "software-support" in data["agents"]
         assert "network-support" in data["agents"]
         sw = data["agents"]["software-support"]
-        assert "endpoint" not in sw
+        assert "endpoint" in sw
         assert "departments" in sw
         assert "description" in sw
 
@@ -631,13 +636,19 @@ class TestAgentRegistry:
             "software-support": "Handles software issues",
             "database-support": "Handles database issues",
         }
+        mock_manager.get_agent_endpoints.return_value = {
+            "software-support": "http://localhost:8080/api/v1/agents/software-support/invoke",
+            "database-support": "http://db-agent:9090/api/v1/agents/database-support/invoke",
+        }
         mock_agent_manager_cls.return_value = mock_manager
 
         client = TestClient(patched_app)
         response = client.get("/api/v1/agents/registry")
 
         data = response.json()
-        assert "endpoint" not in data["agents"]["software-support"]
+        assert data["agents"]["software-support"]["endpoint"] == (
+            "http://localhost:8080/api/v1/agents/software-support/invoke"
+        )
         assert data["agents"]["database-support"]["endpoint"] == (
             "http://db-agent:9090/api/v1/agents/database-support/invoke"
         )
