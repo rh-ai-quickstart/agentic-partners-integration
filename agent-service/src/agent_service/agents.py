@@ -390,6 +390,25 @@ class AgentManager:
                 endpoints[name] = f"{default_base}/api/v1/agents/{name}/invoke"
         return endpoints
 
+    def get_remote_agent_endpoints(self) -> dict[str, str]:
+        """Get endpoints only for agents with explicit overrides.
+
+        Returns only agents whose endpoint comes from an env var or
+        YAML config ``endpoint`` field — excludes agents that would
+        fall back to the default AGENT_SERVICE_URL.  Used by the
+        registry so callers can distinguish remote agents from local
+        ones hosted inside this agent-service.
+        """
+        endpoints: dict[str, str] = {}
+        for name, config in self.get_specialist_agents().items():
+            env_key = f"{name.upper().replace('-', '_')}_ENDPOINT"
+            env_val = os.getenv(env_key)
+            if env_val:
+                endpoints[name] = env_val.rstrip("/")
+            elif config.get("endpoint"):
+                endpoints[name] = config["endpoint"].rstrip("/")
+        return endpoints
+
     def get_agent_capabilities_for_opa(self) -> dict[str, list[str]]:
         """Get agent capabilities dict suitable for OPA policy.
 
