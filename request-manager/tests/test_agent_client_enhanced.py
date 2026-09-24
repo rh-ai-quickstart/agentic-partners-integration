@@ -155,25 +155,30 @@ class TestEnhancedAgentClient:
         assert "conversation_history" not in tc
 
     @patch("request_manager.agent_client_enhanced.CredentialService")
-    async def test_invoke_agent_raises_on_http_error(self, mock_cred):
-        """HTTP errors from the agent service should propagate."""
+    async def test_invoke_agent_returns_graceful_error_on_http_error(self, mock_cred):
+        """HTTP errors from the agent service return a graceful error message."""
         mock_cred.get_auth_header.return_value = None
 
         client = self._make_client()
 
+        mock_response = MagicMock()
+        mock_response.status_code = 500
         mock_resp = MagicMock()
         mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "500 Internal", request=MagicMock(), response=MagicMock()
+            "500 Internal", request=MagicMock(), response=mock_response
         )
         client.client.post = AsyncMock(return_value=mock_resp)
 
-        with pytest.raises(httpx.HTTPStatusError):
-            await client.invoke_agent(
-                agent_name="bad-agent",
-                session_id="s1",
-                user_id="u1",
-                message="oops",
-            )
+        result = await client.invoke_agent(
+            agent_name="bad-agent",
+            session_id="s1",
+            user_id="u1",
+            message="oops",
+        )
+
+        assert "unavailable" in result["content"]
+        assert result["agent_id"] == "bad-agent"
+        assert result["metadata"]["error_status"] == 500
 
     # -- SPIFFE identity headers --------------------------------------------
 

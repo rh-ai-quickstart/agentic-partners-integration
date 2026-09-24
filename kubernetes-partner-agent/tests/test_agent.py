@@ -1,5 +1,6 @@
 """Tests for kubernetes_agent.agent."""
 
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -241,3 +242,52 @@ class TestKubernetesAgent:
         assert response == "Recovered answer"
         assert failed is False
         mock_sleep.assert_awaited()
+
+    @patch("kubernetes_agent.agent.AsyncOpenAI")
+    def test_init_warns_on_legacy_openai_key(self, mock_openai_cls, mock_agent_config, monkeypatch):
+        from kubernetes_agent.agent import KubernetesAgent
+
+        monkeypatch.delenv("AI_API_KEY", raising=False)
+        monkeypatch.delenv("AI_OPENAI_API_KEY", raising=False)
+        monkeypatch.setenv("OPENAI_API_KEY", "legacy-key")
+
+        with patch("kubernetes_agent.agent.logger") as mock_logger:
+            KubernetesAgent(config=mock_agent_config)
+            mock_logger.warning.assert_any_call(
+                "OPENAI_API_KEY is deprecated. Use AI_API_KEY or AI_OPENAI_API_KEY instead."
+            )
+
+    @patch("kubernetes_agent.agent.AsyncOpenAI")
+    def test_init_warns_on_legacy_google_key(self, mock_openai_cls, mock_agent_config, monkeypatch):
+        from kubernetes_agent.agent import KubernetesAgent
+
+        monkeypatch.delenv("AI_API_KEY", raising=False)
+        monkeypatch.delenv("AI_OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.setenv("GOOGLE_API_KEY", "legacy-google-key")
+
+        with patch("kubernetes_agent.agent.logger") as mock_logger:
+            KubernetesAgent(config=mock_agent_config)
+            mock_logger.warning.assert_any_call(
+                "GOOGLE_API_KEY is deprecated. Use AI_API_KEY or AI_GEMINI_API_KEY instead."
+            )
+
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    @patch("kubernetes_agent.agent.AsyncOpenAI")
+    async def test_retry_on_empty_response(self, mock_openai_cls, mock_sleep, mock_agent_config):
+        from kubernetes_agent.agent import KubernetesAgent
+
+        agent = KubernetesAgent(config=mock_agent_config)
+
+        with patch.object(
+            agent,
+            "create_response",
+            new_callable=AsyncMock,
+            side_effect=["", "Good answer"],
+        ):
+            response, failed = await agent.create_response_with_retry(
+                [{"role": "user", "content": "test"}], max_retries=2
+            )
+
+        assert response == "Good answer"
+        assert failed is False

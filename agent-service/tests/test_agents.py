@@ -517,6 +517,92 @@ class TestAgentManager:
         )
 
     @patch("agent_service.agents.resolve_agent_service_path")
+    @patch("agent_service.agents.load_config_from_path")
+    @patch("agent_service.agents.LLMClientFactory")
+    def test_get_agent_endpoints_env_var_override(
+        self, mock_factory, mock_load_config, mock_resolve, tmp_path, monkeypatch
+    ):
+        """Env var override takes priority over explicit endpoint field."""
+        from agent_service.agents import AgentManager
+
+        mock_resolve.return_value = tmp_path
+        config_yaml = tmp_path / "config.yaml"
+        config_yaml.write_text("")
+
+        mock_load_config.return_value = {
+            "agents": [
+                {
+                    "name": "routing-agent",
+                    "llm_backend": "openai",
+                    "llm_model": "gpt-4",
+                },
+                {
+                    "name": "kubernetes-support",
+                    "llm_backend": "openai",
+                    "llm_model": "gpt-4",
+                    "departments": ["kubernetes"],
+                    "description": "K8s agent",
+                    "endpoint": "http://old-host:8080/api/v1/agents/kubernetes-support/invoke",
+                },
+            ]
+        }
+
+        mock_client = MagicMock()
+        mock_client.get_model_name.return_value = "gpt-4"
+        mock_factory.create_client.return_value = mock_client
+
+        monkeypatch.setenv(
+            "KUBERNETES_SUPPORT_ENDPOINT",
+            "http://k8s-agent:80/api/v1/agents/kubernetes-support/invoke",
+        )
+
+        manager = AgentManager()
+        endpoints = manager.get_agent_endpoints()
+
+        assert endpoints["kubernetes-support"] == (
+            "http://k8s-agent:80/api/v1/agents/kubernetes-support/invoke"
+        )
+
+    @patch("agent_service.agents.resolve_agent_service_path")
+    @patch("agent_service.agents.load_config_from_path")
+    @patch("agent_service.agents.LLMClientFactory")
+    def test_get_agent_config(
+        self, mock_factory, mock_load_config, mock_resolve, tmp_path
+    ):
+        """get_agent_config returns the raw config dict for the named agent."""
+        from agent_service.agents import AgentManager
+
+        mock_resolve.return_value = tmp_path
+        config_yaml = tmp_path / "config.yaml"
+        config_yaml.write_text("")
+
+        mock_load_config.return_value = {
+            "agents": [
+                {
+                    "name": "routing-agent",
+                    "llm_backend": "openai",
+                    "llm_model": "gpt-4",
+                },
+                {
+                    "name": "software-support",
+                    "llm_backend": "openai",
+                    "llm_model": "gpt-4",
+                    "departments": ["software"],
+                    "description": "SW agent",
+                },
+            ]
+        }
+
+        mock_client = MagicMock()
+        mock_client.get_model_name.return_value = "gpt-4"
+        mock_factory.create_client.return_value = mock_client
+
+        manager = AgentManager()
+        config = manager.get_agent_config("software-support")
+        assert config["name"] == "software-support"
+        assert manager.get_agent_config("nonexistent") == {}
+
+    @patch("agent_service.agents.resolve_agent_service_path")
     def test_init_raises_when_config_not_found(self, mock_resolve):
         """Lines 275-281: AgentManager re-raises FileNotFoundError when config dir missing."""
         from agent_service.agents import AgentManager

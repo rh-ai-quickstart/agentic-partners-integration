@@ -79,8 +79,8 @@ class TestAgentClient403Handling:
         assert "Access denied" in result["content"]
 
     @patch("request_manager.agent_client_enhanced.CredentialService")
-    async def test_non_403_http_error_raises(self, mock_cred):
-        """Non-403 HTTP errors (e.g. 500) should propagate."""
+    async def test_non_403_http_error_returns_graceful_response(self, mock_cred):
+        """Non-403 HTTP errors (e.g. 500) return a graceful error message."""
         mock_cred.get_auth_header.return_value = None
 
         client = self._make_client()
@@ -97,17 +97,21 @@ class TestAgentClient403Handling:
         mock_resp.raise_for_status.side_effect = error
         client.client.post = AsyncMock(return_value=mock_resp)
 
-        with pytest.raises(httpx.HTTPStatusError):
-            await client.invoke_agent(
-                agent_name="test-agent",
-                session_id="s1",
-                user_id="user@example.com",
-                message="help",
-            )
+        result = await client.invoke_agent(
+            agent_name="test-agent",
+            session_id="s1",
+            user_id="user@example.com",
+            message="help",
+        )
+
+        assert "unavailable" in result["content"]
+        assert "status 500" in result["content"]
+        assert result["agent_id"] == "test-agent"
+        assert result["metadata"]["error_status"] == 500
 
     @patch("request_manager.agent_client_enhanced.CredentialService")
-    async def test_generic_http_error_raises(self, mock_cred):
-        """Generic httpx.HTTPError (connection error, timeout) propagates."""
+    async def test_generic_http_error_returns_graceful_response(self, mock_cred):
+        """Generic httpx.HTTPError (connection error, timeout) returns a graceful message."""
         mock_cred.get_auth_header.return_value = None
 
         client = self._make_client()
@@ -116,10 +120,13 @@ class TestAgentClient403Handling:
         mock_resp.raise_for_status.side_effect = httpx.ConnectError("Connection refused")
         client.client.post = AsyncMock(return_value=mock_resp)
 
-        with pytest.raises(httpx.ConnectError):
-            await client.invoke_agent(
-                agent_name="test-agent",
-                session_id="s1",
-                user_id="user@example.com",
-                message="help",
-            )
+        result = await client.invoke_agent(
+            agent_name="test-agent",
+            session_id="s1",
+            user_id="user@example.com",
+            message="help",
+        )
+
+        assert "could not be reached" in result["content"]
+        assert result["agent_id"] == "test-agent"
+        assert result["metadata"]["routing_reason"] == "Agent unreachable"
