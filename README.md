@@ -237,9 +237,13 @@ oc new-project partner-agent
 
 helm install partner-agent ./helm \
   --namespace partner-agent \
-  --set llm.googleApiKey='your-google-api-key' \
-  --set llm.backend=gemini \
-  --set llm.geminiModel=gemini-2.5-flash \
+  --set llm.apiKey='your-api-key' \
+  --set llm.provider=gemini \
+  --set llm.model=gemini-2.5-flash \
+  --set azure.tenantId='your-azure-tenant-id' \
+  --set azure.clientId='your-azure-client-id' \
+  --set azure.clientSecret='your-azure-client-secret' \
+  --set azure.subscriptionId='your-azure-subscription-id' \
   --set networkPolicies.platform=openshift
 ```
 
@@ -313,7 +317,8 @@ oc port-forward -n partner-agent svc/partner-agent-pf-chat-ui 3000:3000
 ```bash
 helm upgrade partner-agent ./helm \
   --namespace partner-agent \
-  --set llm.googleApiKey='your-google-api-key' \
+  --set llm.apiKey='your-api-key' \
+  --set azure.subscriptionId='your-azure-subscription-id' \
   --set image.tag=v1.2.3
 ```
 

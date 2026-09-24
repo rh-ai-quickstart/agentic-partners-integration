@@ -519,6 +519,67 @@ class TestAgentManager:
     @patch("agent_service.agents.resolve_agent_service_path")
     @patch("agent_service.agents.load_config_from_path")
     @patch("agent_service.agents.LLMClientFactory")
+    def test_get_remote_agent_endpoints_excludes_local(
+        self, mock_factory, mock_load_config, mock_resolve, tmp_path, monkeypatch
+    ):
+        """Remote endpoints only include agents with explicit overrides."""
+        from agent_service.agents import AgentManager
+
+        mock_resolve.return_value = tmp_path
+        config_yaml = tmp_path / "config.yaml"
+        config_yaml.write_text("")
+
+        mock_load_config.return_value = {
+            "agents": [
+                {
+                    "name": "routing-agent",
+                    "llm_backend": "openai",
+                    "llm_model": "gpt-4",
+                },
+                {
+                    "name": "software-support",
+                    "llm_backend": "openai",
+                    "llm_model": "gpt-4",
+                    "departments": ["software"],
+                    "description": "SW agent",
+                },
+                {
+                    "name": "kubernetes-support",
+                    "llm_backend": "openai",
+                    "llm_model": "gpt-4",
+                    "departments": ["kubernetes"],
+                    "description": "K8s agent",
+                },
+                {
+                    "name": "db-support",
+                    "llm_backend": "openai",
+                    "llm_model": "gpt-4",
+                    "departments": ["database"],
+                    "description": "DB agent",
+                    "endpoint": "http://db-agent:9090/api/v1/agents/db-support/invoke",
+                },
+            ]
+        }
+
+        mock_client = MagicMock()
+        mock_client.get_model_name.return_value = "gpt-4"
+        mock_factory.create_client.return_value = mock_client
+
+        monkeypatch.setenv(
+            "KUBERNETES_SUPPORT_ENDPOINT",
+            "http://k8s-agent:80/api/v1/agents/kubernetes-support/invoke",
+        )
+
+        manager = AgentManager()
+        remote = manager.get_remote_agent_endpoints()
+
+        assert "kubernetes-support" in remote
+        assert "db-support" in remote
+        assert "software-support" not in remote
+
+    @patch("agent_service.agents.resolve_agent_service_path")
+    @patch("agent_service.agents.load_config_from_path")
+    @patch("agent_service.agents.LLMClientFactory")
     def test_get_agent_endpoints_env_var_override(
         self, mock_factory, mock_load_config, mock_resolve, tmp_path, monkeypatch
     ):

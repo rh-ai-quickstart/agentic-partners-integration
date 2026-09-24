@@ -76,6 +76,9 @@ llm:
   geminiModel: "gemini-2.5-flash"  # Deprecated: use 'model'
   openaiModel: "gpt-4"  # Deprecated: use 'model'
 
+  # OpenAI SDK base URL override (for Gemini compatibility endpoint)
+  openaiBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/"
+
   # Ollama
   ollamaBaseUrl: "http://ollama:11434"
   ollamaModel: "llama3.1"
