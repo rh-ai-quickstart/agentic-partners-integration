@@ -1,0 +1,90 @@
+{{- $fullName := include "partner-agent.fullname" . -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullName }}-rag-ingestion
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+    app: {{ $fullName }}-rag-ingestion
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 6
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels:
+        {{- include "partner-agent.labels" . | nindent 8 }}
+        app: {{ $fullName }}-rag-ingestion
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "partner-agent.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+      - name: wait-for-db
+        image: "{{ .Values.image.registry }}/{{ .Values.image.ragApi }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command: ["python3", "-c"]
+        args:
+          - |
+            import asyncio, sys, os
+            from sqlalchemy.ext.asyncio import create_async_engine
+            from sqlalchemy import text
+
+            DATABASE_URL = os.getenv("DATABASE_URL")
+            async def wait():
+                for attempt in range(30):
+                    try:
+                        engine = create_async_engine(DATABASE_URL)
+                        async with engine.connect() as conn:
+                            await conn.execute(text("SELECT 1 FROM knowledge_documents LIMIT 0"))
+                        await engine.dispose()
+                        print("Database and knowledge_documents table ready")
+                        return
+                    except Exception as e:
+                        print(f"Attempt {attempt+1}/30: {e}")
+                        await asyncio.sleep(5)
+                print("Database not ready after 30 attempts")
+                sys.exit(1)
+            asyncio.run(wait())
+        env:
+        - name: DATABASE_URL
+          value: "postgresql+asyncpg://{{ .Values.postgresql.auth.username }}:{{ .Values.postgresql.auth.password }}@{{ $fullName }}-postgresql:5432/{{ .Values.postgresql.auth.database }}"
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+      containers:
+      - name: rag-ingestion
+        image: "{{ .Values.image.registry }}/{{ .Values.image.ragApi }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command: ["python3", "/app/ingest_knowledge.py"]
+        env:
+        - name: GOOGLE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-llm-credentials
+              key: google-api-key
+              optional: true
+        - name: DATABASE_URL
+          value: "postgresql+asyncpg://{{ .Values.postgresql.auth.username }}:{{ .Values.postgresql.auth.password }}@{{ $fullName }}-postgresql:5432/{{ .Values.postgresql.auth.database }}"
+        - name: EMBEDDING_MODEL
+          value: {{ .Values.ragApi.embeddingModel | default "models/gemini-embedding-001" | quote }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault

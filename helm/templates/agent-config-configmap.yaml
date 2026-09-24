@@ -1,0 +1,14 @@
+{{- $fullName := include "partner-agent.fullname" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullName }}-agent-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+data:
+  kubernetes-support-agent.yaml: |
+    name: "kubernetes-support"
+    description: "Handles Kubernetes issues, pod failures, deployment problems, cluster troubleshooting, container orchestration"
+    departments: ["kubernetes"]
+    endpoint: "http://{{ $fullName }}-kubernetes-agent:80/api/v1/agents/kubernetes-support/invoke"

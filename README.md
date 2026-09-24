@@ -18,6 +18,7 @@ An AI quickstart that routes partner support requests to the right specialist ag
   - [Hardware Requirements](#hardware-requirements)
   - [Software Requirements](#software-requirements)
 - [Deploy](#deploy)
+  - [Deploy on OpenShift (Helm)](#deploy-on-openshift-helm)
   - [Delete](#delete)
 - [Reference](#reference)
 - [Key Capabilities](#key-capabilities)
@@ -83,7 +84,6 @@ This quickstart supports both local open-weight models (via Ollama on CPU) and e
 | Software | Version | Purpose |
 |----------|---------|---------|
 | [Docker](https://docs.docker.com/get-docker/) | 24.0+ | Container runtime for all services |
-| [Docker Compose](https://docs.docker.com/compose/install/) | 2.20+ | Multi-container orchestration |
 | [Git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git) | 2.30+ | Clone the repository |
 | [Make](https://www.gnu.org/software/make/) | 4.0+ | Build automation (included on Linux/Mac) |
 | [Ollama](https://ollama.com/) | Latest | **Recommended:** Run local open-weight models (Llama 3.2, Mistral, etc.) |
@@ -149,9 +149,115 @@ This quickstart supports both local open-weight models (via Ollama on CPU) and e
 
    This runs unit tests for all services (shared-models, request-manager, agent-service, kubernetes-partner-agent).
 
+### Deploy on OpenShift (Helm)
+
+The same system can be deployed to Red Hat OpenShift using the included Helm chart. All container images are pre-published to `ghcr.io/rh-ai-quickstart` — no local builds required.
+
+**Prerequisites:**
+
+- OpenShift 4.12+ cluster with `oc` CLI authenticated
+- Helm 3.8+
+- An LLM API key (same as the Docker deployment)
+
+**1. Create a project and install the chart:**
+
+```bash
+oc new-project partner-agent
+
+helm install partner-agent ./helm \
+  --namespace partner-agent \
+  --set llm.googleApiKey='your-google-api-key' \
+  --set llm.backend=gemini \
+  --set llm.geminiModel=gemini-2.5-flash \
+  --set networkPolicies.platform=openshift
+```
+
+This deploys all services (PostgreSQL with pgvector, Keycloak, OPA, RAG API, Agent Service, Request Manager, Kubernetes Partner Agent, and the PatternFly Chat UI), runs database migrations, and configures network policies for OpenShift.
+
+**2. Wait for all pods to become ready:**
+
+```bash
+oc get pods -n partner-agent -w
+```
+
+All pods should show `1/1 Running` within 2-3 minutes. The `db-migration` job will show `Completed`.
+
+**3. Create OpenShift Routes for external access:**
+
+```bash
+# Chat UI (main application entry point)
+oc create route edge partner-agent-ui \
+  --service=partner-agent-pf-chat-ui \
+  --port=http \
+  --namespace=partner-agent
+
+# Keycloak admin console (optional, for user management)
+oc create route edge partner-agent-keycloak \
+  --service=partner-agent-keycloak \
+  --port=http \
+  --namespace=partner-agent
+```
+
+**4. Get the route URLs:**
+
+```bash
+# Chat UI URL
+oc get route partner-agent-ui -n partner-agent \
+  -o jsonpath='https://{.spec.host}{"\n"}'
+
+# Keycloak admin URL (optional)
+oc get route partner-agent-keycloak -n partner-agent \
+  -o jsonpath='https://{.spec.host}{"\n"}'
+```
+
+**5. Verify the deployment:**
+
+```bash
+# Check all pods are running
+oc get pods -n partner-agent
+
+# Check services are reachable internally
+oc exec deploy/partner-agent-request-manager -n partner-agent \
+  -- curl -sf http://localhost:8080/health
+
+# Check RAG knowledge base was ingested
+oc exec deploy/partner-agent-rag-api -n partner-agent \
+  -- curl -sf http://localhost:8080/stats
+
+# List all routes
+oc get routes -n partner-agent
+```
+
+Open the Chat UI route URL in your browser and sign in with any of the [test users](#see-it-in-action). Users are auto-created in the database on first login via Keycloak.
+
+**Alternatively**, if you don't want to create routes, use port-forwarding:
+
+```bash
+oc port-forward -n partner-agent svc/partner-agent-pf-chat-ui 3000:3000
+# Open http://localhost:3000
+```
+
+**Upgrading:**
+
+```bash
+helm upgrade partner-agent ./helm \
+  --namespace partner-agent \
+  --set llm.googleApiKey='your-google-api-key' \
+  --set image.tag=v1.2.3
+```
+
+**Uninstalling:**
+
+```bash
+helm uninstall partner-agent --namespace partner-agent
+oc delete project partner-agent
+```
+
+For full Helm configuration options (scaling, autoscaling, Ollama, custom values files), see the [Helm chart README](helm/README.md).
+
 ### Delete
 
-To stop and remove all containers, volumes, and networks:
+To stop and remove all Docker containers, volumes, and networks:
 
 ```bash
 make clean
@@ -171,7 +277,7 @@ This stops all running containers, removes them, deletes the Docker network and 
 | [Web UI](docs/web-ui.md) | PatternFly chat interface, pages, nginx architecture |
 | [Configuration](docs/configuration.md) | Environment variables, LLM backends (OpenAI-compatible, Ollama) |
 | [API Reference](docs/api-reference.md) | Chat, OPA, and A2A endpoint examples with curl |
-| [Development](docs/development.md) | Makefile targets, building, testing, Docker Compose |
+| [Development](docs/development.md) | Makefile targets, building, testing, local Docker |
 | [Production Recommendations](docs/production.md) | Scaling guidance for pgvector, PostgreSQL, Keycloak, OPA, LLM, and more |
 
 **External links:**

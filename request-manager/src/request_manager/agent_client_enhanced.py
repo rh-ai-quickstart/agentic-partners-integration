@@ -218,23 +218,56 @@ class EnhancedAgentClient:
                         "authorization_detail": detail,
                     },
                 }
+            agent_label = agent_name.replace("-", " ").title()
             logger.error(
                 "Agent invocation failed",
                 agent_name=agent_name,
                 session_id=session_id,
+                status_code=e.response.status_code,
                 error=str(e),
-                error_type=type(e).__name__,
             )
-            raise
+            return {
+                "content": (
+                    f"The **{agent_label}** agent is currently unavailable "
+                    f"(returned status {e.response.status_code}). "
+                    f"The routing decision was correct, but the agent could not "
+                    f"process your request. Please try again later or contact "
+                    f"your administrator if the issue persists."
+                ),
+                "agent_id": agent_name,
+                "session_id": session_id,
+                "routing_decision": None,
+                "metadata": {
+                    "handling_agent": agent_name,
+                    "routing_reason": "Agent invocation failed",
+                    "error_status": e.response.status_code,
+                },
+            }
         except httpx.HTTPError as e:
+            agent_label = agent_name.replace("-", " ").title()
             logger.error(
-                "Agent invocation failed",
+                "Agent invocation failed (connection)",
                 agent_name=agent_name,
                 session_id=session_id,
                 error=str(e),
                 error_type=type(e).__name__,
             )
-            raise
+            return {
+                "content": (
+                    f"The **{agent_label}** agent could not be reached. "
+                    f"The routing decision was correct, but the agent service "
+                    f"is not responding. Please try again later or contact "
+                    f"your administrator if the issue persists."
+                ),
+                "agent_id": agent_name,
+                "session_id": session_id,
+                "routing_decision": None,
+                "metadata": {
+                    "handling_agent": agent_name,
+                    "routing_reason": "Agent unreachable",
+                    "error": str(e),
+                },
+            }
 
     async def close(self) -> None:
         """Close the HTTP client."""

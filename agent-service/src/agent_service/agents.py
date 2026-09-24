@@ -369,12 +369,10 @@ class AgentManager:
     def get_agent_endpoints(self) -> dict[str, str]:
         """Get invoke endpoint URLs for all specialist agents.
 
-        Returns:
-            Dict mapping agent name to its full invoke URL.
-            Agents with an explicit ``endpoint`` field in their YAML config
-            use that URL; others default to the local agent-service URL
-            constructed from the ``AGENT_SERVICE_URL`` env var (or
-            ``http://localhost:8080``).
+        Resolution order per agent:
+        1. Env var ``<AGENT_NAME>_ENDPOINT`` (e.g. ``KUBERNETES_SUPPORT_ENDPOINT``)
+        2. Explicit ``endpoint`` field in the agent's YAML config
+        3. Default constructed from ``AGENT_SERVICE_URL`` env var
         """
         default_base = os.getenv("AGENT_SERVICE_URL", "http://localhost:8080").rstrip(
             "/"
@@ -382,9 +380,12 @@ class AgentManager:
 
         endpoints: dict[str, str] = {}
         for name, config in self.get_specialist_agents().items():
-            explicit = config.get("endpoint")
-            if explicit:
-                endpoints[name] = explicit.rstrip("/")
+            env_key = f"{name.upper().replace('-', '_')}_ENDPOINT"
+            env_val = os.getenv(env_key)
+            if env_val:
+                endpoints[name] = env_val.rstrip("/")
+            elif config.get("endpoint"):
+                endpoints[name] = config["endpoint"].rstrip("/")
             else:
                 endpoints[name] = f"{default_base}/api/v1/agents/{name}/invoke"
         return endpoints

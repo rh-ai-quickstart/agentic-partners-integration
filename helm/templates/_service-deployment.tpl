@@ -54,6 +54,19 @@ spec:
         - name: UVICORN_WORKERS
           value: {{ $serviceConfig.uvicornWorkers | quote }}
         {{- end }}
+        {{- if eq $serviceName "agent-service" }}
+        volumeMounts:
+        - name: agent-config
+          mountPath: /app/config/agents/kubernetes-support-agent.yaml
+          subPath: kubernetes-support-agent.yaml
+          readOnly: true
+        {{- if and $context.Values.aroAgent $context.Values.aroAgent.enabled }}
+        - name: agent-config
+          mountPath: /app/config/agents/aro-support-agent.yaml
+          subPath: aro-support-agent.yaml
+          readOnly: true
+        {{- end }}
+        {{- end }}
         {{- if $serviceConfig.resources }}
         resources:
           {{- toYaml $serviceConfig.resources | nindent 10 }}
@@ -90,6 +103,12 @@ spec:
           periodSeconds: 5
           timeoutSeconds: 5
           failureThreshold: 30
+      {{- if eq $serviceName "agent-service" }}
+      volumes:
+      - name: agent-config
+        configMap:
+          name: {{ $fullName }}-agent-config
+      {{- end }}
       restartPolicy: Always
       terminationGracePeriodSeconds: 30
 ---

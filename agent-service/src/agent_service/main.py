@@ -105,19 +105,18 @@ async def agent_registry() -> Dict[str, Any]:
     from .agents import AgentManager
 
     agent_manager = AgentManager()
-    specialists = agent_manager.get_specialist_agents()
     dept_map = agent_manager.get_agent_dept_map()
     descriptions = agent_manager.get_agent_descriptions()
+    resolved_endpoints = agent_manager.get_agent_endpoints()
 
     agents: Dict[str, Any] = {}
-    for name, config in specialists.items():
+    for name in agent_manager.get_specialist_agents():
         entry: Dict[str, Any] = {
             "departments": dept_map.get(name, []),
             "description": descriptions.get(name, ""),
         }
-        explicit_endpoint = config.get("endpoint")
-        if explicit_endpoint:
-            entry["endpoint"] = explicit_endpoint.rstrip("/")
+        if name in resolved_endpoints:
+            entry["endpoint"] = resolved_endpoints[name]
         agents[name] = entry
 
     return {"agents": agents}
