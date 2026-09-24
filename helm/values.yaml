@@ -26,7 +26,7 @@ serviceAccount:
 # Database configuration
 database:
   # Expected Alembic migration version
-  expectedMigrationVersion: "006"
+  expectedMigrationVersion: "009"
 
 # PostgreSQL with pgvector for both application data and vector storage
 postgresql:

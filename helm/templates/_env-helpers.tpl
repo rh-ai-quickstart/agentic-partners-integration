@@ -41,7 +41,7 @@ Common environment variables for all services
 - name: LOG_LEVEL
   value: {{ .Values.logLevel | default "INFO" | quote }}
 - name: EXPECTED_MIGRATION_VERSION
-  value: {{ .Values.database.expectedMigrationVersion | default "007" | quote }}
+  value: {{ .Values.database.expectedMigrationVersion | default "009" | quote }}
 - name: PORT
   value: "8080"
 - name: HOST
@@ -116,6 +116,20 @@ Request Manager environment variables
   value: "true"
 - name: JWT_VERIFY_SIGNATURE
   value: "false"
+- name: STRUCTURED_CONTEXT_ENABLED
+  value: "true"
+- name: KEYCLOAK_URL
+  value: "http://{{ include "partner-agent.fullname" . }}-keycloak:8080"
+- name: KEYCLOAK_REALM
+  value: "partner-agent"
+- name: KEYCLOAK_CLIENT_ID
+  value: "partner-agent-ui"
+- name: OPA_URL
+  value: "http://{{ include "partner-agent.fullname" . }}-opa:8181"
+- name: MOCK_SPIFFE
+  value: "true"
+- name: SPIFFE_TRUST_DOMAIN
+  value: "partner.example.com"
 {{- end }}
 
 {{/*
@@ -129,4 +143,16 @@ Agent Service environment variables
   value: "http"
 - name: RAG_API_ENDPOINT
   value: "http://{{ include "partner-agent.fullname" . }}-rag-api:80/answer"
+- name: OPA_URL
+  value: "http://{{ include "partner-agent.fullname" . }}-opa:8181"
+- name: MOCK_SPIFFE
+  value: "true"
+- name: SPIFFE_TRUST_DOMAIN
+  value: "partner.example.com"
+- name: KUBERNETES_SUPPORT_ENDPOINT
+  value: "http://{{ include "partner-agent.fullname" . }}-kubernetes-agent:80/api/v1/agents/kubernetes-support/invoke"
+{{- if and .Values.aroAgent .Values.aroAgent.enabled }}
+- name: ARO_SUPPORT_ENDPOINT
+  value: "http://{{ include "partner-agent.fullname" . }}-aro-agent:80/api/v1/agents/aro-support/invoke"
+{{- end }}
 {{- end }}

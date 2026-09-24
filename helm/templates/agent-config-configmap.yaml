@@ -1,0 +1,21 @@
+{{- $fullName := include "partner-agent.fullname" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullName }}-agent-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+data:
+  kubernetes-support-agent.yaml: |
+    name: "kubernetes-support"
+    description: "Handles Kubernetes issues, pod failures, deployment problems, cluster troubleshooting, container orchestration"
+    departments: ["kubernetes"]
+    endpoint: "http://{{ $fullName }}-kubernetes-agent:80/api/v1/agents/kubernetes-support/invoke"
+{{- if and .Values.aroAgent .Values.aroAgent.enabled }}
+  aro-support-agent.yaml: |
+    name: "aro-support"
+    description: "Azure infrastructure support agent — troubleshoots ARO, AKS, VMs, storage, networking, and telemetry issues using live Azure tools via MCP"
+    departments: ["azure"]
+    endpoint: "http://{{ $fullName }}-aro-agent:80/api/v1/agents/aro-support/invoke"
+{{- end }}

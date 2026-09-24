@@ -35,11 +35,11 @@ spec:
           name: postgresql
         env:
         - name: POSTGRES_USER
-          value: {{ .Values.postgresql.user | quote }}
+          value: {{ .Values.postgresql.auth.username | quote }}
         - name: POSTGRES_PASSWORD
-          value: {{ .Values.postgresql.password | quote }}
+          value: {{ .Values.postgresql.auth.password | quote }}
         - name: POSTGRES_DB
-          value: {{ .Values.postgresql.database | quote }}
+          value: {{ .Values.postgresql.auth.database | quote }}
         - name: PGDATA
           value: /var/lib/postgresql/data/pgdata
         volumeMounts:
@@ -54,9 +54,9 @@ spec:
             command:
             - pg_isready
             - -U
-            - {{ .Values.postgresql.user }}
+            - {{ .Values.postgresql.auth.username }}
             - -d
-            - {{ .Values.postgresql.database }}
+            - {{ .Values.postgresql.auth.database }}
           initialDelaySeconds: 30
           periodSeconds: 10
           timeoutSeconds: 5
@@ -66,9 +66,9 @@ spec:
             command:
             - pg_isready
             - -U
-            - {{ .Values.postgresql.user }}
+            - {{ .Values.postgresql.auth.username }}
             - -d
-            - {{ .Values.postgresql.database }}
+            - {{ .Values.postgresql.auth.database }}
           initialDelaySeconds: 5
           periodSeconds: 5
           timeoutSeconds: 3

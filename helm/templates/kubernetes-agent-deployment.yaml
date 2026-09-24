@@ -40,6 +40,8 @@ spec:
         {{- include "partner-agent.llmEnvVars" . | nindent 8 }}
         - name: LOG_LEVEL
           value: {{ .Values.logLevel | default "INFO" | quote }}
+        - name: RAG_API_ENDPOINT
+          value: "http://{{ $fullName }}-rag-api:80/answer"
         {{- if .Values.kubernetesAgent.resources }}
         resources:
           {{- toYaml .Values.kubernetesAgent.resources | nindent 10 }}

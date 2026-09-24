@@ -33,6 +33,7 @@ spec:
           - --server
           - --addr
           - ":8181"
+          - --ignore=.*
           - /policies
         ports:
         - containerPort: 8181
