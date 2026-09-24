@@ -306,13 +306,13 @@ else
     ((FAILED++))
 fi
 
-echo -n "  Testing registry: software-support has no endpoint (local)... "
+echo -n "  Testing registry: software-support has local endpoint... "
 SW_ENDPOINT=$(curl -s http://localhost:8001/api/v1/agents/registry | jq -r '.agents["software-support"].endpoint // "none"' 2>/dev/null)
-if [ "$SW_ENDPOINT" = "none" ]; then
-    echo -e "${GREEN}PASS${NC}"
+if echo "$SW_ENDPOINT" | grep -q "localhost.*software-support"; then
+    echo -e "${GREEN}PASS${NC} ($SW_ENDPOINT)"
     ((PASSED++))
 else
-    echo -e "${RED}FAIL${NC} (expected no endpoint for local agent, got: $SW_ENDPOINT)"
+    echo -e "${RED}FAIL${NC} (expected local endpoint for software-support, got: $SW_ENDPOINT)"
     ((FAILED++))
 fi
 
