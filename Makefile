@@ -1,7 +1,6 @@
 # Makefile for Partner Agent Integration POC
 #
 # Primary deployment: scripts/setup.sh (Docker containers)
-# Alternative: docker-compose.yaml
 
 .PHONY: help
 help:
@@ -39,6 +38,9 @@ help:
 	@echo "Lockfile Management:"
 	@echo "  check-lockfiles          - Check if all uv.lock files are up-to-date"
 	@echo "  update-lockfiles         - Update all uv.lock files"
+	@echo ""
+	@echo "Policy:"
+	@echo "  sync-agents              - Regenerate agent_capabilities.yaml from agent YAML configs"
 	@echo ""
 	@echo "Publishing:"
 	@echo "  publish                  - Build and publish container images to ghcr.io"
@@ -121,6 +123,16 @@ clean:
 .PHONY: test-unit
 test-unit: test-shared-models test-request-manager test-agent-service test-k8s-partner
 	@echo "✓ All unit tests completed."
+
+.PHONY: test-e2e
+test-e2e:
+	@echo "Running end-to-end tests..."
+	@bash scripts/test-e2e.sh
+
+.PHONY: test-e2e-quick
+test-e2e-quick:
+	@echo "Running end-to-end tests (skip build/deploy)..."
+	@bash scripts/test-e2e.sh --skip-deploy
 
 .PHONY: test-shared-models
 test-shared-models:
@@ -269,6 +281,16 @@ update-lockfiles:
 		(cd "$$dir" && uv lock); \
 	done
 	@echo "All lockfiles updated."
+
+# ============================================================
+# Policy
+# ============================================================
+
+.PHONY: sync-agents
+sync-agents:
+	@echo "Regenerating agent_capabilities.yaml from agent YAML configs..."
+	@python3 policies/sync_agent_capabilities.py
+	@echo "Done. Review policies/agent_capabilities.yaml"
 
 # ============================================================
 # Logs

@@ -402,12 +402,16 @@ class DirectHTTPStrategy(CommunicationStrategy):
 
         # ── Tier 2 — /.well-known/agent-card.json (additive: enrich URLs) ──
         # Only runs if AGENT_CARD_DISCOVERY=true (opt-in, default off).
-        if os.getenv("AGENT_CARD_DISCOVERY", "false").lower() == "true":
+        if endpoints is not None and os.getenv("AGENT_CARD_DISCOVERY", "false").lower() == "true":
             card_endpoints = await self._fetch_wellknown_cards(endpoints)
             endpoints.update(card_endpoints)
 
-        # Cache on success (even if empty — "all local" is valid)
-        _registry_cache[self._agent_service_url] = (endpoints, now)
+        if endpoints is None:
+            endpoints = {}
+        else:
+            # Cache on success (even if empty — "all local" is valid).
+            # Failures (None) are NOT cached so the next request retries.
+            _registry_cache[self._agent_service_url] = (endpoints, now)
         if endpoints:
             self.agent_client.agent_endpoints = endpoints
             logger.info(
@@ -422,12 +426,12 @@ class DirectHTTPStrategy(CommunicationStrategy):
                 ttl_seconds=_REGISTRY_TTL_SECONDS,
             )
 
-    async def _fetch_yaml_registry(self) -> Dict[str, str]:
+    async def _fetch_yaml_registry(self) -> Optional[Dict[str, str]]:
         """Tier 3: fetch remote agent endpoints from the YAML-backed registry.
 
         Returns a dict of {agent_name: invoke_url} for agents that have an
-        explicit ``endpoint`` in their YAML config.  Returns an empty dict
-        (not a raise) on any failure so callers fall through gracefully.
+        explicit ``endpoint`` in their YAML config.  Returns None on failure
+        so the caller knows not to cache the result.
         """
         registry_url = (
             f"{self._agent_service_url.rstrip('/')}/api/v1/agents/registry"
@@ -453,7 +457,7 @@ class DirectHTTPStrategy(CommunicationStrategy):
                 error=str(e),
                 error_type=type(e).__name__,
             )
-            return {}
+            return None
 
     async def _fetch_wellknown_cards(
         self, known_endpoints: Dict[str, str]
@@ -552,7 +556,7 @@ class DirectHTTPStrategy(CommunicationStrategy):
         transfer_context: Dict[str, Any] = {}
         max_routing_hops = 5  # Prevent infinite routing loops
 
-        # Extract departments and act_claim for OPA-based authorization enforcement
+        # Extract departments and act_claim for policy-based authorization enforcement
         # departments is nested: user_context -> user_context -> departments
         # because adk_endpoints passes user_context inside request.metadata
         # which gets merged into normalized_request.user_context by the normalizer
@@ -562,7 +566,7 @@ class DirectHTTPStrategy(CommunicationStrategy):
         user_spiffe_id = inner_ctx.get("spiffe_id") or ""
         user_email = inner_ctx.get("email", normalized_request.user_id)
         logger.info(
-            "User departments for OPA authorization",
+            "User departments for authorization",
             user_id=normalized_request.user_id,
             departments=departments,
         )
@@ -576,7 +580,7 @@ class DirectHTTPStrategy(CommunicationStrategy):
 
         # Build user SPIFFE ID for delegation headers on specialist calls.
         # Delegation headers tell agent-service who the user is, enabling
-        # defense-in-depth OPA checks at the agent-service level.
+        # defense-in-depth authorization checks at the agent-service level.
         user_spiffe_for_delegation = user_spiffe_id or make_spiffe_id(
             "user", user_email
         )
@@ -619,7 +623,7 @@ class DirectHTTPStrategy(CommunicationStrategy):
 
             # Invoke agent via HTTP with conversation history.
             # delegation_user_spiffe_id is set for specialist calls so
-            # agent-service can independently verify authorization via OPA.
+            # agent-service can independently verify authorization via policy engine.
             # current_token threads the delegation chain through each hop,
             # with token exchange building nested act claims.
             response = await self.agent_client.invoke_agent(
@@ -640,11 +644,11 @@ class DirectHTTPStrategy(CommunicationStrategy):
             routing_decision = response.get("routing_decision")
 
             if routing_decision:
-                # AUTHORIZATION ENFORCEMENT via OPA: Block routing to agents
+                # AUTHORIZATION ENFORCEMENT via policy engine: Block routing to agents
                 # the user does not have access to. This is the hard gate
                 # that prevents unauthorized access regardless of LLM output.
                 # Uses permission intersection: Effective = User Departments ∩ Agent Capabilities
-                from shared_models.opa_client import (
+                from shared_models.policy_client import (
                     Delegation,
                     check_agent_authorization,
                 )
@@ -657,19 +661,19 @@ class DirectHTTPStrategy(CommunicationStrategy):
                     act_claim=act_claim,
                 )
 
-                opa_decision = await check_agent_authorization(
+                policy_decision = await check_agent_authorization(
                     caller_spiffe_id=caller_id,
                     agent_name=routing_decision,
                     delegation=delegation,
                 )
 
-                if not opa_decision.allow:
+                if not policy_decision.allow:
                     logger.warning(
-                        "AUTHORIZATION BLOCKED: OPA denied routing to agent",
+                        "AUTHORIZATION BLOCKED: Policy denied routing to agent",
                         user_id=normalized_request.user_id,
                         requested_agent=routing_decision,
                         departments=departments,
-                        reason=opa_decision.reason,
+                        reason=policy_decision.reason,
                         session_id=normalized_request.session_id,
                     )
                     await AuditService.emit(
@@ -678,7 +682,7 @@ class DirectHTTPStrategy(CommunicationStrategy):
                         action="route_to_agent",
                         resource=routing_decision,
                         outcome="failure",
-                        reason=opa_decision.reason,
+                        reason=policy_decision.reason,
                         metadata={
                             "departments": departments,
                             "session_id": normalized_request.session_id,
@@ -702,15 +706,15 @@ class DirectHTTPStrategy(CommunicationStrategy):
                             "routing_reason": "Access denied - unauthorized agent",
                             "blocked_agent": routing_decision,
                             "departments": departments,
-                            "opa_reason": opa_decision.reason,
+                            "policy_reason": policy_decision.reason,
                         },
                     }
 
                 logger.info(
-                    "Routing decision received (OPA authorized)",
+                    "Routing decision received (Policy authorized)",
                     from_agent=current_agent,
                     to_agent=routing_decision,
-                    effective_departments=opa_decision.effective_departments,
+                    effective_departments=policy_decision.effective_departments,
                     session_id=normalized_request.session_id,
                 )
                 await AuditService.emit(
@@ -721,19 +725,19 @@ class DirectHTTPStrategy(CommunicationStrategy):
                     outcome="success",
                     metadata={
                         "departments": departments,
-                        "effective_departments": opa_decision.effective_departments,
+                        "effective_departments": policy_decision.effective_departments,
                         "session_id": normalized_request.session_id,
                     },
                     service="request-manager",
                 )
 
                 # Update transfer context with SCOPE REDUCTION:
-                # Pass effective_departments (the OPA intersection) instead of the
+                # Pass effective_departments (the policy intersection) instead of the
                 # user's full departments. This ensures specialist agents only see
                 # the narrowed scope they're authorized for, not the user's full set.
                 transfer_context = response.get("metadata") or {}
                 transfer_context["departments"] = (
-                    opa_decision.effective_departments or departments
+                    policy_decision.effective_departments or departments
                 )
 
                 # Preserve act_claim for delegation chain tracking
@@ -765,7 +769,7 @@ class DirectHTTPStrategy(CommunicationStrategy):
                 previous_agent = current_agent
 
                 # Route to specialist agent — enable delegation headers so
-                # agent-service can independently verify authorization via OPA.
+                # agent-service can independently verify authorization via policy engine.
                 current_agent = routing_decision
                 include_delegation = True
 

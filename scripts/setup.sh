@@ -167,6 +167,20 @@ else
     echo "  ✗ Agent Service not responding"
 fi
 
+# Check RAG API
+if curl -sf http://localhost:8080/health > /dev/null 2>&1; then
+    echo "  ✓ RAG API healthy"
+else
+    echo "  ✗ RAG API not responding"
+fi
+
+# Check Praxis Gateway
+if curl -sf http://localhost:8180/health > /dev/null 2>&1; then
+    echo "  ✓ Praxis Gateway healthy"
+else
+    echo "  ✗ Praxis Gateway not responding"
+fi
+
 # Check Web UI
 if curl -sf http://localhost:3000 > /dev/null 2>&1; then
     echo "  ✓ Web UI healthy"
@@ -188,7 +202,7 @@ echo "  • Request Manager: http://localhost:8000"
 echo "  • Agent Service:   http://localhost:8001"
 echo "  • RAG API:         http://localhost:8080"
 echo "  • Keycloak:        http://localhost:8090"
-echo "  • OPA:             http://localhost:8181"
+echo "  • Praxis Gateway:  http://localhost:8180"
 echo ""
 echo "Test users: carlos, luis, sharon, josh (password: <name>123)"
 echo ""

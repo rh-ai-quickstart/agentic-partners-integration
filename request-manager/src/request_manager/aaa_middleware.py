@@ -1,7 +1,7 @@
 """
 AAA Middleware for Request Manager.
 
-Builds user context with department-based access control for OPA authorization.
+Builds user context with department-based access control for policy-based authorization.
 """
 
 from typing import Any, Dict
@@ -19,7 +19,7 @@ class AAAMiddleware:
     @staticmethod
     async def get_user_context(db: AsyncSession, user_email: str) -> Dict[str, Any]:
         """
-        Get user context with departments for OPA-based authorization.
+        Get user context with departments for policy-based authorization.
 
         Args:
             db: Database session
@@ -39,7 +39,7 @@ class AAAMiddleware:
                     "departments": [],
                 }
 
-            # Get departments from DB or OPA fallback
+            # Get departments from DB or policy fallback
             departments = await AAAService.get_user_departments(db, user_email)
 
             return {

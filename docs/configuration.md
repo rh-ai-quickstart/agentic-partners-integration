@@ -50,7 +50,7 @@ These variables are maintained for backward compatibility but will be removed in
 |----------|---------|-------------|
 | `MOCK_SPIFFE` | `true` | Use mock SPIFFE mode (X-SPIFFE-ID header) instead of real mTLS |
 | `SPIFFE_TRUST_DOMAIN` | `partner.example.com` | SPIFFE trust domain for identity URIs |
-| `OPA_URL` | `http://localhost:8181` | OPA policy engine URL for authorization queries |
+| `PRAXIS_GATEWAY_URL` | `http://localhost:8180` | Praxis policy gateway URL |
 | `ENFORCE_AGENT_AUTH` | `true` | Require caller SPIFFE identity on agent-service /invoke endpoint. Set to `false` for testing without identity headers. |
 | `KEYCLOAK_URL` | `http://keycloak:8080` | Keycloak server URL for OIDC authentication |
 | `KEYCLOAK_REALM` | `partner-agent` | Keycloak realm name |

@@ -88,17 +88,17 @@ Keycloak runs in `start-dev` mode with an embedded H2 database that loses state 
 | **Admin credentials** | `admin`/`admin123` | Strong password via secrets management; disable admin console in production |
 | **Realm management** | `--import-realm` from JSON | Keycloak Admin API or Terraform keycloak provider for GitOps |
 
-## OPA: Bundle Server + Decision Logging
+## Praxis Gateway: Policy Enforcement
 
-OPA runs with locally mounted policy files and no audit trail.
+Praxis runs as a reverse proxy between request-manager and agent-service, enforcing JWT validation and APL authorization policies.
 
 | | PoC (current) | Production |
 |---|---|---|
-| **Policy delivery** | Volume-mounted `.rego` files | OPA bundle server (S3 bucket, HTTP server, or Styra DAS) for versioned policy distribution |
-| **Decision logging** | None | Enable OPA decision logs to a central store (Elasticsearch, CloudWatch) for audit compliance |
-| **Deployment** | Shared singleton container | Sidecar per service (eliminates network hop and single point of failure) |
-| **Policy testing** | `delegation_test.rego` | CI pipeline with `opa test` and `conftest` for policy-as-code validation |
-| **Management** | Manual | Styra DAS (commercial) for policy impact analysis, testing, and rollback |
+| **Policy delivery** | Volume-mounted YAML files | Git-synced policy repository with CI validation |
+| **Decision logging** | Praxis access logs | Structured decision logs to a central store (Elasticsearch, CloudWatch) for audit compliance |
+| **Deployment** | Shared gateway container | Sidecar per service or dedicated gateway with HA |
+| **Policy testing** | In-process Python tests | CI pipeline with policy validation and integration tests |
+| **Management** | Manual YAML edits | GitOps workflow with policy review and staged rollout |
 
 ## LLM Backend: Gateway + Failover
 
@@ -146,7 +146,7 @@ The RAG service has no caching, no reranking, and uses a one-time ingestion scri
 | **Vector Embeddings** | **3072-dim (no index, sequential scan)** | **Switch to ≤2000-dim model + index** OR **migrate to dedicated vector DB** | **High** (if scaling > 10K docs) |
 | PostgreSQL | Single instance, no TLS | **CrunchyData PGO or managed DB** (TLS, HA, backups) | High |
 | Keycloak | `start-dev`, H2, no TLS | **Production mode** (external PG, TLS, clustering) | High |
-| OPA | Mounted files, no logging | **Bundle server + decision logs** | Medium |
+| Praxis Gateway | Mounted YAML, access logs | **GitOps policy delivery + decision logs** | Medium |
 | LLM (Gemini) | Direct API, no failover | **LiteLLM proxy** (failover, rate limiting, cost tracking) | Medium |
 | Web UI (nginx) | Plain HTTP, no headers | **TLS + security headers** (Caddy or hardened nginx) | Medium |
 | RAG Service | No cache, no reranking | **Add Redis cache + reranker** | Low |

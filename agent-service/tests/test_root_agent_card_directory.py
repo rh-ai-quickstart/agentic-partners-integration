@@ -11,9 +11,16 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def client():
-    """FastAPI test client for the agent-service app."""
-    from agent_service.main import app
-    return TestClient(app, raise_server_exceptions=False)
+    """FastAPI test client for the agent-service app with mocked AgentManager."""
+    mock_manager = MagicMock()
+    mock_manager.get_specialist_agents.return_value = {
+        "software-support": {"departments": ["software"]},
+        "network-support": {"departments": ["network"]},
+        "kubernetes-support": {"departments": ["kubernetes"]},
+    }
+    with patch("agent_service.main._AgentManagerForA2A", return_value=mock_manager):
+        from agent_service.main import app
+        yield TestClient(app, raise_server_exceptions=False)
 
 
 class TestRootAgentCardDirectory:

@@ -83,15 +83,29 @@ async def _get_dcr_actor_token(token_endpoint: str) -> Optional[str]:
     if not DCR_ENABLED:
         return None
     try:
-        from shared_models.dcr_client import get_dcr_client
+        from shared_models.dcr_client import (
+            get_dcr_client,
+            get_registered_dcr_credentials,
+        )
         from shared_models.spire_client import get_spire_client
 
-        spire = get_spire_client()
-        svid = spire.fetch_svid()
-        if not svid or not svid.spiffe_id:
-            return None
-        dcr = get_dcr_client(svid.spiffe_id, "request-manager")
+        spiffe_id: Optional[str] = None
+        try:
+            spire = get_spire_client()
+            svid = spire.fetch_svid()
+            if svid and svid.spiffe_id:
+                spiffe_id = svid.spiffe_id
+        except Exception:
+            pass
+        if not spiffe_id:
+            spiffe_id = os.getenv(
+                "SPIFFE_ID",
+                "spiffe://partner.example.com/service/request-manager",
+            )
+        dcr = get_dcr_client(spiffe_id, "request-manager")
         creds = dcr.get_credentials()
+        if not creds:
+            creds = get_registered_dcr_credentials()
         if not creds:
             return None
         dcr_client_id, dcr_client_secret = creds

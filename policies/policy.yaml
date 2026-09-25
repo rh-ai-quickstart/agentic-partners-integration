@@ -1,0 +1,64 @@
+# Praxis Policy Engine (PPE) compatible authorization policy.
+#
+# Policy language: APL (Authorization Policy Language)
+# Reference: https://github.com/praxis-proxy/policy
+#
+# This policy governs agent invocation authorization using the
+# permission intersection model: Effective = User Departments ∩ Agent Capabilities.
+#
+# Deployment:
+#   - Gateway: Praxis proxy loads praxis/policy.yaml (APL + identity/jwt plugin)
+#   - In-process: shared_models.policy_client evaluates this file's rules in Python
+#   - Defense-in-depth: both layers enforce the same permission intersection model
+
+global:
+  authorization:
+    pre_invocation:
+      - "require(caller.identity)"
+
+routes:
+  - tool: invoke_agent
+    authorization:
+      pre_invocation:
+        # Rule 1: Service-to-service without delegation — allowed
+        # Infrastructure services call each other freely.
+        - when: "caller.type == 'service' & !delegation"
+          do: "allow"
+
+        # Rule 2: Direct user access — allowed
+        - when: "caller.type == 'user'"
+          do: "allow"
+
+        # Rule 3: Delegated access — permission intersection
+        # Effective = user_departments ∩ agent_capabilities
+        - when: "caller.type == 'service' & delegation & agent.known"
+          do:
+            - "require(intersection_not_empty(delegation.user_departments, agent.capabilities))"
+
+        # Rule 4: Delegated access to unknown agent — denied
+        - when: "delegation & !agent.known"
+          do: "deny('Unknown agent')"
+
+        # Rule 5: Autonomous agent without delegation — denied
+        - when: "caller.type == 'agent' & !delegation"
+          do: "deny('Autonomous agent access denied — delegation context required')"
+
+  - tool: validate_delegation_chain
+    authorization:
+      pre_invocation:
+        - "require(delegation.chain_length > 0)"
+        - "require(delegation.chain_length <= 10)"
+        - "require(!delegation.has_circular)"
+
+  - tool: validate_spiffe
+    authorization:
+      pre_invocation:
+        - "require(startswith(caller.spiffe_id, 'spiffe://' + config.trust_domain + '/'))"
+        - "require(caller.spiffe_id in config.valid_spiffe_ids)"
+
+  - tool: token_exchange
+    authorization:
+      pre_invocation:
+        - "require(caller.spiffe_valid)"
+        - "require(requested_action in agent.allowed_actions)"
+        - "require(audience in agent.allowed_audiences)"

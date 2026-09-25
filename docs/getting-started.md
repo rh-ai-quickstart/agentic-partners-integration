@@ -13,7 +13,7 @@ cd agentic-partners-integration
 make setup
 ```
 
-On first run it prompts for your Google API key and saves it to `.env`. Then it builds all container images, starts infrastructure (PostgreSQL with pgvector, Keycloak, OPA), runs database migrations, starts application services, ingests the RAG knowledge base into pgvector, and launches the web UI. At the end it verifies all services are healthy and prints login credentials.
+On first run it prompts for your Google API key and saves it to `.env`. Then it builds all container images, starts infrastructure (PostgreSQL with pgvector, Keycloak, Praxis gateway), runs database migrations, starts application services, ingests the RAG knowledge base into pgvector, and launches the web UI. At the end it verifies all services are healthy and prints login credentials.
 
 ## Services
 
@@ -24,7 +24,7 @@ On first run it prompts for your Google API key and saves it to `.env`. Then it 
 | Agent Service | http://localhost:8001 |
 | RAG API | http://localhost:8003 |
 | Keycloak (admin) | http://localhost:8090 |
-| OPA | http://localhost:8181 |
+| Praxis Gateway | http://localhost:8180 |
 
 ## Test Users (local password login)
 
@@ -66,7 +66,7 @@ Then run `make setup` (or just `bash scripts/seed/seed-keycloak.sh`).  Any provi
 2. The external provider authenticates them and returns a verified email address.
 3. Keycloak looks for an existing local user with that email.
    - **Match found** → the external identity is linked to that account; the user inherits whatever groups/departments are already assigned (e.g. if `carlos@gmail.com` is pre-seeded with `engineering, software, kubernetes`, they get those departments on first social login).
-   - **No match** → Keycloak creates a new local user.  The request-manager upserts that email into PostgreSQL with **empty departments**.  The user can authenticate successfully but OPA blocks all agents until an admin assigns their departments (via the Keycloak admin console or directly in the DB).
+   - **No match** → Keycloak creates a new local user.  The request-manager upserts that email into PostgreSQL with **empty departments**.  The user can authenticate successfully but the policy engine blocks all agents until an admin assigns their departments (via the Keycloak admin console or directly in the DB).
 
 **Redirect URIs to register with each provider (localhost defaults):**
 

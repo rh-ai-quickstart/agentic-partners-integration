@@ -44,7 +44,7 @@ fi
 # =============================================================================
 # 1. Run Database Migrations
 # =============================================================================
-echo "[1/5] Running database migrations..."
+echo "[1/7] Running database migrations..."
 docker run --rm --name partner-db-migrate \
     --network partner-agent-network \
     -e DATABASE_URL="$DB_URL" \
@@ -57,7 +57,7 @@ echo ""
 # =============================================================================
 # 2. RAG API
 # =============================================================================
-echo "[2/5] Starting RAG API..."
+echo "[2/7] Starting RAG API..."
 docker stop partner-rag-api-full 2>/dev/null || true
 docker rm partner-rag-api-full 2>/dev/null || true
 
@@ -78,7 +78,7 @@ echo ""
 # =============================================================================
 # 3. Agent Service (using shared SPIRE Agent socket)
 # =============================================================================
-echo "[3/5] Starting Agent Service..."
+echo "[3/7] Starting Agent Service..."
 
 docker stop partner-agent-service-full 2>/dev/null || true
 docker rm partner-agent-service-full 2>/dev/null || true
@@ -89,6 +89,7 @@ docker run -d \
     --label "com.docker.compose.service=agent-service" \
     -p 8001:8080 \
     -v spire-socket:/run/spire/sockets:ro \
+    -v "${PROJECT_ROOT}/policies/agent_capabilities.yaml:/etc/praxis/agent_capabilities.yaml:ro" \
     -e "DATABASE_URL=$DB_URL" \
     -e "LLM_BACKEND=gemini" \
     -e "GOOGLE_API_KEY=$GOOGLE_API_KEY" \
@@ -96,7 +97,6 @@ docker run -d \
     -e "LOG_LEVEL=INFO" \
     -e "RAG_API_ENDPOINT=http://partner-rag-api-full:8080/answer" \
     -e "SPIFFE_TRUST_DOMAIN=partner.example.com" \
-    -e "OPA_URL=http://partner-opa-full:8181" \
     -e "SPIFFE_ENDPOINT_SOCKET=/run/spire/sockets/agent.sock" \
     -e "KEYCLOAK_URL=http://partner-keycloak-full:8090" \
     -e "KEYCLOAK_REALM=partner-agent" \
@@ -106,6 +106,7 @@ docker run -d \
     -e "KEYCLOAK_DCR_ENDPOINT=http://partner-keycloak-full:8090/realms/partner-agent/clients-registrations/openid-connect" \
     -e "KEYCLOAK_ADMIN_USERNAME=${KEYCLOAK_ADMIN_USERNAME:-admin}" \
     -e "KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin123}" \
+    -e "POLICY_CAPABILITIES_PATH=/etc/praxis/agent_capabilities.yaml" \
     partner-agent-service:latest > /dev/null
 
 echo "  OK Agent Service started"
@@ -113,9 +114,34 @@ sleep 3
 echo ""
 
 # =============================================================================
-# 4. Request Manager (using shared SPIRE Agent socket)
+# 4. Praxis Policy Gateway (between request-manager and agent-service)
 # =============================================================================
-echo "[4/5] Starting Request Manager..."
+echo "[4/7] Starting Praxis Policy Gateway..."
+
+docker stop partner-praxis-gateway-full 2>/dev/null || true
+docker rm partner-praxis-gateway-full 2>/dev/null || true
+
+docker run -d \
+    --name partner-praxis-gateway-full \
+    --network partner-agent-network \
+    -p 8180:8080 \
+    -p 9901:9901 \
+    -v "${PROJECT_ROOT}/praxis/config.yaml:/etc/praxis/config.yaml:ro" \
+    -v "${PROJECT_ROOT}/praxis/policy.yaml:/etc/praxis/policy.yaml:ro" \
+    -v "${PROJECT_ROOT}/policies/agent_capabilities.yaml:/etc/praxis/agent_capabilities.yaml:ro" \
+    -e "PRAXIS_CONFIG=/etc/praxis/config.yaml" \
+    -e "PRAXIS_LOG_FORMAT=json" \
+    -e "RUST_LOG=info" \
+    ghcr.io/praxis-proxy/praxis:0.7.0 > /dev/null
+
+echo "  OK Praxis Policy Gateway started"
+sleep 3
+echo ""
+
+# =============================================================================
+# 5. Request Manager (using shared SPIRE Agent socket)
+# =============================================================================
+echo "[5/7] Starting Request Manager..."
 
 docker stop partner-request-manager-full 2>/dev/null || true
 docker rm partner-request-manager-full 2>/dev/null || true
@@ -126,16 +152,16 @@ docker run -d \
     --label "com.docker.compose.service=request-manager" \
     -p 8000:8080 \
     -v spire-socket:/run/spire/sockets:ro \
+    -v "${PROJECT_ROOT}/policies/agent_capabilities.yaml:/etc/praxis/agent_capabilities.yaml:ro" \
     -e "DATABASE_URL=$DB_URL" \
     -e "LLM_BACKEND=gemini" \
     -e "GOOGLE_API_KEY=$GOOGLE_API_KEY" \
     -e "GEMINI_MODEL=gemini-2.5-flash" \
-    -e "AGENT_SERVICE_URL=http://partner-agent-service-full:8080" \
+    -e "AGENT_SERVICE_URL=http://partner-praxis-gateway-full:8080" \
     -e "AGENT_TIMEOUT=120" \
     -e "LOG_LEVEL=INFO" \
     -e "STRUCTURED_CONTEXT_ENABLED=true" \
     -e "SPIFFE_TRUST_DOMAIN=partner.example.com" \
-    -e "OPA_URL=http://partner-opa-full:8181" \
     -e "KEYCLOAK_URL=http://partner-keycloak-full:8090" \
     -e "KEYCLOAK_REALM=$REALM" \
     -e "KEYCLOAK_CLIENT_ID=partner-agent-ui" \
@@ -148,6 +174,7 @@ docker run -d \
     -e "KEYCLOAK_DCR_ENDPOINT=http://partner-keycloak-full:8090/realms/partner-agent/clients-registrations/openid-connect" \
     -e "KEYCLOAK_ADMIN_USERNAME=${KEYCLOAK_ADMIN_USERNAME:-admin}" \
     -e "KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin123}" \
+    -e "POLICY_CAPABILITIES_PATH=/etc/praxis/agent_capabilities.yaml" \
     partner-request-manager:latest > /dev/null
 
 echo "  OK Request Manager started"
@@ -155,9 +182,9 @@ sleep 3
 echo ""
 
 # =============================================================================
-# 5. Web UI
+# 6. Web UI
 # =============================================================================
-echo "[5/5] Starting Web UI..."
+echo "[6/7] Starting Web UI..."
 docker stop partner-pf-chat-ui-full 2>/dev/null || true
 docker rm partner-pf-chat-ui-full 2>/dev/null || true
 
@@ -172,9 +199,9 @@ sleep 2
 echo ""
 
 # =============================================================================
-# 6. Register SPIRE Workloads (using Docker labels)
+# 7. Register SPIRE Workloads (using Docker labels)
 # =============================================================================
-echo "[6/6] Registering SPIRE workloads..."
+echo "[7/7] Registering SPIRE workloads..."
 
 # Wait for SPIRE Agent to fully attest before registering workloads.
 sleep 3
@@ -250,8 +277,8 @@ echo ""
 echo "Service URLs:"
 echo "  • Web UI:          http://localhost:3000"
 echo "  • Request Manager: http://localhost:8000"
+echo "  • Praxis Gateway:  http://localhost:8180  (policy enforcement)"
 echo "  • Agent Service:   http://localhost:8001"
 echo "  • RAG API:         http://localhost:8080"
 echo "  • Keycloak:        http://localhost:8090"
-echo "  • OPA:             http://localhost:8181"
 echo ""

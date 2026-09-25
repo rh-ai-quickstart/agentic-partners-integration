@@ -59,16 +59,12 @@ This document explains where user/group data lives, how it flows through the sys
 └──────────────────────────────────────────────────────────────────┘
                               ↓
 ┌──────────────────────────────────────────────────────────────────┐
-│ 4. FALLBACK: OPA Static Map                                     │
+│ 4. FALLBACK: Policy Engine Static Map                            │
 │    (Only used if JWT has no groups AND DB has no record)        │
 │                                                                  │
-│    policies/user_permissions.rego:                              │
-│      user_departments_fallback := {                             │
-│        "carlos@example.com": ["engineering", "software", "k8s"],│
-│        "luis@example.com": ["engineering", "network"],          │
-│        "sharon@example.com": ["all"],                           │
-│        "josh@example.com": []                                   │
-│      }                                                          │
+│    shared-models/src/shared_models/policy_client.py:            │
+│      _user_departments_fallback = {}  # empty — all users       │
+│      are managed in Keycloak                                    │
 │                                                                  │
 │    ⚠️ This is ONLY for local development/testing               │
 └──────────────────────────────────────────────────────────────────┘
@@ -129,39 +125,29 @@ Create/update user in database:
 ### Step 3: Authorization Decision
 
 ```
-Request Manager → OPA (http://localhost:8181)
-  POST /v1/data/partner/authorization/decision
-  {
-    "input": {
-      "caller_spiffe_id": "spiffe://partner.example.com/request-manager",
-      "agent_name": "kubernetes-support",
-      "delegation": {
-        "user_spiffe_id": "spiffe://partner.example.com/user/carlos",
-        "user_departments": ["engineering", "software", "kubernetes"]  ← From DB/JWT
-      }
-    }
-  }
+Request Manager → Praxis Gateway (http://localhost:8180) → Agent Service
+  In-process policy evaluation (policy_client.py):
+    caller_spiffe_id: "spiffe://partner.example.com/request-manager"
+    agent_name: "kubernetes-support"
+    delegation:
+      user_spiffe_id: "spiffe://partner.example.com/user/carlos"
+      user_departments: ["engineering", "software", "kubernetes"]  ← From DB/JWT
   ↓
-OPA evaluates policies:
-  policies/delegation.rego:
-    - Get user departments (from input.delegation.user_departments)
-    - Get agent capabilities (from policies/agent_permissions.rego)
-    - Compute intersection: ["kubernetes"] ∩ ["kubernetes"] = ["kubernetes"]
-    - Allow: true ✅
+Policy evaluator computes:
+  - Get user departments (from delegation.user_departments)
+  - Get agent capabilities (from policies/agent_capabilities.yaml)
+  - Compute intersection: ["kubernetes"] ∩ ["kubernetes"] = ["kubernetes"]
+  - Allow: true ✅
   ↓
-OPA returns decision:
-  {
-    "result": {
-      "allow": true,
-      "reason": "Delegated access granted — effective departments: ['kubernetes']",
-      "effective_departments": ["kubernetes"]
-    }
-  }
+Policy decision:
+  allow: true
+  reason: "Delegated access granted — effective departments: ['kubernetes']"
+  effective_departments: ["kubernetes"]
 ```
 
-**Where OPA gets departments:**
-1. **Primary:** From `input.delegation.user_departments` (passed by Request Manager from DB/JWT)
-2. **Fallback:** If not in input, looks up in `user_departments_fallback` static map (OPA policy)
+**Where the policy engine gets departments:**
+1. **Primary:** From `delegation.user_departments` (passed by Request Manager from DB/JWT)
+2. **Fallback:** If not provided, returns empty list (all users managed in Keycloak)
 
 ## 📝 **How to Manage Users and Groups**
 
@@ -223,23 +209,19 @@ http://localhost:8090
 # Test login immediately (no restart needed)
 ```
 
-**Option 3: Update OPA Fallback** (Quick test only)
+**Option 3: Update Policy Capabilities** (Quick test only)
 
-```rego
-# Edit policies/user_permissions.rego
-
-user_departments_fallback := {
-    "carlos@example.com": ["engineering", "software", "kubernetes"],
-    "luis@example.com": ["engineering", "network"],
-    "sharon@example.com": ["engineering", "software", "network", "kubernetes", "admin"],
-    "josh@example.com": [],
-    "alice@example.com": ["engineering", "software"]  # ← Add here
-}
-
-# No restart needed - OPA reloads policies automatically
+```yaml
+# Edit policies/agent_capabilities.yaml
+agent_capabilities:
+  routing-agent: [admin, kubernetes, network, software]
+  kubernetes-support: [kubernetes]
+  network-support: [network]
+  software-support: [software]
+  new-agent: [engineering, software]  # ← Add here
 ```
 
-⚠️ **Warning:** This only works if JWT doesn't have groups claim. Not recommended for real testing.
+After editing, restart the services to reload the capabilities file.
 
 ### Production (External Identity Provider)
 

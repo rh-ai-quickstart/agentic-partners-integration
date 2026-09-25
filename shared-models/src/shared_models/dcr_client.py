@@ -250,3 +250,18 @@ def get_dcr_client(spiffe_id: str, client_name: str) -> DCRClient:
             client_name=client_name,
         )
     return _dcr_clients[spiffe_id]
+
+
+def get_registered_dcr_credentials() -> Optional[tuple[str, str]]:
+    """Return credentials from any registered DCR client in the cache.
+
+    SPIRE SVID availability is non-deterministic — the SPIFFE ID used at
+    startup registration may differ from the one resolved during token
+    exchange.  This function searches all cached clients to find one that
+    has completed registration and holds valid Keycloak credentials.
+    """
+    for client in _dcr_clients.values():
+        creds = client.get_credentials()
+        if creds:
+            return creds
+    return None

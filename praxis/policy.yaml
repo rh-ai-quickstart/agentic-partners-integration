@@ -1,0 +1,20 @@
+# Praxis Policy Engine (PPE) — transparent proxy policy
+#
+# Praxis 0.7.0 blocks JWKS URL fetches to RFC 1918 addresses and has
+# a kid-matching bug with inline JWK keys, so gateway-level JWT
+# validation is deferred to a future release.
+#
+# Authentication and authorization are enforced at the application layer:
+#   - request-manager: validates JWT tokens from Keycloak
+#   - agent-service: runs policy_client.py permission intersection checks
+#
+# This policy allows all requests through the gateway. The defense-in-depth
+# architecture means auth is still enforced, just not at the proxy layer.
+
+global:
+  attribute_files:
+    - /etc/praxis/agent_capabilities.yaml
+
+  authorization:
+    pre_invocation:
+      - allow

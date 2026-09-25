@@ -650,7 +650,7 @@ class TestAgentRegistry:
 
 
 class TestAuthEnforcement:
-    """Tests for caller identity and OPA authorization enforcement."""
+    """Tests for caller identity and policy engine authorization enforcement."""
 
     def test_rejects_request_without_identity(self, patched_app, monkeypatch):
         """When ENFORCE_AGENT_AUTH=true, requests without X-SPIFFE-ID are rejected."""
@@ -702,7 +702,7 @@ class TestAuthEnforcement:
         assert response.status_code == 200
 
     def test_opa_delegation_allows(self, patched_app, monkeypatch):
-        """When delegation headers present and OPA allows, request proceeds."""
+        """When delegation headers present and policy engine allows, request proceeds."""
         from dataclasses import dataclass, field
 
         from fastapi.testclient import TestClient
@@ -710,7 +710,7 @@ class TestAuthEnforcement:
         monkeypatch.setenv("ENFORCE_AGENT_AUTH", "true")
 
         @dataclass
-        class FakeOPADecision:
+        class FakePolicyDecision:
             allow: bool = True
             reason: str = "Delegated access granted"
             effective_departments: list = field(default_factory=lambda: ["software"])
@@ -718,9 +718,9 @@ class TestAuthEnforcement:
         with (
             patch("agent_service.agents.AgentManager") as mock_agent_manager_cls,
             patch(
-                "shared_models.opa_client.check_agent_authorization",
+                "shared_models.policy_client.check_agent_authorization",
                 new_callable=AsyncMock,
-                return_value=FakeOPADecision(),
+                return_value=FakePolicyDecision(),
             ),
             patch("agent_service.main.httpx.AsyncClient") as mock_httpx_cls,
         ):
@@ -762,8 +762,8 @@ class TestAuthEnforcement:
 
         assert response.status_code == 200
 
-    def test_opa_delegation_denies(self, patched_app, monkeypatch):
-        """When delegation headers present and OPA denies, returns 403."""
+    def test_policy_delegation_denies(self, patched_app, monkeypatch):
+        """When delegation headers present and policy engine denies, returns 403."""
         from dataclasses import dataclass, field
 
         from fastapi.testclient import TestClient
@@ -771,15 +771,15 @@ class TestAuthEnforcement:
         monkeypatch.setenv("ENFORCE_AGENT_AUTH", "true")
 
         @dataclass
-        class FakeOPADecision:
+        class FakePolicyDecision:
             allow: bool = False
             reason: str = "No overlapping departments"
             effective_departments: list = field(default_factory=list)
 
         with patch(
-            "shared_models.opa_client.check_agent_authorization",
+            "shared_models.policy_client.check_agent_authorization",
             new_callable=AsyncMock,
-            return_value=FakeOPADecision(),
+            return_value=FakePolicyDecision(),
         ):
             client = TestClient(patched_app)
             response = client.post(
@@ -831,7 +831,7 @@ class TestAuthEnforcement:
     def test_agent_caller_without_delegation_denied(self, patched_app, monkeypatch):
         """Agent callers without delegation context are rejected.
 
-        This verifies defense-in-depth: OPA Rule 5 denies autonomous agents.
+        This verifies defense-in-depth: policy engine Rule 5 denies autonomous agents.
         """
         from dataclasses import dataclass, field
 
@@ -839,17 +839,17 @@ class TestAuthEnforcement:
 
         monkeypatch.setenv("ENFORCE_AGENT_AUTH", "true")
 
-        # Agent identity (not a service) with delegation but OPA denies
+        # Agent identity (not a service) with delegation but policy engine denies
         @dataclass
-        class FakeOPADecision:
+        class FakePolicyDecision:
             allow: bool = False
             reason: str = "Autonomous agent access denied"
             effective_departments: list = field(default_factory=list)
 
         with patch(
-            "shared_models.opa_client.check_agent_authorization",
+            "shared_models.policy_client.check_agent_authorization",
             new_callable=AsyncMock,
-            return_value=FakeOPADecision(),
+            return_value=FakePolicyDecision(),
         ):
             client = TestClient(patched_app)
             response = client.post(
@@ -877,7 +877,7 @@ class TestLifespan:
         self, mock_create_lifespan, patched_app
     ):
         """Line 27: lifespan function calls create_shared_lifespan."""
-        from agent_service.main import lifespan
+        from agent_service.main import lifespan, _agent_service_startup
 
         mock_create_lifespan.return_value = MagicMock()
 
@@ -886,6 +886,7 @@ class TestLifespan:
         mock_create_lifespan.assert_called_once_with(
             service_name="agent-service",
             version="0.1.0",
+            custom_startup=_agent_service_startup,
         )
 
 

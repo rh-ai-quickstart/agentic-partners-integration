@@ -1,9 +1,4 @@
-"""Tests for request-manager application.
-
-Note: JWT/password auth endpoints have been replaced by SPIFFE identity +
-OPA authorization. See policies/ for Rego rules and shared_models.identity
-for the SPIFFE identity module.
-"""
+"""Tests for request-manager application."""
 
 from fastapi.testclient import TestClient
 

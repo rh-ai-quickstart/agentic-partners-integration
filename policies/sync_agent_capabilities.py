@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Generate OPA agent_permissions.rego from agent YAML configs.
+"""Generate Praxis Policy Engine agent_capabilities.yaml from agent YAML configs.
 
 Reads each agent YAML in agent-service/config/agents/ and produces
-a Rego file with agent_capabilities derived from the 'departments'
+a YAML file with agent_capabilities derived from the 'departments'
 field in each config.  The routing-agent entry is auto-generated
 as the union of all specialist departments plus 'admin'.
 
 Usage:
-    python scripts/sync_agent_capabilities.py
+    python policies/sync_agent_capabilities.py
 """
 
 import sys
@@ -16,7 +16,7 @@ from pathlib import Path
 import yaml
 
 AGENT_CONFIG_DIR = Path(__file__).parent.parent / "agent-service" / "config" / "agents"
-OUTPUT_FILE = Path(__file__).parent.parent / "policies" / "agent_permissions.rego"
+OUTPUT_FILE = Path(__file__).parent / "agent_capabilities.yaml"
 
 
 def load_agent_configs(config_dir: Path) -> dict[str, list[str]]:
@@ -32,38 +32,48 @@ def load_agent_configs(config_dir: Path) -> dict[str, list[str]]:
     return capabilities
 
 
-def generate_rego(specialist_capabilities: dict[str, list[str]]) -> str:
-    """Generate the agent_permissions.rego content."""
+def generate_yaml(specialist_capabilities: dict[str, list[str]]) -> str:
+    """Generate the agent_capabilities.yaml content."""
     # routing-agent gets the union of all specialist departments + admin
     all_departments = set()
     for depts in specialist_capabilities.values():
         all_departments.update(depts)
     all_departments.add("admin")
 
-    lines = [
-        "package partner.authorization",
-        "",
-        "# Auto-generated from agent YAML configs by scripts/sync_agent_capabilities.py.",
-        "# Do not edit manually — run: make sync-agents",
-        "#",
-        "# Agent capability mappings: which departments each agent can serve.",
-        "# The routing-agent can route to any department's specialist.",
-        "# Specialist agents are scoped to their specific department.",
-        "agent_capabilities := {",
-    ]
+    # Build the data structure
+    agent_capabilities: dict[str, list[str]] = {}
 
     # routing-agent first
-    routing_depts = ", ".join(f'"{d}"' for d in sorted(all_departments))
-    lines.append(f'\t"routing-agent": [{routing_depts}],')
+    agent_capabilities["routing-agent"] = sorted(all_departments)
 
     # Specialist agents
     for name, depts in sorted(specialist_capabilities.items()):
-        dept_str = ", ".join(f'"{d}"' for d in depts)
-        lines.append(f'\t"{name}": [{dept_str}],')
+        agent_capabilities[name] = depts
 
-    lines.append("}")
-    lines.append("")  # trailing newline
-    return "\n".join(lines)
+    data = {
+        "data": {
+            "agent_capabilities": agent_capabilities,
+            "valid_departments": sorted(all_departments),
+            "service_names": [
+                "request-manager",
+                "agent-service",
+                "kubernetes-agent",
+                "aro-agent",
+                "rag-api",
+            ],
+            "trust_domain": "partner.example.com",
+        }
+    }
+
+    header = (
+        "# Auto-generated from agent YAML configs by policies/sync_agent_capabilities.py\n"
+        "# Do not edit manually — run: make sync-agents\n"
+        "#\n"
+        "# Praxis requires a top-level `data:` key for attribute files.\n"
+        "# policy_client.py reads from `data.agent_capabilities` (or falls back to flat format).\n"
+    )
+
+    return header + yaml.dump(data, default_flow_style=False, sort_keys=False)
 
 
 def main() -> None:
@@ -79,8 +89,8 @@ def main() -> None:
         print("ERROR: No agent configs with departments found", file=sys.stderr)
         sys.exit(1)
 
-    rego_content = generate_rego(capabilities)
-    OUTPUT_FILE.write_text(rego_content)
+    yaml_content = generate_yaml(capabilities)
+    OUTPUT_FILE.write_text(yaml_content)
     print(f"Generated {OUTPUT_FILE} with {len(capabilities)} specialist agent(s):")
     for name, depts in sorted(capabilities.items()):
         print(f"  {name}: {depts}")

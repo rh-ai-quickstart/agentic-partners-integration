@@ -96,29 +96,29 @@ class TestGetUserDepartments:
 
         assert departments == ["software", "engineering"]
 
-    @patch("shared_models.aaa_service.get_user_departments_from_opa")
+    @patch("shared_models.aaa_service.get_user_departments_fallback")
     @patch.object(AAAService, "get_user_by_email")
-    async def test_falls_back_to_opa(
-        self, mock_get, mock_opa, mock_db_session, mock_user
+    async def test_falls_back_to_policy(
+        self, mock_get, mock_fallback, mock_db_session, mock_user
     ):
         mock_user.departments = []
         mock_get.return_value = mock_user
-        mock_opa.return_value = ["hr", "finance"]
+        mock_fallback.return_value = ["hr", "finance"]
 
         departments = await AAAService.get_user_departments(
             mock_db_session, "test@example.com"
         )
 
         assert departments == ["hr", "finance"]
-        mock_opa.assert_called_once_with("test@example.com")
+        mock_fallback.assert_called_once_with("test@example.com")
 
-    @patch("shared_models.aaa_service.get_user_departments_from_opa")
+    @patch("shared_models.aaa_service.get_user_departments_fallback")
     @patch.object(AAAService, "get_user_by_email")
-    async def test_falls_back_to_opa_when_user_not_found(
-        self, mock_get, mock_opa, mock_db_session
+    async def test_falls_back_to_policy_when_user_not_found(
+        self, mock_get, mock_fallback, mock_db_session
     ):
         mock_get.return_value = None
-        mock_opa.return_value = ["marketing"]
+        mock_fallback.return_value = ["marketing"]
 
         departments = await AAAService.get_user_departments(
             mock_db_session, "unknown@example.com"

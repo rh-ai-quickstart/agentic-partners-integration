@@ -4,9 +4,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from datetime import datetime, timezone
+
 from request_manager.communication_strategy import (
     DirectHTTPStrategy,
     UnifiedRequestProcessor,
+    _registry_cache,
     get_communication_strategy,
 )
 
@@ -94,12 +97,12 @@ class TestEnsureRegistry:
         assert strategy.agent_client.agent_endpoints["db-support"] == (
             "http://db-agent:9090/api/v1/agents/db-support/invoke"
         )
-        assert strategy._registry_fetched is True
+
 
     async def test_only_fetches_once(self):
         """Second call is a no-op (cached)."""
         strategy = DirectHTTPStrategy()
-        strategy._registry_fetched = True
+        _registry_cache[strategy._agent_service_url] = ({}, datetime.now(timezone.utc))
 
         with patch(
             "request_manager.communication_strategy.httpx.AsyncClient"
@@ -123,7 +126,7 @@ class TestEnsureRegistry:
             # Should not raise
             await strategy._ensure_registry()
 
-        assert strategy._registry_fetched is True
+
         assert strategy.agent_client.agent_endpoints == {}
 
 
@@ -140,7 +143,7 @@ class TestInvokeAgentWithRouting:
         """Create a DirectHTTPStrategy with a mocked agent_client."""
         strategy = DirectHTTPStrategy()
         strategy.agent_client = AsyncMock()
-        strategy._registry_fetched = True  # Skip registry fetch in tests
+        _registry_cache[strategy._agent_service_url] = ({}, datetime.now(timezone.utc))  # Skip registry fetch in tests
         return strategy
 
     async def test_routes_through_routing_agent(self):
@@ -148,7 +151,7 @@ class TestInvokeAgentWithRouting:
         from dataclasses import dataclass, field
 
         @dataclass
-        class FakeOPADecision:
+        class FakePolicyDecision:
             allow: bool = True
             reason: str = "ok"
             effective_departments: list = field(default_factory=lambda: ["engineering"])
@@ -189,7 +192,7 @@ class TestInvokeAgentWithRouting:
 
         db = AsyncMock()
 
-        # Mock _get_conversation_history and OPA
+        # Mock _get_conversation_history and policy engine
         with (
             patch.object(
                 strategy,
@@ -198,9 +201,9 @@ class TestInvokeAgentWithRouting:
                 return_value=[],
             ),
             patch(
-                "shared_models.opa_client.check_agent_authorization",
+                "shared_models.policy_client.check_agent_authorization",
                 new_callable=AsyncMock,
-                return_value=FakeOPADecision(),
+                return_value=FakePolicyDecision(),
             ),
             patch(
                 "request_manager.communication_strategy.make_spiffe_id",
@@ -212,12 +215,12 @@ class TestInvokeAgentWithRouting:
         assert result["content"] == "Here is your answer."
         assert result["agent_id"] == "software-support"
 
-    async def test_opa_authorization_denial(self):
-        """When OPA denies routing, return an access-denied message."""
+    async def test_policy_authorization_denial(self):
+        """When policy engine denies routing, return an access-denied message."""
         from dataclasses import dataclass, field
 
         @dataclass
-        class FakeOPADecision:
+        class FakePolicyDecision:
             allow: bool = False
             reason: str = "department mismatch"
             effective_departments: list = field(default_factory=list)
@@ -255,9 +258,9 @@ class TestInvokeAgentWithRouting:
                 return_value=[],
             ),
             patch(
-                "shared_models.opa_client.check_agent_authorization",
+                "shared_models.policy_client.check_agent_authorization",
                 new_callable=AsyncMock,
-                return_value=FakeOPADecision(),
+                return_value=FakePolicyDecision(),
             ),
             patch(
                 "request_manager.communication_strategy.make_spiffe_id",
@@ -1152,14 +1155,14 @@ class TestInvokeAgentWithRoutingExtended:
         from dataclasses import dataclass, field
 
         @dataclass
-        class FakeOPADecision:
+        class FakePolicyDecision:
             allow: bool = True
             reason: str = "ok"
             effective_departments: list = field(default_factory=lambda: ["engineering"])
 
         strategy = DirectHTTPStrategy()
         strategy.agent_client = AsyncMock()
-        strategy._registry_fetched = True
+        _registry_cache[strategy._agent_service_url] = ({}, datetime.now(timezone.utc))
 
         # Every call returns a routing decision, creating an infinite loop
         routing_response = {
@@ -1193,9 +1196,9 @@ class TestInvokeAgentWithRoutingExtended:
                 return_value=[],
             ),
             patch(
-                "shared_models.opa_client.check_agent_authorization",
+                "shared_models.policy_client.check_agent_authorization",
                 new_callable=AsyncMock,
-                return_value=FakeOPADecision(),
+                return_value=FakePolicyDecision(),
             ),
             patch(
                 "request_manager.communication_strategy.make_spiffe_id",
@@ -1209,7 +1212,7 @@ class TestInvokeAgentWithRoutingExtended:
         """When target_agent is provided, skip routing-agent (line 400)."""
         strategy = DirectHTTPStrategy()
         strategy.agent_client = AsyncMock()
-        strategy._registry_fetched = True
+        _registry_cache[strategy._agent_service_url] = ({}, datetime.now(timezone.utc))
 
         direct_response = {
             "content": "Direct from specialist.",
@@ -1254,14 +1257,14 @@ class TestInvokeAgentWithRoutingExtended:
         from dataclasses import dataclass, field
 
         @dataclass
-        class FakeOPADecision:
+        class FakePolicyDecision:
             allow: bool = True
             reason: str = "ok"
             effective_departments: list = field(default_factory=lambda: ["engineering"])
 
         strategy = DirectHTTPStrategy()
         strategy.agent_client = AsyncMock()
-        strategy._registry_fetched = True
+        _registry_cache[strategy._agent_service_url] = ({}, datetime.now(timezone.utc))
 
         # First call: routing-agent routes to specialist1
         hop1 = {
@@ -1309,9 +1312,9 @@ class TestInvokeAgentWithRoutingExtended:
                 return_value=[],
             ),
             patch(
-                "shared_models.opa_client.check_agent_authorization",
+                "shared_models.policy_client.check_agent_authorization",
                 new_callable=AsyncMock,
-                return_value=FakeOPADecision(),
+                return_value=FakePolicyDecision(),
             ),
             patch(
                 "request_manager.communication_strategy.make_spiffe_id",
@@ -1325,18 +1328,18 @@ class TestInvokeAgentWithRoutingExtended:
         assert strategy.agent_client.invoke_agent.call_count == 3
 
     async def test_scope_reduction_passes_effective_departments(self):
-        """After OPA check, specialist receives effective_departments (intersection), not full departments."""
+        """After policy check, specialist receives effective_departments (intersection), not full departments."""
         from dataclasses import dataclass, field
 
         @dataclass
-        class FakeOPADecision:
+        class FakePolicyDecision:
             allow: bool = True
             reason: str = "ok"
             effective_departments: list = field(default_factory=lambda: ["software"])
 
         strategy = DirectHTTPStrategy()
         strategy.agent_client = AsyncMock()
-        strategy._registry_fetched = True
+        _registry_cache[strategy._agent_service_url] = ({}, datetime.now(timezone.utc))
 
         # Routing agent routes to software-support
         routing_response = {
@@ -1355,7 +1358,7 @@ class TestInvokeAgentWithRoutingExtended:
             side_effect=[routing_response, specialist_response]
         )
 
-        # User has engineering + software, but OPA intersection gives only software
+        # User has engineering + software, but policy intersection gives only software
         normalized = MagicMock()
         normalized.request_id = "req-scope"
         normalized.session_id = "sess-scope"
@@ -1379,9 +1382,9 @@ class TestInvokeAgentWithRoutingExtended:
                 return_value=[],
             ),
             patch(
-                "shared_models.opa_client.check_agent_authorization",
+                "shared_models.policy_client.check_agent_authorization",
                 new_callable=AsyncMock,
-                return_value=FakeOPADecision(),
+                return_value=FakePolicyDecision(),
             ),
             patch(
                 "request_manager.communication_strategy.make_spiffe_id",
@@ -1403,14 +1406,14 @@ class TestInvokeAgentWithRoutingExtended:
         from dataclasses import dataclass, field
 
         @dataclass
-        class FakeOPADecision:
+        class FakePolicyDecision:
             allow: bool = True
             reason: str = "ok"
             effective_departments: list = field(default_factory=lambda: ["software"])
 
         strategy = DirectHTTPStrategy()
         strategy.agent_client = AsyncMock()
-        strategy._registry_fetched = True
+        _registry_cache[strategy._agent_service_url] = ({}, datetime.now(timezone.utc))
 
         routing_response = {
             "content": "",
@@ -1451,9 +1454,9 @@ class TestInvokeAgentWithRoutingExtended:
                 return_value=[],
             ),
             patch(
-                "shared_models.opa_client.check_agent_authorization",
+                "shared_models.policy_client.check_agent_authorization",
                 new_callable=AsyncMock,
-                return_value=FakeOPADecision(),
+                return_value=FakePolicyDecision(),
             ),
             patch(
                 "request_manager.communication_strategy.make_spiffe_id",
@@ -1474,7 +1477,7 @@ class TestInvokeAgentWithRoutingExtended:
         """When target_agent bypasses routing, delegation is included from the start."""
         strategy = DirectHTTPStrategy()
         strategy.agent_client = AsyncMock()
-        strategy._registry_fetched = True
+        _registry_cache[strategy._agent_service_url] = ({}, datetime.now(timezone.utc))
 
         direct_response = {
             "content": "Direct answer.",
