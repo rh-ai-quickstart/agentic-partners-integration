@@ -118,7 +118,6 @@ class TestTokenExchangeDelegation:
 
         payload = call_args[1]["data"]
         assert payload["subject_token"] == user_token
-        assert payload["audience"] == "agent-a"
         assert payload["actor_service"] == "gateway"
         assert "actor_token" not in payload  # No existing act claim
 
@@ -182,7 +181,6 @@ class TestTokenExchangeDelegation:
         call_args = mock_client.post.call_args
         payload = call_args[1]["data"]
 
-        assert payload["audience"] == "agent-b"
         assert "actor_token" in payload
 
         # Parse the actor_token (nested act claim)

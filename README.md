@@ -48,7 +48,7 @@ bash scripts/monitor.sh
 Shows real-time:
 - User messages & responses
 - Token exchanges (RFC 8693)
-- OPA authorization
+- Policy-based authorization
 - Audit events
 
 ---
@@ -65,7 +65,11 @@ config/
   └── test-users.json  🎯 SINGLE SOURCE OF TRUTH
 
 policies/
-  └── *.rego       ⚖️ OPA authorization rules
+  └── *.yaml       ⚖️ Policy engine authorization rules + agent capabilities
+
+praxis/
+  ├── config.yaml  🛡️ Praxis gateway proxy configuration
+  └── policy.yaml  ⚖️ APL authorization policy (JWT + department rules)
 ```
 
 ---
@@ -74,7 +78,7 @@ policies/
 
 ✅ Production SPIRE (real X.509-SVIDs, no mocks)  
 ✅ Confidential OAuth clients (not public)  
-✅ OPA policy-based authorization  
+✅ Praxis Gateway — containerized policy enforcement (ghcr.io/praxis-proxy/praxis:0.7.0)  
 ✅ RFC 8693 token exchange (unique JTI per hop)  
 ✅ Complete audit trail  
 

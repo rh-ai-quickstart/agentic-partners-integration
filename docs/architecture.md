@@ -2,7 +2,7 @@
 
 ## System Diagram
 
-![System architecture showing all services: Web UI (nginx, PatternFly), Request Manager (identity middleware, ADK endpoints, communication strategy), Agent Service (routing and specialist agents with LLM factory), Kubernetes Partner Agent (remote A2A agent), RAG API (pgvector search), PostgreSQL database, OPA policy engine, and Keycloak identity provider](images/architecture-1.svg)
+![System architecture showing all services: Web UI (nginx, PatternFly), Request Manager (identity middleware, ADK endpoints, communication strategy), Praxis Gateway (policy enforcement, JWT validation), Agent Service (routing and specialist agents with LLM factory), Kubernetes Partner Agent (remote A2A agent), RAG API (pgvector search), PostgreSQL database, and Keycloak identity provider](images/architecture-1.svg)
 
 ## Services
 
@@ -10,10 +10,10 @@
 |---------|------|------|
 | PostgreSQL (pgvector) | 5433 | User data, sessions, audit logs, and vector storage for RAG |
 | RAG API | 8003 | Semantic search over support tickets |
+| Praxis Gateway | 8180 | Reverse-proxy policy gateway — JWT validation, APL authorization (`ghcr.io/praxis-proxy/praxis:0.7.0`) |
 | Agent Service | 8001 | LLM-based routing and specialist agents |
 | Kubernetes Partner Agent | 8002 | Standalone remote Kubernetes support agent (partner agent demo) |
 | Request Manager | 8000 | AAA enforcement, A2A orchestration, chat API |
-| OPA | 8181 | Policy engine for authorization (Rego policies) |
 | Keycloak | 8090 | OIDC identity provider (user authentication) |
 | Web UI (nginx) | 3000 | PatternFly chat interface |
 
@@ -24,10 +24,10 @@
 1. **User sends message** -- Web UI sends `POST /adk/chat` with user email and message text.
 2. **Identity & credential capture** -- `IdentityMiddleware` extracts SPIFFE identity (from `X-SPIFFE-ID` header in mock mode). JWT is decoded and stored in `CredentialService` for downstream propagation. Request Manager resolves user from PostgreSQL, loads departments.
 3. **Agent registry discovery** -- On first request, Request Manager calls `GET /api/v1/agents/registry` on the agent-service to discover per-agent invoke URLs. Local agents use the default agent-service URL; remote agents use their configured `endpoint`. The registry is cached for the lifetime of the strategy instance.
-4. **A2A call: routing-agent** -- Request Manager invokes `POST /api/v1/agents/routing-agent/invoke` via A2A, passing `transfer_context` with `departments` and `conversation_history`. Outbound call includes `X-SPIFFE-ID` header (service identity) but no delegation headers (this is a service-to-service call).
+4. **A2A call: routing-agent** -- Request Manager invokes `POST /api/v1/agents/routing-agent/invoke` via A2A through the **Praxis gateway**. The Praxis policy filter validates the JWT token via Keycloak JWKS and enforces APL authorization rules before forwarding to agent-service. Outbound call includes `X-SPIFFE-ID` header (service identity), JWT, and `transfer_context` with `departments` and `conversation_history`.
 5. **Routing decision** -- Routing-agent's LLM classifies intent using a dynamically built system prompt (derived from agent YAML configs). Returns `ROUTE:<agent-name>` or a conversational response.
-6. **OPA authorization + scope reduction** -- If routing to a specialist, Request Manager queries OPA with `Delegation(user_spiffe_id, agent_spiffe_id, user_departments)`. OPA computes `User Departments ∩ Agent Capabilities`. Blocked if intersection is empty. The **effective departments** (intersection result) replace the user's full departments in the downstream `transfer_context`.
-7. **A2A call: specialist agent** -- Request Manager invokes the specialist via A2A using the per-agent endpoint URL from the registry. Includes delegation headers (`X-Delegation-User`, `X-Delegation-Agent`), JWT, and the narrowed `effective_departments`. For remote agents, the request goes directly to the remote host. Agent-service verifies caller identity via SPIFFE and re-checks OPA authorization (defense-in-depth). Specialist queries RAG API, gets matching tickets, builds LLM prompt with RAG context, returns grounded response.
+6. **Policy authorization + scope reduction** -- If routing to a specialist, Request Manager evaluates policy with `Delegation(user_spiffe_id, agent_spiffe_id, user_departments)`. The policy client computes `User Departments ∩ Agent Capabilities` in-process (Layer 1). Blocked if intersection is empty. The **effective departments** (intersection result) replace the user's full departments in the downstream `transfer_context`.
+7. **A2A call: specialist agent** -- Request Manager invokes the specialist via A2A through the **Praxis gateway** (Layer 2: JWT validation + APL rules). For remote agents, the request goes directly to the remote host. Agent-service verifies caller identity via SPIFFE and re-checks policy authorization via `policy_client.py` (Layer 3, defense-in-depth). Specialist queries RAG API, gets matching tickets, builds LLM prompt with RAG context, returns grounded response.
 8. **Audit** -- `_complete_request_log()` updates `request_logs` with `agent_id`, `response_content`, `processing_time_ms`, `completed_at`.
 9. **Response** -- Request Manager stores conversation turn in `request_sessions.conversation_context`, returns response to the UI.
 
@@ -51,7 +51,7 @@ The system supports two deployment models for specialist agents. Both use the sa
 - Networking: request-manager -> remote agent container (HTTP on `partner-agent-network`)
 - Dependencies: fully standalone — no `shared-models` dependency, own `Containerfile`, own LLM clients
 
-**Network topology:** All containers join the `partner-agent-network` Docker bridge network. Containers resolve each other by container name (e.g., `partner-agent-service-full`, `partner-kubernetes-agent-full`). Port 8080 is the internal container port for all services; host port mappings (8000-8003) are for external access only. Inter-container communication always uses port 8080 on the container name.
+**Network topology:** All containers join the `partner-agent-network` Docker bridge network. Containers resolve each other by container name (e.g., `partner-agent-service-full`, `partner-praxis-gateway-full`, `partner-kubernetes-agent-full`). Port 8080 is the internal container port for all services; host port mappings (8000-8003, 8180) are for external access only. Inter-container communication uses port 8080 on the container name. Traffic from request-manager to agent-service routes through the Praxis gateway (`AGENT_SERVICE_URL=http://praxis:8080`).
 
 **Registry endpoint (`GET /api/v1/agents/registry`):** Returns all specialist agents with their departments and descriptions. Only remote agents include an `endpoint` field. The request-manager caches the registry on first use and routes accordingly:
 - Agent with `endpoint` in registry -> HTTP to that URL
@@ -61,7 +61,7 @@ The system supports two deployment models for specialist agents. Both use the sa
 
 - **Single-turn routing:** The routing-agent classifies intent in one LLM call (no multi-turn state machine). Returns `ROUTE:<agent>` or a conversational response.
 - **Mandatory RAG:** Specialist agents always query the RAG API. If RAG is unavailable, the request fails (no silent degradation).
-- **OPA + permission intersection:** Authorization uses `User Departments ∩ Agent Capabilities` evaluated by OPA. The LLM can't bypass the OPA hard gate.
+- **Three-layer policy enforcement:** Authorization uses `User Departments ∩ Agent Capabilities`. Layer 1: request-manager (`policy_client.py`, in-process). Layer 2: Praxis gateway (JWT validation + APL rules, containerized). Layer 3: agent-service (`policy_client.py`, defense-in-depth). The LLM cannot bypass the policy hard gate.
 - **Full audit:** Every A2A call records which agent handled the request, the response, and processing time.
 - **A2A exclusively:** No message brokers. Agents communicate via synchronous HTTP calls.
 - **Pluggable LLM:** Backend configured via `LLM_BACKEND` env var. Supports Gemini (default in setup), OpenAI, and Ollama.
@@ -90,12 +90,12 @@ Each chat session maintains conversation history in `request_sessions.conversati
 
 Agent YAML configs are the single source of truth. All downstream systems derive their agent knowledge from these files — no hardcoded agent lists anywhere in the codebase.
 
-![Dynamic agent registry flow showing how agent YAML configs drive the AgentManager (which builds routing prompts, A2A cards, and registry endpoint), and sync_agent_capabilities.py (which generates OPA Rego policies for authorization)](images/architecture-3.svg)
+![Dynamic agent registry flow showing how agent YAML configs drive the AgentManager (which builds routing prompts, A2A cards, and registry endpoint), and sync_agent_capabilities.py (which generates policy YAML for authorization)](images/architecture-3.svg)
 
 **To add a new agent**, create a YAML file and run `make build`:
 
 1. `agent-service/config/agents/database-support-agent.yaml` — define `name`, `departments`, `description`, `llm_*`, `system_message`, and `a2a` skills
-2. `make sync-agents` regenerates `policies/agent_permissions.rego` from all agent YAMLs
+2. `make sync-agents` regenerates `policies/agent_capabilities.yaml` from all agent YAMLs
 3. `make build` calls `sync-agents` automatically, then builds container images
 4. On startup, `AgentManager` discovers the new agent, the routing-agent prompt includes it, and the A2A endpoint is mounted
 
@@ -107,7 +107,7 @@ Each agent's YAML config is the **single source of truth** for that agent's iden
 |-------|---------|
 | `name` | Agent registration key. Must match the name used in `/invoke` URL. |
 | `description` | Routing description — used by routing-agent to classify user intent. |
-| `departments` | Department capabilities — used for OPA authorization and routing decisions. |
+| `departments` | Department capabilities — used for policy authorization and routing decisions. |
 | `endpoint` | *(optional)* Full invoke URL for remote agents. When omitted, agent runs locally in the agent-service process. |
 | `llm_backend` | Which LLM provider to use (gemini, openai, ollama). |
 | `llm_model` | Model name passed to the provider. |
@@ -155,13 +155,13 @@ a2a:
    endpoint: "http://database-agent:9090/api/v1/agents/database-support/invoke"
    ```
 2. The remote agent must implement the same `/api/v1/agents/{name}/invoke` API contract
-3. Run `make sync-agents` to update OPA policies, then rebuild and restart
+3. Run `make sync-agents` to update policy capabilities, then rebuild and restart
 
 **End-to-end example: `kubernetes-partner-agent/`** — This directory is a fully standalone partner agent service that demonstrates the remote agent pattern. It has zero dependencies on `shared-models` or `agent-service`, its own LLM abstraction layer, Containerfile, and test suite. The agent-service's `kubernetes-support-agent.yaml` has `endpoint: "http://partner-kubernetes-agent-full:8080/api/v1/agents/kubernetes-support/invoke"` which routes requests to the partner agent container via the Docker network.
 
 The system automatically derives:
 - Routing-agent system prompt (from `description` and `departments`)
-- OPA capabilities policy (from `departments`, via `scripts/sync_agent_capabilities.py`)
+- Policy capabilities (from `departments`, via `policies/sync_agent_capabilities.py`)
 - A2A agent cards and endpoint mounting (from `a2a` section)
 
 Available agents:
@@ -175,7 +175,7 @@ Available agents:
 
 ## Project Structure
 
-![Complete project structure showing all directories and key files: agent-service (agent processing with YAML configs), request-manager (AAA enforcement and A2A orchestration), rag-service (vector search), pf-chat-ui (PatternFly web interface), kubernetes-partner-agent (standalone remote agent), shared-models (common library), keycloak (OIDC config), policies (OPA Rego rules), data (support tickets), scripts (automation), helm (K8s deployment), and docker-compose](images/architecture-4.svg)
+![Complete project structure showing all directories and key files: agent-service (agent processing with YAML configs), request-manager (AAA enforcement and A2A orchestration), rag-service (vector search), pf-chat-ui (PatternFly web interface), kubernetes-partner-agent (standalone remote agent), shared-models (common library), keycloak (OIDC config), policies (APL policy and agent capabilities), praxis (gateway config), data (support tickets), scripts (automation), helm (K8s deployment)](images/architecture-4.svg)
 
 ## Container Images
 
@@ -197,7 +197,7 @@ PostgreSQL 16 with pgvector extension. Schema managed by Alembic (current versio
 
 | Table | Purpose |
 |-------|---------|
-| `users` | SPIFFE identity, roles, `departments` (OPA authorization) |
+| `users` | SPIFFE identity, roles, `departments` (policy authorization) |
 | `request_sessions` | Session state, `conversation_context` (JSON message history) |
 | `request_logs` | Full audit: request content, response content, agent_id, processing time, timestamps |
 | `audit_events` | SOC 2 audit trail: authentication, authorization, and data-access events (append-only) |

@@ -1,11 +1,35 @@
 """Tests for request_manager.agent_client_enhanced."""
 
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
 from request_manager.agent_client_enhanced import EnhancedAgentClient
+
+
+@contextmanager
+def mock_infra():
+    """Mock token exchange and SPIRE identity so tests don't need real services."""
+    mock_te = MagicMock()
+    mock_te.exchange_for_agent = AsyncMock(return_value={
+        "access_token": "exchanged-test-token",
+        "token_type": "Bearer",
+    })
+    mock_te.exchange_with_delegation = AsyncMock(return_value={
+        "access_token": "exchanged-test-token",
+        "token_type": "Bearer",
+        "delegation_chain": [],
+    })
+    with patch(
+        "request_manager.agent_client_enhanced.TokenExchangeClient",
+        return_value=mock_te,
+    ), patch(
+        "request_manager.agent_client_enhanced.outbound_identity_headers",
+        return_value={"X-SPIFFE-ID": "spiffe://test/service/request-manager"},
+    ):
+        yield
 
 
 class TestEnhancedAgentClient:
@@ -19,8 +43,10 @@ class TestEnhancedAgentClient:
 
     # -- invoke_agent -------------------------------------------------------
 
-    async def test_invoke_agent_posts_to_correct_url(self):
+    @patch("request_manager.agent_client_enhanced.CredentialService")
+    async def test_invoke_agent_posts_to_correct_url(self, mock_cred):
         """POST is sent to /api/v1/agents/<name>/invoke."""
+        mock_cred.get_token.return_value = "test-user-token"
         client = self._make_client("http://myagent:9090")
 
         mock_resp = MagicMock()
@@ -29,12 +55,13 @@ class TestEnhancedAgentClient:
         mock_resp.raise_for_status = MagicMock()
         client.client.post = AsyncMock(return_value=mock_resp)
 
-        await client.invoke_agent(
-            agent_name="routing-agent",
-            session_id="s1",
-            user_id="u1",
-            message="hi",
-        )
+        with mock_infra():
+            await client.invoke_agent(
+                agent_name="routing-agent",
+                session_id="s1",
+                user_id="u1",
+                message="hi",
+            )
 
         call_args = client.client.post.call_args
         assert (
@@ -42,32 +69,10 @@ class TestEnhancedAgentClient:
         )
 
     @patch("request_manager.agent_client_enhanced.CredentialService")
-    async def test_invoke_agent_includes_auth_header(self, mock_cred):
-        """When CredentialService has a token, include Authorization header."""
-        mock_cred.get_auth_header.return_value = "Bearer tok123"
-
-        client = self._make_client()
-
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"content": "ok"}
-        mock_resp.raise_for_status = MagicMock()
-        client.client.post = AsyncMock(return_value=mock_resp)
-
-        await client.invoke_agent(
-            agent_name="test-agent",
-            session_id="s1",
-            user_id="u1",
-            message="msg",
-        )
-
-        call_kwargs = client.client.post.call_args
-        headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
-        assert headers.get("Authorization") == "Bearer tok123"
-
-    @patch("request_manager.agent_client_enhanced.CredentialService")
-    async def test_invoke_agent_no_auth_when_no_token(self, mock_cred):
-        """When CredentialService has no token, Authorization header is absent."""
+    async def test_invoke_agent_includes_exchanged_token(self, mock_cred):
+        """After token exchange, Authorization header uses the exchanged token."""
         mock_cred.get_auth_header.return_value = None
+        mock_cred.get_token.return_value = "test-user-token"
 
         client = self._make_client()
 
@@ -76,16 +81,17 @@ class TestEnhancedAgentClient:
         mock_resp.raise_for_status = MagicMock()
         client.client.post = AsyncMock(return_value=mock_resp)
 
-        await client.invoke_agent(
-            agent_name="test-agent",
-            session_id="s1",
-            user_id="u1",
-            message="msg",
-        )
+        with mock_infra():
+            await client.invoke_agent(
+                agent_name="test-agent",
+                session_id="s1",
+                user_id="u1",
+                message="msg",
+            )
 
         call_kwargs = client.client.post.call_args
         headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
-        assert "Authorization" not in headers
+        assert headers.get("Authorization") == "Bearer exchanged-test-token"
 
     @patch(
         "request_manager.agent_client_enhanced.STRUCTURED_CONTEXT_ENABLED",
@@ -95,6 +101,7 @@ class TestEnhancedAgentClient:
     async def test_invoke_agent_adds_conversation_history_when_enabled(self, mock_cred):
         """When STRUCTURED_CONTEXT_ENABLED=True and history provided, add to transfer_context."""
         mock_cred.get_auth_header.return_value = None
+        mock_cred.get_token.return_value = "test-user-token"
 
         client = self._make_client()
 
@@ -108,14 +115,15 @@ class TestEnhancedAgentClient:
             {"role": "assistant", "content": "hello"},
         ]
 
-        await client.invoke_agent(
-            agent_name="test-agent",
-            session_id="s1",
-            user_id="u1",
-            message="follow-up",
-            conversation_history=history,
-            previous_agent="routing-agent",
-        )
+        with mock_infra():
+            await client.invoke_agent(
+                agent_name="test-agent",
+                session_id="s1",
+                user_id="u1",
+                message="follow-up",
+                conversation_history=history,
+                previous_agent="routing-agent",
+            )
 
         call_kwargs = client.client.post.call_args
         payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json", {})
@@ -133,6 +141,7 @@ class TestEnhancedAgentClient:
     async def test_invoke_agent_skips_history_when_disabled(self, mock_cred):
         """When STRUCTURED_CONTEXT_ENABLED=False, conversation_history is NOT added."""
         mock_cred.get_auth_header.return_value = None
+        mock_cred.get_token.return_value = "test-user-token"
 
         client = self._make_client()
 
@@ -141,13 +150,14 @@ class TestEnhancedAgentClient:
         mock_resp.raise_for_status = MagicMock()
         client.client.post = AsyncMock(return_value=mock_resp)
 
-        await client.invoke_agent(
-            agent_name="test-agent",
-            session_id="s1",
-            user_id="u1",
-            message="msg",
-            conversation_history=[{"role": "user", "content": "old"}],
-        )
+        with mock_infra():
+            await client.invoke_agent(
+                agent_name="test-agent",
+                session_id="s1",
+                user_id="u1",
+                message="msg",
+                conversation_history=[{"role": "user", "content": "old"}],
+            )
 
         call_kwargs = client.client.post.call_args
         payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json", {})
@@ -158,6 +168,7 @@ class TestEnhancedAgentClient:
     async def test_invoke_agent_raises_on_http_error(self, mock_cred):
         """HTTP errors from the agent service should propagate."""
         mock_cred.get_auth_header.return_value = None
+        mock_cred.get_token.return_value = "test-user-token"
 
         client = self._make_client()
 
@@ -167,13 +178,14 @@ class TestEnhancedAgentClient:
         )
         client.client.post = AsyncMock(return_value=mock_resp)
 
-        with pytest.raises(httpx.HTTPStatusError):
-            await client.invoke_agent(
-                agent_name="bad-agent",
-                session_id="s1",
-                user_id="u1",
-                message="oops",
-            )
+        with mock_infra():
+            with pytest.raises(httpx.HTTPStatusError):
+                await client.invoke_agent(
+                    agent_name="bad-agent",
+                    session_id="s1",
+                    user_id="u1",
+                    message="oops",
+                )
 
     # -- SPIFFE identity headers --------------------------------------------
 
@@ -181,6 +193,7 @@ class TestEnhancedAgentClient:
     async def test_invoke_agent_sends_spiffe_identity_header(self, mock_cred):
         """Outbound calls include X-SPIFFE-ID header for service identity."""
         mock_cred.get_auth_header.return_value = None
+        mock_cred.get_token.return_value = "test-user-token"
 
         client = self._make_client()
 
@@ -189,16 +202,16 @@ class TestEnhancedAgentClient:
         mock_resp.raise_for_status = MagicMock()
         client.client.post = AsyncMock(return_value=mock_resp)
 
-        await client.invoke_agent(
-            agent_name="test-agent",
-            session_id="s1",
-            user_id="u1",
-            message="msg",
-        )
+        with mock_infra():
+            await client.invoke_agent(
+                agent_name="test-agent",
+                session_id="s1",
+                user_id="u1",
+                message="msg",
+            )
 
         call_kwargs = client.client.post.call_args
         headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
-        # In mock mode (MOCK_SPIFFE=true, default), X-SPIFFE-ID is set
         assert "X-SPIFFE-ID" in headers
         assert "request-manager" in headers["X-SPIFFE-ID"]
 
@@ -206,6 +219,7 @@ class TestEnhancedAgentClient:
     async def test_invoke_agent_sends_delegation_headers(self, mock_cred):
         """When delegation_user_spiffe_id is provided, delegation headers are sent."""
         mock_cred.get_auth_header.return_value = None
+        mock_cred.get_token.return_value = "test-user-token"
 
         client = self._make_client()
 
@@ -215,13 +229,35 @@ class TestEnhancedAgentClient:
         client.client.post = AsyncMock(return_value=mock_resp)
 
         user_spiffe = "spiffe://partner.example.com/user/carlos"
-        await client.invoke_agent(
-            agent_name="software-support",
-            session_id="s1",
-            user_id="carlos@example.com",
-            message="help",
-            delegation_user_spiffe_id=user_spiffe,
-        )
+
+        mock_te = MagicMock()
+        mock_te.exchange_for_agent = AsyncMock(return_value={
+            "access_token": "exchanged-test-token",
+            "token_type": "Bearer",
+        })
+        mock_te.exchange_with_delegation = AsyncMock(return_value={
+            "access_token": "exchanged-test-token",
+            "token_type": "Bearer",
+            "delegation_chain": [],
+        })
+        with patch(
+            "request_manager.agent_client_enhanced.TokenExchangeClient",
+            return_value=mock_te,
+        ), patch(
+            "request_manager.agent_client_enhanced.outbound_identity_headers",
+            return_value={
+                "X-SPIFFE-ID": "spiffe://test/service/request-manager",
+                "X-Delegation-User": user_spiffe,
+                "X-Delegation-Agent": "spiffe://partner.example.com/agent/software-support",
+            },
+        ):
+            await client.invoke_agent(
+                agent_name="software-support",
+                session_id="s1",
+                user_id="carlos@example.com",
+                message="help",
+                delegation_user_spiffe_id=user_spiffe,
+            )
 
         call_kwargs = client.client.post.call_args
         headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
@@ -233,6 +269,7 @@ class TestEnhancedAgentClient:
     async def test_invoke_agent_no_delegation_headers_when_not_set(self, mock_cred):
         """When delegation_user_spiffe_id is None, no delegation headers are sent."""
         mock_cred.get_auth_header.return_value = None
+        mock_cred.get_token.return_value = "test-user-token"
 
         client = self._make_client()
 
@@ -241,13 +278,14 @@ class TestEnhancedAgentClient:
         mock_resp.raise_for_status = MagicMock()
         client.client.post = AsyncMock(return_value=mock_resp)
 
-        await client.invoke_agent(
-            agent_name="routing-agent",
-            session_id="s1",
-            user_id="u1",
-            message="hi",
-            delegation_user_spiffe_id=None,
-        )
+        with mock_infra():
+            await client.invoke_agent(
+                agent_name="routing-agent",
+                session_id="s1",
+                user_id="u1",
+                message="hi",
+                delegation_user_spiffe_id=None,
+            )
 
         call_kwargs = client.client.post.call_args
         headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
@@ -288,6 +326,7 @@ class TestEnhancedAgentClient:
     async def test_invoke_agent_uses_per_agent_endpoint(self, mock_cred):
         """When agent_endpoints maps an agent, use its custom URL."""
         mock_cred.get_auth_header.return_value = None
+        mock_cred.get_token.return_value = "test-user-token"
 
         client = EnhancedAgentClient(
             agent_service_url="http://default:8080",
@@ -303,12 +342,13 @@ class TestEnhancedAgentClient:
         mock_resp.raise_for_status = MagicMock()
         client.client.post = AsyncMock(return_value=mock_resp)
 
-        await client.invoke_agent(
-            agent_name="db-support",
-            session_id="s1",
-            user_id="u1",
-            message="query",
-        )
+        with mock_infra():
+            await client.invoke_agent(
+                agent_name="db-support",
+                session_id="s1",
+                user_id="u1",
+                message="query",
+            )
 
         call_args = client.client.post.call_args
         assert call_args[0][0] == "http://db-agent:9090/api/v1/agents/db-support/invoke"
@@ -317,6 +357,7 @@ class TestEnhancedAgentClient:
     async def test_invoke_agent_falls_back_to_default_url(self, mock_cred):
         """When agent has no per-agent endpoint, fall back to agent_service_url."""
         mock_cred.get_auth_header.return_value = None
+        mock_cred.get_token.return_value = "test-user-token"
 
         client = EnhancedAgentClient(
             agent_service_url="http://default:8080",
@@ -332,12 +373,13 @@ class TestEnhancedAgentClient:
         mock_resp.raise_for_status = MagicMock()
         client.client.post = AsyncMock(return_value=mock_resp)
 
-        await client.invoke_agent(
-            agent_name="routing-agent",
-            session_id="s1",
-            user_id="u1",
-            message="hi",
-        )
+        with mock_infra():
+            await client.invoke_agent(
+                agent_name="routing-agent",
+                session_id="s1",
+                user_id="u1",
+                message="hi",
+            )
 
         call_args = client.client.post.call_args
         assert (
@@ -350,6 +392,7 @@ class TestEnhancedAgentClient:
     async def test_invoke_agent_payload_structure(self, mock_cred):
         """The POST payload should include session_id, user_id, message, transfer_context."""
         mock_cred.get_auth_header.return_value = None
+        mock_cred.get_token.return_value = "test-user-token"
 
         client = self._make_client()
 
@@ -358,13 +401,14 @@ class TestEnhancedAgentClient:
         mock_resp.raise_for_status = MagicMock()
         client.client.post = AsyncMock(return_value=mock_resp)
 
-        await client.invoke_agent(
-            agent_name="agent-x",
-            session_id="sess-42",
-            user_id="bob@example.com",
-            message="What is the status?",
-            transfer_context={"key": "val"},
-        )
+        with mock_infra():
+            await client.invoke_agent(
+                agent_name="agent-x",
+                session_id="sess-42",
+                user_id="bob@example.com",
+                message="What is the status?",
+                transfer_context={"key": "val"},
+            )
 
         call_kwargs = client.client.post.call_args
         payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json", {})

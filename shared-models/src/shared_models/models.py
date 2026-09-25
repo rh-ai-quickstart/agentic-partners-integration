@@ -100,7 +100,7 @@ class User(Base, TimestampMixin):  # type: ignore[misc]
     privileges = Column(JSON, default=dict, nullable=False)  # Fine-grained permissions
     departments = Column(
         JSON, default=list, nullable=False
-    )  # Department tags for OPA authorization
+    )  # Department tags for policy authorization
     status = Column(String(20), default="active", nullable=False, index=True)
 
     # Organization structure

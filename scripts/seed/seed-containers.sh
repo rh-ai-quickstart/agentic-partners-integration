@@ -13,7 +13,7 @@ echo "════════════════════════�
 echo ""
 
 # Create network
-echo "[1/7] Ensuring Docker network exists..."
+echo "[1/6] Ensuring Docker network exists..."
 if ! docker network inspect partner-agent-network >/dev/null 2>&1; then
     docker network create partner-agent-network
     echo "  ✓ Created network"
@@ -23,7 +23,7 @@ fi
 echo ""
 
 # PostgreSQL
-echo "[2/7] Starting PostgreSQL..."
+echo "[2/6] Starting PostgreSQL..."
 if ! docker ps --format '{{.Names}}' | grep -q "^partner-postgres-full$"; then
     docker stop partner-postgres-full 2>/dev/null || true
     docker rm partner-postgres-full 2>/dev/null || true
@@ -48,7 +48,7 @@ fi
 echo ""
 
 # Keycloak
-echo "[3/7] Starting Keycloak..."
+echo "[3/6] Starting Keycloak..."
 if ! docker ps --format '{{.Names}}' | grep -q "^partner-keycloak-full$"; then
     docker stop partner-keycloak-full 2>/dev/null || true
     docker rm partner-keycloak-full 2>/dev/null || true
@@ -85,27 +85,8 @@ else
 fi
 echo ""
 
-# OPA
-echo "[4/7] Starting OPA..."
-if ! docker ps --format '{{.Names}}' | grep -q "^partner-opa-full$"; then
-    docker stop partner-opa-full 2>/dev/null || true
-    docker rm partner-opa-full 2>/dev/null || true
-
-    docker run -d \
-        --name partner-opa-full \
-        --network partner-agent-network \
-        -p 8181:8181 \
-        -v "$PROJECT_ROOT/policies:/policies" \
-        openpolicyagent/opa:latest run --server --addr :8181 /policies > /dev/null
-
-    echo "  ✓ OPA started"
-else
-    echo "  - OPA already running"
-fi
-echo ""
-
 # SPIRE Server
-echo "[5/7] Starting SPIRE Server..."
+echo "[4/6] Starting SPIRE Server..."
 if ! docker ps --format '{{.Names}}' | grep -q "^spire-server$"; then
     docker stop spire-server 2>/dev/null || true
     docker rm spire-server 2>/dev/null || true
@@ -161,7 +142,7 @@ fi
 echo ""
 
 # SPIRE Agent (separate container - proper architecture!)
-echo "[6/7] Starting SPIRE Agent..."
+echo "[5/6] Starting SPIRE Agent..."
 if ! docker ps --format '{{.Names}}' | grep -q "^partner-spire-agent$"; then
     docker stop partner-spire-agent 2>/dev/null || true
     docker rm partner-spire-agent 2>/dev/null || true
@@ -213,7 +194,7 @@ fi
 echo ""
 
 # Agent Service and Request Manager deferred to seed-services.sh
-echo "[7/7] Application services setup..."
+echo "[6/6] Application services setup..."
 echo "  - Deferred to seed-services.sh"
 echo ""
 

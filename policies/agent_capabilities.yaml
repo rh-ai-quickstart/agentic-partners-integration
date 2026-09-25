@@ -1,0 +1,33 @@
+# Auto-generated from agent YAML configs by policies/sync_agent_capabilities.py
+# Do not edit manually — run: make sync-agents
+#
+# Praxis requires a top-level `data:` key for attribute files.
+# policy_client.py reads from `data.agent_capabilities` (or falls back to `agent_capabilities`).
+data:
+  agent_capabilities:
+    routing-agent:
+      - admin
+      - kubernetes
+      - network
+      - software
+    kubernetes-support:
+      - kubernetes
+    network-support:
+      - network
+    software-support:
+      - software
+
+  valid_departments:
+    - admin
+    - kubernetes
+    - network
+    - software
+
+  service_names:
+    - request-manager
+    - agent-service
+    - kubernetes-agent
+    - aro-agent
+    - rag-api
+
+  trust_domain: partner.example.com

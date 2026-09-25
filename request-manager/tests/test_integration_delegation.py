@@ -5,13 +5,13 @@ These tests verify that the complete delegation chain flows through
 the system correctly, catching issues with:
 - Delegation dataclass field compatibility
 - Act claim propagation
-- OPA integration with delegation context
+- Policy engine integration with delegation context
 - Token exchange with delegation
 """
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from shared_models.opa_client import Delegation
+from shared_models.policy_client import Delegation
 from shared_models.delegation_chain import (
     build_act_claim,
     parse_act_claim,
@@ -180,15 +180,14 @@ class TestDelegationChainIntegration:
         assert is_valid is False
 
 
-class TestOPAIntegration:
-    """Test OPA integration with delegation."""
+class TestPolicyEngineIntegration:
+    """Test policy engine integration with delegation."""
 
     @pytest.mark.asyncio
-    async def test_opa_receives_act_claim(self):
-        """Verify OPA receives act_claim in delegation context."""
-        from shared_models.opa_client import check_agent_authorization
+    async def test_policy_engine_evaluates_act_claim(self):
+        """Verify in-process policy evaluator handles act_claim in delegation."""
+        from shared_models.policy_client import check_agent_authorization
 
-        # Create delegation with act claim
         delegation = Delegation(
             user_spiffe_id="spiffe://example.com/user/carlos",
             agent_spiffe_id="spiffe://example.com/agent/routing",
@@ -196,34 +195,15 @@ class TestOPAIntegration:
             act_claim={"sub": "request-manager"},
         )
 
-        # Mock OPA response
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "result": {
-                "allow": True,
-                "reason": "Permission intersection found",
-                "effective_departments": ["kubernetes"],
-            }
-        }
-        mock_response.raise_for_status = MagicMock()
+        decision = await check_agent_authorization(
+            caller_spiffe_id="spiffe://partner.example.com/request-manager",
+            agent_name="routing-agent",
+            delegation=delegation,
+        )
 
-        with patch("httpx.AsyncClient.post", return_value=mock_response) as mock_post:
-            # Call OPA
-            decision = await check_agent_authorization(
-                caller_spiffe_id="spiffe://example.com/user/carlos",
-                agent_name="routing-agent",
-                delegation=delegation,
-            )
-
-            # Verify OPA was called with act_claim
-            call_args = mock_post.call_args
-            opa_input = call_args.kwargs["json"]["input"]
-
-            assert "delegation" in opa_input
-            assert "act_claim" in opa_input["delegation"]
-            assert opa_input["delegation"]["act_claim"] == {"sub": "request-manager"}
-
-            assert decision.allow is True
+        assert decision.allow is True
+        assert "kubernetes" in decision.effective_departments
+        assert "software" in decision.effective_departments
 
 
 class TestTokenExchangeWithDelegation:
@@ -236,8 +216,8 @@ class TestTokenExchangeWithDelegation:
 
         client = TokenExchangeClient()
 
-        # Mock Keycloak response
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = {
             "access_token": "new_token_with_act_claim",
             "token_type": "Bearer",
@@ -245,18 +225,17 @@ class TestTokenExchangeWithDelegation:
         }
         mock_response.raise_for_status = MagicMock()
 
-        with patch("httpx.AsyncClient.post", return_value=mock_response) as mock_post:
-            # Exchange token with existing act claim
-            result = await client.exchange_with_delegation(
-                subject_token="user_token",
-                target_agent="kubernetes-agent",
-                actor_service="routing-agent",
-                existing_act_claim={"sub": "request-manager"},
-            )
+        client.client = AsyncMock()
+        client.client.post = AsyncMock(return_value=mock_response)
 
-            # Verify the request included nested act claim
-            # (implementation would need to expose this in the request)
-            assert "access_token" in result
+        result = await client.exchange_with_delegation(
+            subject_token="user_token",
+            target_agent="kubernetes-agent",
+            actor_service="routing-agent",
+            existing_act_claim={"sub": "request-manager"},
+        )
+
+        assert "access_token" in result
 
 
 class TestEndToEndDelegationFlow:
@@ -268,7 +247,7 @@ class TestEndToEndDelegationFlow:
         1. Build delegation chain
         2. Create Delegation object
         3. Validate chain
-        4. Convert to dict for OPA
+        4. Convert to dict for policy engine
         5. Extract original user
         """
         # Step 1: Build delegation chain
@@ -293,19 +272,19 @@ class TestEndToEndDelegationFlow:
         is_valid = validate_delegation_chain(delegation.delegation_chain)
         assert is_valid is True
 
-        # Step 5: Convert to dict for OPA
-        opa_input = delegation.to_dict()
+        # Step 5: Convert to dict for policy engine
+        policy_input = delegation.to_dict()
 
-        assert "act_claim" in opa_input
-        assert "delegation_chain" in opa_input
-        assert "original_user_email" in opa_input
+        assert "act_claim" in policy_input
+        assert "delegation_chain" in policy_input
+        assert "original_user_email" in policy_input
 
-        assert opa_input["delegation_chain"] == [
+        assert policy_input["delegation_chain"] == [
             "routing-agent",
             "request-manager",
             "carlos@example.com",
         ]
-        assert opa_input["original_user_email"] == "carlos@example.com"
+        assert policy_input["original_user_email"] == "carlos@example.com"
 
         # Step 6: Extract original user
         original = extract_original_user(delegation.act_claim)

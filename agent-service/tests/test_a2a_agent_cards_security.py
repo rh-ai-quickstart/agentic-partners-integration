@@ -8,7 +8,7 @@ requests without out-of-band documentation.
 import os
 
 import pytest
-from a2a.types import AgentCard, OAuth2SecurityScheme, MutualTLSSecurityScheme
+from a2a.types import AgentCard, OAuth2SecurityScheme, MutualTLSSecurityScheme, SecurityScheme
 
 from agent_service.a2a.agent_cards import create_agent_card
 
@@ -71,11 +71,13 @@ class TestAgentCardSecuritySchemes:
 
     def test_oauth2_scheme_type(self):
         scheme = self.card.security_schemes["partner-oauth2"]
-        assert isinstance(scheme, OAuth2SecurityScheme)
+        assert isinstance(scheme, SecurityScheme)
+        assert isinstance(scheme.root, OAuth2SecurityScheme)
 
     def test_mtls_scheme_type(self):
         scheme = self.card.security_schemes["partner-mtls"]
-        assert isinstance(scheme, MutualTLSSecurityScheme)
+        assert isinstance(scheme, SecurityScheme)
+        assert isinstance(scheme.root, MutualTLSSecurityScheme)
 
     def test_oauth2_has_client_credentials_flow(self):
         # SecurityScheme is a Pydantic union — access via model_dump (camelCase keys)
@@ -166,7 +168,7 @@ class TestEnvironmentOverrides:
         card = cards_module.create_agent_card(
             "kubernetes-support", MINIMAL_CONFIG, BASE_URL
         )
-        scheme = card.security_schemes["partner-oauth2"]
+        scheme = card.security_schemes["partner-oauth2"].root
         assert "sso.example.com" in scheme.flows.client_credentials.token_url
 
         # Restore
@@ -181,7 +183,7 @@ class TestEnvironmentOverrides:
         card = cards_module.create_agent_card(
             "kubernetes-support", MINIMAL_CONFIG, BASE_URL
         )
-        scheme = card.security_schemes["partner-mtls"]
+        scheme = card.security_schemes["partner-mtls"].root
         assert "acme.corp" in scheme.description
 
         importlib.reload(cards_module)

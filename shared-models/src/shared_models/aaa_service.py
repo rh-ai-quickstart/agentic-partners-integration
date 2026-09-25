@@ -1,7 +1,7 @@
 """
 AAA (Authentication, Authorization, Audit) Service.
 
-Authorization is now handled by OPA (Open Policy Agent) with Rego policies.
+Authorization is now handled by the Praxis Policy Engine with inline policies.
 This module retains user management and department-based access helpers.
 """
 
@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import User, UserRole
-from .opa_client import get_user_departments_from_opa
+from .policy_client import get_user_departments_fallback
 
 logger = structlog.get_logger()
 
@@ -49,7 +49,7 @@ class AAAService:
             role: User role (default: USER)
             organization: User organization
             department: User department (legacy single field)
-            departments: List of department tags for OPA authorization
+            departments: List of department tags for policy authorization
         """
         try:
             user = await AAAService.get_user_by_email(db, email)
@@ -85,10 +85,10 @@ class AAAService:
 
     @staticmethod
     async def get_user_departments(db: AsyncSession, user_email: str) -> List[str]:
-        """Get user's departments for OPA authorization.
+        """Get user's departments for policy authorization.
 
         First checks the database user record. If empty, falls back to
-        OPA's static fallback map (useful for local/mock development).
+        policy engine's static fallback map (useful for local/mock development).
         """
         try:
             user = await AAAService.get_user_by_email(db, user_email)
@@ -96,8 +96,8 @@ class AAAService:
             if user and user.departments:
                 return user.departments
 
-            # Fall back to OPA static map
-            return await get_user_departments_from_opa(user_email)
+            # Fall back to policy engine static map
+            return await get_user_departments_fallback(user_email)
 
         except Exception as e:
             logger.error(

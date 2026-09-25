@@ -412,21 +412,17 @@ class TestTokenExchangeAudit:
         # Verify audit was attempted
         mock_audit.emit.assert_called_once()
 
-    @patch("request_manager.audit_token_tracker.jwt")
+    @patch("request_manager.audit_token_tracker.jwt.decode")
     @patch("request_manager.audit_token_tracker.AuditService")
-    async def test_audit_handles_malformed_tokens_gracefully(self, mock_audit, mock_jwt):
+    async def test_audit_handles_malformed_tokens_gracefully(self, mock_audit, mock_decode):
         """Audit logging handles malformed tokens without crashing."""
-        # Mock JWT decode to raise DecodeError
-        mock_jwt.decode.side_effect = mock_jwt.DecodeError("Invalid token")
-        mock_jwt.DecodeError = Exception  # For the except clause
+        import jwt as _jwt
+        mock_decode.side_effect = _jwt.DecodeError("Invalid token")
 
-        # Use malformed tokens
         malformed_token = "not.a.valid.jwt"
 
-        # Mock audit service
         mock_audit.emit = AsyncMock()
 
-        # Should not raise exception
         await TokenAuditTracker.log_token_exchange(
             original_token=malformed_token,
             exchanged_token=malformed_token,
@@ -435,15 +431,11 @@ class TestTokenExchangeAudit:
             delegation_chain=["service-a"],
         )
 
-        # Verify audit was emitted with fallback values
         call_args = mock_audit.emit.call_args[1]
         metadata = call_args["metadata"]
 
-        # Should have unknown audience when token is malformed
         assert metadata["original_aud"] == "unknown"
         assert metadata["exchanged_aud"] == "unknown"
-
-        # Should still have masked tokens
         assert "..." in metadata["token_1_masked"]
         assert "..." in metadata["token_2_masked"]
 

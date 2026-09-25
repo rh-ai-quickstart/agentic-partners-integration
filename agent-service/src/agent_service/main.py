@@ -122,7 +122,7 @@ def _enforce_agent_auth() -> bool:
     """Check if agent authentication enforcement is enabled.
 
     When enabled (default), the /invoke endpoint requires callers to provide
-    a SPIFFE identity and verifies authorization via OPA when delegation
+    a SPIFFE identity and verifies authorization via policy engine when delegation
     context is present. Disable with ENFORCE_AGENT_AUTH=false for testing.
     """
     return os.getenv("ENFORCE_AGENT_AUTH", "true").lower() == "true"
@@ -201,7 +201,7 @@ async def invoke_agent(
 
     Security: When ENFORCE_AGENT_AUTH=true (default), requires caller
     identity via X-SPIFFE-ID header or mTLS. When delegation headers
-    are present (X-Delegation-User), verifies authorization via OPA
+    are present (X-Delegation-User), verifies authorization via policy engine
     using the permission intersection model.
 
     Args:
@@ -252,15 +252,15 @@ async def invoke_agent(
             )
 
         # If delegation context is present (a service acting on behalf of
-        # a user), verify authorization via OPA. Without delegation headers,
-        # this is a plain service-to-service call (OPA Rule 1: allowed).
+        # a user), verify authorization via policy engine. Without delegation headers,
+        # this is a plain service-to-service call (policy Rule 1: allowed).
         delegation_user = http_request.headers.get("X-Delegation-User")
         if delegation_user:
             transfer_ctx = request.transfer_context or {}
             delegation_departments = transfer_ctx.get("departments", [])
 
             from shared_models.identity import make_spiffe_id
-            from shared_models.opa_client import (
+            from shared_models.policy_client import (
                 Delegation,
                 check_agent_authorization,
             )
@@ -271,19 +271,19 @@ async def invoke_agent(
                 user_departments=delegation_departments,
             )
 
-            opa_decision = await check_agent_authorization(
+            policy_decision = await check_agent_authorization(
                 caller_spiffe_id=identity.spiffe_id,
                 agent_name=agent_name,
                 delegation=delegation,
             )
 
-            if not opa_decision.allow:
+            if not policy_decision.allow:
                 logger.warning(
-                    "Agent invocation rejected by OPA",
+                    "Agent invocation rejected by policy engine",
                     agent_name=agent_name,
                     caller=identity.spiffe_id,
                     delegation_user=delegation_user,
-                    reason=opa_decision.reason,
+                    reason=policy_decision.reason,
                 )
                 await AuditService.emit(
                     event_type="authz.deny",
@@ -291,7 +291,7 @@ async def invoke_agent(
                     action="invoke_agent",
                     resource=agent_name,
                     outcome="failure",
-                    reason=opa_decision.reason,
+                    reason=policy_decision.reason,
                     metadata={
                         "caller": identity.spiffe_id,
                         "departments": delegation_departments,
@@ -301,14 +301,14 @@ async def invoke_agent(
                 )
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Authorization denied: {opa_decision.reason}",
+                    detail=f"Authorization denied: {policy_decision.reason}",
                 )
 
             logger.info(
-                "Agent invocation authorized by OPA",
+                "Agent invocation authorized by policy engine",
                 agent_name=agent_name,
                 caller=identity.spiffe_id,
-                effective_departments=opa_decision.effective_departments,
+                effective_departments=policy_decision.effective_departments,
             )
             await AuditService.emit(
                 event_type="authz.allow",
@@ -318,7 +318,7 @@ async def invoke_agent(
                 outcome="success",
                 metadata={
                     "caller": identity.spiffe_id,
-                    "effective_departments": opa_decision.effective_departments,
+                    "effective_departments": policy_decision.effective_departments,
                     "layer": "defense-in-depth",
                 },
                 service="agent-service",
@@ -342,7 +342,7 @@ async def invoke_agent(
             agent = agent_manager.get_agent(agent_name)
 
             # Extract user's departments from transfer_context for routing decisions.
-            # Authorization enforcement happens in request-manager via OPA;
+            # Authorization enforcement happens in request-manager via policy engine;
             # here we use departments for LLM prompt steering (soft gate).
             transfer_ctx = request.transfer_context or {}
             user_departments = transfer_ctx.get("departments", [])

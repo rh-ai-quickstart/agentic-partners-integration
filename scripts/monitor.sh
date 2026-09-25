@@ -53,15 +53,17 @@ cat << 'DIAGRAM'
   │      request-manager shows this badge to Keycloak to prove it's a        │
   │      trusted service before Keycloak will issue a new scoped token.      │
   │                                                                          │
-  │  ⚖️  OPA  —  the "bouncer with a rulebook"                               │
-  │      Before any agent is called, OPA checks a policy: does this user     │
-  │      have permission to talk to that agent? The policy is simple:        │
-  │      user_departments ∩ agent_departments must not be empty. E.g.        │
-  │      carlos has [engineering, software, kubernetes]. The kubernetes-      │
-  │      support agent needs [kubernetes]. Intersection = [kubernetes] ✓.    │
-  │      If the intersection is empty, OPA says NO and no token is minted.   │
-  │      OPA runs twice per request (defense-in-depth): once in the          │
-  │      orchestrator (request-manager) and once inside the agent-service.   │
+  │  ⚖️  PRAXIS GATEWAY  —  the "transparent reverse proxy"                   │
+  │      A Rust reverse-proxy (ghcr.io/praxis-proxy/praxis:0.7.0) that      │
+  │      sits between request-manager and agent-service. Currently running   │
+  │      as a transparent proxy (allow-all policy) because Praxis 0.7.0     │
+  │      blocks JWKS fetches to RFC 1918 Docker network IPs and has a       │
+  │      kid-matching bug with inline JWK keys.  JWT validation and authz   │
+  │      are enforced at the application layer: request-manager (Layer 1)   │
+  │      and agent-service (Layer 2, defense-in-depth).  Gateway-level JWT  │
+  │      enforcement will be added in a future Praxis release.  The proxy   │
+  │      still provides routing, load balancing, access logging, and        │
+  │      request-id propagation.                                             │
   │                                                                          │
   │  🔄  TOKEN EXCHANGE (RFC 8693)  —  the "scoped day-pass"                │
   │      Carlos's login token is like a master key. You don't hand a master  │
@@ -74,8 +76,8 @@ cat << 'DIAGRAM'
   │                                                                          │
   │  🤖  AGENT SERVICE  —  the "specialist desk"                             │
   │      Runs the actual AI agents. Each agent checks the incoming token      │
-  │      (is the audience correct?), calls OPA again (is this caller         │
-  │      allowed?), then queries the RAG knowledge base and sends the        │
+  │      (is the audience correct?), runs the policy engine again (is this   │
+  │      caller allowed?), then queries the RAG knowledge base and sends the│
   │      question to the LLM with the retrieved context.                     │
   │                                                                          │
   │  📦  RAG API  —  the "filing cabinet"                                    │
@@ -109,13 +111,13 @@ cat << 'DIAGRAM'
   │    RESULT   : Token₁  {sub: carlos, aud: spiffe://…/routing-agent,  │
   │                         act: {sub: request-manager}}                 │
   │                                                                      │
-  │  Step 3 ── OPA AUTHORIZATION  Layer 1  (call OPA)                   │
+  │  Step 3 ── POLICY AUTHORIZATION  Layer 1  (in-process)               │
   │    CALLER   : request-manager                                        │
-  │    EVALUATED: OPA  POST /v1/data/partner/authorization/decision      │
+  │    EVALUATED: Praxis Policy Engine (YAML policy, in-process)         │
   │    CHECK    : user_departments ∩ agent_capabilities ≠ ∅             │
   │    RESULT   : effective_departments (narrowed scope for specialist)  │
   │                                                                      │
-  │  Step 4 ── A2A HTTP CALL → routing-agent                            │
+  │  Step 4 ── A2A HTTP CALL → Praxis Gateway → routing-agent            │
   │    Headers  : Authorization: Bearer Token₁                           │
   │               X-SPIFFE-ID: spiffe://…/request-manager               │
   │               X-Delegation-User: spiffe://…/user/carlos@…           │
@@ -123,21 +125,32 @@ cat << 'DIAGRAM'
        │
        ▼
   ┌──────────────────────────────────────────────────────────────────────┐
+  │  PRAXIS GATEWAY  (transparent proxy — routing + access logging)       │
+  │                                                                      │
+  │  Step 5 ── GATEWAY PROXY  (transparent — auth deferred)              │
+  │    MODE     : allow-all (Praxis 0.7.0 JWKS/kid bugs — see policy)   │
+  │    PROVIDES : routing, load balancing, access log, request-id        │
+  │    AUTH     : deferred to application layer (Layers 1 + 2)           │
+  │    PASS     : forwards all requests to agent-service                 │
+  └──────────────────────────────────────────────────────────────────────┘
+       │
+       ▼
+  ┌──────────────────────────────────────────────────────────────────────┐
   │  AGENT SERVICE — routing-agent                                       │
   │                                                                      │
-  │  Step 5 ── TOKEN VERIFICATION                                        │
+  │  Step 6 ── TOKEN VERIFICATION                                        │
   │    VERIFIER : agent-service validates Token₁ signature              │
   │               via Keycloak JWKS endpoint (caches public keys)        │
   │    CHECKS   : aud == spiffe://…/routing-agent  ← must match exactly │
   │               sig valid, not expired                                 │
   │                                                                      │
-  │  Step 6 ── OPA AUTHORIZATION  Layer 2  (defense-in-depth)           │
+  │  Step 7 ── POLICY AUTHORIZATION  Layer 2  (defense-in-depth)         │
   │    CALLER   : agent-service                                          │
-  │    EVALUATED: OPA  POST /v1/data/partner/authorization/decision      │
+  │    EVALUATED: policy_client.py (YAML policy, in-process)             │
   │    INPUT    : caller SPIFFE ID + delegation user + departments       │
   │    RESULT   : allow/deny (independent second gate)                   │
   │                                                                      │
-  │  Step 7 ── LLM ROUTING DECISION                                      │
+  │  Step 8 ── LLM ROUTING DECISION                                      │
   │    Returns  : ROUTE:kubernetes-support  (or conversational reply)    │
   └──────────────────────────────────────────────────────────────────────┘
        │  routing-agent returns ROUTE:kubernetes-support
@@ -145,32 +158,32 @@ cat << 'DIAGRAM'
   ┌──────────────────────────────────────────────────────────────────────┐
   │  REQUEST MANAGER  (back to orchestrator)                             │
   │                                                                      │
-  │  Step 8 ── SCOPE REDUCTION                                           │
-  │    OPA result narrows departments:  user_all ⊇ effective_subset     │
+  │  Step 9  ── SCOPE REDUCTION                                          │
+  │    Policy result narrows departments:  user_all ⊇ effective_subset  │
   │    Specialist only sees departments it's authorized for              │
   │                                                                      │
-  │  Step 9 ── TOKEN EXCHANGE #2  (new scoped token for specialist)     │
+  │  Step 10 ── TOKEN EXCHANGE #2  (new scoped token for specialist)    │
   │    CREATOR  : Keycloak                                               │
   │    RESULT   : Token₂  {sub: carlos, aud: spiffe://…/k8s-support,   │
   │                         act: {sub: request-manager}}                 │
   │                                                                      │
-  │  Step 10 ── OPA AUTHORIZATION Layer 1 again (for specialist)        │
-  │  Step 11 ── A2A HTTP CALL → kubernetes-support  (Token₂)            │
+  │  Step 11 ── POLICY AUTHORIZATION Layer 1 again (for specialist)     │
+  │  Step 12 ── A2A HTTP CALL → Praxis → kubernetes-support  (Token₂)   │
   └──────────────────────────────────────────────────────────────────────┘
        │
        ▼
   ┌──────────────────────────────────────────────────────────────────────┐
-  │  AGENT SERVICE — kubernetes-support                                  │
+  │  PRAXIS → AGENT SERVICE — kubernetes-support                         │
   │                                                                      │
-  │  Steps 12-13 ── Token verification + OPA Layer 2 (same as above)   │
-  │  Step 14 ── RAG query (pgvector semantic search)                     │
-  │  Step 15 ── LLM call with RAG context + conversation history        │
-  │  Step 16 ── Response → request-manager → browser                    │
-  │  Step 17 ── Audit record written to PostgreSQL request_logs          │
+  │  Steps 13-15 ── Praxis proxy + Token verify + Policy Layer 2        │
+  │  Step 16 ── RAG query (pgvector semantic search)                     │
+  │  Step 17 ── LLM call with RAG context + conversation history        │
+  │  Step 18 ── Response → request-manager → browser                    │
+  │  Step 19 ── Audit record written to PostgreSQL request_logs          │
   └──────────────────────────────────────────────────────────────────────┘
 
   Live events below.  Legend:
-    🔑 Login   🪪 SPIRE SVID   🔄 Token exchange   ⚖ OPA check
+    🔑 Login   🪪 SPIRE SVID   🔄 Token exchange   ⚖ Policy check
     🗺 Route   🤖 Agent call   💡 Response          📋 Request log
 ───────────────────────────────────────────────────────────────────────────────
 
@@ -188,7 +201,7 @@ audit_tail() {
         # Process substitution keeps last_id in the parent shell scope so it
         # advances each cycle.  SOH (chr 1) as delimiter avoids splitting on
         # pipe characters that appear inside JSON metadata values.
-        while IFS=$'\x01' read -r id ts etype actor action resource outcome meta; do
+        while IFS=$'\x01' read -r id ts etype actor action resource outcome db_reason meta; do
             [ -z "$id" ] && continue
             last_id=$id
 
@@ -217,7 +230,7 @@ audit_tail() {
                 printf "\n${R}┌─ ✗ LOGIN FAILED  [${ts}]${N}\n"
                 printf "${R}│${N}  ${D}VERIFIER : Keycloak rejected credentials${N}\n"
                 printf "${R}│${N}  user   : ${actor}\n"
-                printf "${R}└─ reason: $(echo "$meta" | grep -oP '"reason":\s*"\K[^"]*')${N}\n"
+                printf "${R}└─ reason: ${db_reason:-unknown}${N}\n"
                 ;;
 
             # ── USER MESSAGE ───────────────────────────────────────────────
@@ -229,7 +242,7 @@ audit_tail() {
                 printf "${C}│${N}  📖 ${D}WHY: The browser sent the user's typed message to the orchestrator.${N}\n"
                 printf "${C}│${N}  ${D}     Before calling any AI agent, request-manager must (1) prove its${N}\n"
                 printf "${C}│${N}  ${D}     own identity via SPIRE, (2) swap Token₀ for a scoped token, and${N}\n"
-                printf "${C}│${N}  ${D}     (3) get OPA's permission. Only then does the AI get the message.${N}\n"
+                printf "${C}│${N}  ${D}     (3) get policy authorization. Only then does the AI get the message.${N}\n"
                 printf "${C}│${N}  ────────────────────────────────────────────────\n"
                 printf "${C}│${N}  from     : ${W}${actor}${N}\n"
                 printf "${C}│${N}  session  : ${D}${sid}…${N}\n"
@@ -299,7 +312,7 @@ audit_tail() {
                 printf "${M}└─ ✓ ${tok_label} issued — scoped to ${target_short}  🔑 via ${auth_m}${N}\n"
                 ;;
 
-            # ── OPA AUTHORIZATION ──────────────────────────────────────────
+            # ── POLICY AUTHORIZATION ───────────────────────────────────────
             authz.allow)
                 caller=$(echo  "$meta" | grep -oP '"caller":\s*"\K[^"]*'              || echo "")
                 eff=$(echo     "$meta" | grep -oP '"effective_departments":\s*\K\[[^\]]*\]' || echo "[]")
@@ -309,7 +322,7 @@ audit_tail() {
                 caller_s=$(short_id "$caller")
                 res_s=$(short_id "$resource")
 
-                # Determine which layer this is and who called OPA
+                # Determine which layer this is and who called the policy engine
                 if [ "$layer" = "defense-in-depth" ]; then
                     opa_caller="agent-service"
                     layer_note="  ${D}[Layer 2 — defense-in-depth inside agent-service]${N}"
@@ -318,24 +331,26 @@ audit_tail() {
                     layer_note="  ${D}[Layer 1 — orchestrator gate]${N}"
                 fi
 
-                printf "\n${B}┌─ ⚖  OPA ALLOW  [${ts}]${layer_note}\n"
-                printf "${B}│${N}  ${D}CALLER   : ${opa_caller}  POST /v1/data/partner/authorization/decision${N}\n"
-                printf "${B}│${N}  ${D}EVALUATED: OPA engine (Rego policy from agent YAML capabilities)${N}\n"
+                printf "\n${B}┌─ ⚖  POLICY ALLOW  [${ts}]${layer_note}\n"
+                printf "${B}│${N}  ${D}CALLER   : ${opa_caller}  (in-process policy evaluation)${N}\n"
+                printf "${B}│${N}  ${D}EVALUATED: Praxis Policy Engine (YAML policy from agent capabilities)${N}\n"
                 if [ "$layer" = "defense-in-depth" ]; then
                 printf "${B}│${N}  📖 ${D}WHY: agent-service does NOT trust the orchestrator blindly. Even${N}\n"
-                printf "${B}│${N}  ${D}     though request-manager already checked OPA, agent-service runs its${N}\n"
-                printf "${B}│${N}  ${D}     own independent check. This is defense-in-depth: if the orchestrator${N}\n"
-                printf "${B}│${N}  ${D}     were ever compromised, a rogue call would still be blocked here.${N}\n"
-                printf "${B}│${N}  ${D}     OPA reads the caller's SPIFFE ID from the X-SPIFFE-ID header and${N}\n"
-                printf "${B}│${N}  ${D}     the delegation user from X-Delegation-User, then re-evaluates the${N}\n"
-                printf "${B}│${N}  ${D}     same department-intersection policy. Both gates must say ALLOW.${N}\n"
+                printf "${B}│${N}  ${D}     though request-manager already checked policy, agent-service runs${N}\n"
+                printf "${B}│${N}  ${D}     its own independent check. This is defense-in-depth: if the${N}\n"
+                printf "${B}│${N}  ${D}     orchestrator were ever compromised, a rogue call would still be${N}\n"
+                printf "${B}│${N}  ${D}     blocked here. The policy engine reads the caller's SPIFFE ID from${N}\n"
+                printf "${B}│${N}  ${D}     the X-SPIFFE-ID header and the delegation user from${N}\n"
+                printf "${B}│${N}  ${D}     X-Delegation-User, then re-evaluates the same department-${N}\n"
+                printf "${B}│${N}  ${D}     intersection policy. Both gates must say ALLOW.${N}\n"
                 else
-                printf "${B}│${N}  📖 ${D}WHY: OPA is the bouncer. Before spending time on a token exchange or${N}\n"
-                printf "${B}│${N}  ${D}     an LLM call, request-manager asks OPA: \"is ${actor_s}${N}\n"
-                printf "${B}│${N}  ${D}     allowed to reach ${res_s}?\" OPA computes the intersection of the${N}\n"
-                printf "${B}│${N}  ${D}     user's department list and the agent's required departments. If the${N}\n"
-                printf "${B}│${N}  ${D}     intersection is empty the request is blocked here — no token is${N}\n"
-                printf "${B}│${N}  ${D}     minted, no agent is called, and the user gets an access-denied msg.${N}\n"
+                printf "${B}│${N}  📖 ${D}WHY: The policy engine is the bouncer. Before spending time on a${N}\n"
+                printf "${B}│${N}  ${D}     token exchange or an LLM call, request-manager checks policy:${N}\n"
+                printf "${B}│${N}  ${D}     \"is ${actor_s} allowed to reach ${res_s}?\" The policy engine${N}\n"
+                printf "${B}│${N}  ${D}     computes the intersection of the user's department list and the${N}\n"
+                printf "${B}│${N}  ${D}     agent's required departments. If the intersection is empty the${N}\n"
+                printf "${B}│${N}  ${D}     request is blocked here — no token is minted, no agent is called,${N}\n"
+                printf "${B}│${N}  ${D}     and the user gets an access-denied msg.${N}\n"
                 fi
                 printf "${B}│${N}  ────────────────────────────────────────────────\n"
                 printf "${B}│${N}\n"
@@ -355,15 +370,16 @@ audit_tail() {
 
             authz.deny)
                 layer=$(echo "$meta" | grep -oP '"layer":\s*"\K[^"]*' || echo "")
-                reason=$(echo "$meta" | grep -oP '"opa_reason":\s*"\K[^"]*' || echo "?")
+                reason="${db_reason:-$(echo "$meta" | grep -oP '"policy_reason":\s*"\K[^"]*' || echo "?")}"
                 [ "$layer" = "defense-in-depth" ] && opa_caller="agent-service" || opa_caller="request-manager"
-                printf "\n${R}┌─ ✗ OPA DENY  [${ts}]${N}\n"
+                printf "\n${R}┌─ ✗ POLICY DENY  [${ts}]${N}\n"
                 printf "${R}│${N}  ${D}CALLER   : ${opa_caller}${N}\n"
-                printf "${R}│${N}  ${D}EVALUATED: OPA — departments ∩ capabilities = ∅${N}\n"
+                printf "${R}│${N}  ${D}EVALUATED: Policy engine — departments ∩ capabilities = ∅${N}\n"
                 printf "${R}│${N}  📖 ${D}WHY: The user asked about something outside their department access.${N}\n"
-                printf "${R}│${N}  ${D}     OPA computed the intersection of the user's groups and the agent's${N}\n"
-                printf "${R}│${N}  ${D}     required groups and got an empty set. No token was minted and the${N}\n"
-                printf "${R}│${N}  ${D}     specialist was never called — the user sees an access-denied message.${N}\n"
+                printf "${R}│${N}  ${D}     The policy engine computed the intersection of the user's groups${N}\n"
+                printf "${R}│${N}  ${D}     and the agent's required groups and got an empty set. No token was${N}\n"
+                printf "${R}│${N}  ${D}     minted and the specialist was never called — the user sees an${N}\n"
+                printf "${R}│${N}  ${D}     access-denied message.${N}\n"
                 printf "${R}│${N}  actor    : $(short_id "$actor")\n"
                 printf "${R}│${N}  resource : ${resource}\n"
                 printf "${R}│${N}  reason   : ${reason}\n"
@@ -373,7 +389,7 @@ audit_tail() {
             authz.routing_direct)
                 printf "\n${D}┌─ ↩  HANDLED BY ROUTING-AGENT  [${ts}]${N}\n"
                 printf "${D}│${N}  routing-agent answered directly (greetings / out-of-scope)\n"
-                printf "${D}│${N}  No specialist token exchange or OPA check needed\n"
+                printf "${D}│${N}  No specialist token exchange or policy check needed\n"
                 printf "${D}└─ response returned to user${N}\n"
                 ;;
 
@@ -387,6 +403,7 @@ audit_tail() {
             -c "SELECT id,
                        to_char(created_at AT TIME ZONE 'UTC','HH24:MI:SS'),
                        event_type, actor, action, resource, outcome,
+                       COALESCE(reason, ''),
                        metadata::text
                 FROM audit_events
                 WHERE id > ${last_id}
@@ -448,6 +465,53 @@ parse_logs() {
         ts=$(echo    "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('timestamp','')[11:19])" 2>/dev/null)
         svc=$(echo   "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('service',''))" 2>/dev/null)
 
+        # ── PRAXIS ACCESS LOG (Rust structured log — different schema) ─────
+        # Praxis uses fields.message instead of event. Detect and render here.
+        if [ -z "$event" ]; then
+            praxis_msg=$(echo "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('fields',{}).get('message',''))" 2>/dev/null)
+            if [ "$praxis_msg" = "access" ]; then
+                read -r px_method px_path px_status px_ms px_upstream px_reqid px_req_bytes px_resp_bytes < <(echo "$line" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+f = d.get('fields', {})
+print(f.get('method','?'), f.get('path','?'), f.get('status','?'), f.get('duration_ms','?'), f.get('upstream','?'), f.get('request_id','')[:16], f.get('request_body_bytes',0), f.get('response_body_bytes',0))
+" 2>/dev/null)
+                ts=$(echo "$line" | python3 -c "import sys,json; print(json.load(sys.stdin).get('timestamp','')[11:19])" 2>/dev/null)
+
+                # Skip health checks — noisy
+                [ "$px_path" = "/health" ] && continue
+
+                # Status color
+                if [ "${px_status}" -lt 300 ] 2>/dev/null; then
+                    st_color="${G}"
+                    st_icon="✓"
+                elif [ "${px_status}" -lt 400 ] 2>/dev/null; then
+                    st_color="${Y}"
+                    st_icon="↩"
+                else
+                    st_color="${R}"
+                    st_icon="✗"
+                fi
+
+                # Extract agent name from path  /api/v1/agents/NAME/invoke → NAME
+                px_agent=$(echo "$px_path" | grep -oP '/agents/\K[^/]+' || echo "")
+
+                printf "\n${C}┌─ ⚡ PRAXIS GATEWAY  [${ts}]${N}\n"
+                printf "${C}│${N}  ${D}ROLE     : transparent reverse proxy (Rust, Praxis 0.7.0)${N}\n"
+                printf "${C}│${N}  ${D}UPSTREAM : ${px_upstream}${N}\n"
+                printf "${C}│${N}  ────────────────────────────────────────────────\n"
+                printf "${C}│${N}  request  : ${W}${px_method} ${px_path}${N}\n"
+                [ -n "$px_agent" ] && \
+                printf "${C}│${N}  agent    : ${W}${px_agent}${N}\n"
+                printf "${C}│${N}  status   : ${st_color}${px_status} ${st_icon}${N}\n"
+                printf "${C}│${N}  duration : ${px_ms}ms\n"
+                printf "${C}│${N}  body     : ${D}↑ ${px_req_bytes}B  ↓ ${px_resp_bytes}B${N}\n"
+                printf "${C}│${N}  trace    : ${D}${px_reqid}…${N}\n"
+                printf "${C}└─ proxied to ${px_upstream}${N}\n"
+                continue
+            fi
+        fi
+
         case "$event" in
 
         # ── DCR SELF-REGISTRATION (JSON structured log) ────────────────────
@@ -471,7 +535,7 @@ parse_logs() {
             printf "${C}│${N}  ${D}RECEIVED BY: request-manager /adk/chat${N}\n"
             printf "${C}│${N}  📖 ${D}WHY: This is the raw text the user typed. The message will NOT be sent${N}\n"
             printf "${C}│${N}  ${D}     to any AI yet. First: (1) fetch SPIRE SVID, (2) exchange Token₀ for${N}\n"
-            printf "${C}│${N}  ${D}     a scoped token, (3) OPA permission check. Only after all three pass${N}\n"
+            printf "${C}│${N}  ${D}     a scoped token, (3) policy permission check. Only after all three${N}\n"
             printf "${C}│${N}  ${D}     does the routing-agent LLM receive the message.${N}\n"
             printf "${C}│${N}  ────────────────────────────────────────────────\n"
             printf "${C}│${N}  user    : ${W}${user}${N}\n"
@@ -480,23 +544,23 @@ parse_logs() {
             ;;
 
         # ── ROUTING DECISION ───────────────────────────────────────────────
-        "Routing decision received (OPA authorized)")
+        "Routing decision received (policy authorized)")
             from=$(echo "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('from_agent',''))" 2>/dev/null)
             to=$(echo   "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('to_agent',''))" 2>/dev/null)
             eff=$(echo  "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('effective_departments','[]'))" 2>/dev/null)
             printf "\n${Y}┌─ 🗺  ROUTING DECISION  [${ts}]${N}\n"
             printf "${Y}│${N}  ${D}DECIDED BY : routing-agent LLM (ROUTE: marker in response)${N}\n"
-            printf "${Y}│${N}  ${D}AUTHORIZED : request-manager confirmed via OPA (Layer 1)${N}\n"
+            printf "${Y}│${N}  ${D}AUTHORIZED : request-manager confirmed via policy engine (Layer 1)${N}\n"
             printf "${Y}│${N}  📖 ${D}WHY: The routing-agent LLM read the user's message and returned a${N}\n"
             printf "${Y}│${N}  ${D}     special marker \"ROUTE:${to}\" meaning \"send this to that specialist\".${N}\n"
-            printf "${Y}│${N}  ${D}     Before actually doing so, request-manager asked OPA \"is this user${N}\n"
-            printf "${Y}│${N}  ${D}     allowed to reach ${to}?\" OPA said yes and also narrowed${N}\n"
-            printf "${Y}│${N}  ${D}     the departments to ${eff} — so the specialist only sees${N}\n"
+            printf "${Y}│${N}  ${D}     Before actually doing so, request-manager checked policy: \"is this${N}\n"
+            printf "${Y}│${N}  ${D}     user allowed to reach ${to}?\" The policy engine said yes and also${N}\n"
+            printf "${Y}│${N}  ${D}     narrowed the departments to ${eff} — so the specialist only sees${N}\n"
             printf "${Y}│${N}  ${D}     what it needs, not the user's full group list.${N}\n"
             printf "${Y}│${N}  ────────────────────────────────────────────────\n"
             printf "${Y}│${N}  from             : ${from}\n"
             printf "${Y}│${N}  to               : ${W}${to}${N}\n"
-            printf "${Y}│${N}  effective depts  : ${G}${eff}${N}  ${D}← scope reduced by OPA intersection${N}\n"
+            printf "${Y}│${N}  effective depts  : ${G}${eff}${N}  ${D}← scope reduced by policy intersection${N}\n"
             printf "${Y}└─ → new token exchange for ${to} next${N}\n"
             ;;
 
@@ -513,15 +577,15 @@ parse_logs() {
             deleg=$(echo  "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('is_delegated_token',False))" 2>/dev/null)
             [ "$hop" = "1" ] && tok_label="Token₁" || tok_label="Token₂"
 
-            printf "\n${M}┌─ 🤖 AGENT CALL  [${ts}]  hop ${hop}  (${svc} → ${agent})${N}\n"
+            printf "\n${M}┌─ 🤖 AGENT CALL  [${ts}]  hop ${hop}  (${svc} → praxis → ${agent})${N}\n"
             printf "${M}│${N}  ${D}CALLER   : request-manager  (spiffe://partner.example.com/request-manager)${N}\n"
-            printf "${M}│${N}  ${D}VERIFIER : agent-service — checks token sig via Keycloak JWKS${N}\n"
-            printf "${M}│${N}  ${D}           then OPA Layer 2 (defense-in-depth)${N}\n"
-            printf "${M}│${N}  📖 ${D}WHY: request-manager makes an HTTP POST to the agent-service. It sends${N}\n"
-            printf "${M}│${N}  ${D}     three key headers: the scoped JWT so agent-service can verify who is${N}\n"
-            printf "${M}│${N}  ${D}     allowed in; its SPIRE SVID so agent-service knows the caller is the${N}\n"
-            printf "${M}│${N}  ${D}     legitimate orchestrator; and the delegation header so agent-service${N}\n"
-            printf "${M}│${N}  ${D}     knows it is acting on behalf of a real user (not calling for itself).${N}\n"
+            printf "${M}│${N}  ${D}GATEWAY  : Praxis — transparent proxy (routing + access log)${N}\n"
+            printf "${M}│${N}  ${D}VERIFIER : agent-service — policy_client.py check (defense-in-depth)${N}\n"
+            printf "${M}│${N}  📖 ${D}WHY: request-manager sends the request through the Praxis gateway. Praxis${N}\n"
+            printf "${M}│${N}  ${D}     routes the request to agent-service (allow-all policy — JWT validation${N}\n"
+            printf "${M}│${N}  ${D}     deferred due to Praxis 0.7.0 JWKS bugs). agent-service runs its own${N}\n"
+            printf "${M}│${N}  ${D}     policy check (defense-in-depth). Three headers travel with the request:${N}\n"
+            printf "${M}│${N}  ${D}     scoped JWT, SPIRE SVID, and delegation header identifying the user.${N}\n"
             printf "${M}│${N}  ────────────────────────────────────────────────\n"
             printf "${M}│${N}  agent      : ${W}${agent}${N}\n"
             printf "${M}│${N}  endpoint   : ${D}${url}${N}\n"
@@ -539,12 +603,12 @@ parse_logs() {
             printf "${M}└─ awaiting response from agent-service…${N}\n"
             ;;
 
-        # ── AGENT-SERVICE OPA CHECK ────────────────────────────────────────
+        # ── AGENT-SERVICE POLICY CHECK ─────────────────────────────────────
         # Intentionally not rendered here — this event is already shown by
         # audit_tail (authz.allow with layer=defense-in-depth) which is the
         # authoritative DB record.  Rendering from both sources causes the
         # same check to appear twice per request.
-        "Agent invocation authorized by OPA")
+        "Agent invocation authorized by policy engine")
             ;;
 
         # ── SUCCESSFUL AGENT REPLY ─────────────────────────────────────────
@@ -585,12 +649,12 @@ parse_logs() {
             ;;
 
         # ── ACCESS DENIED ──────────────────────────────────────────────────
-        "AUTHORIZATION BLOCKED: OPA denied routing to agent")
+        "AUTHORIZATION BLOCKED: policy denied routing to agent")
             agent=$(echo  "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('requested_agent',''))" 2>/dev/null)
             depts=$(echo  "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('departments','[]'))" 2>/dev/null)
             reason=$(echo "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('reason',''))" 2>/dev/null)
             printf "\n${R}╔══ ✗ ACCESS DENIED  [${ts}]${N}\n"
-            printf "${R}║${N}  ${D}BLOCKED BY : OPA (Layer 1 in request-manager)${N}\n"
+            printf "${R}║${N}  ${D}BLOCKED BY : Policy engine (Layer 1 in request-manager)${N}\n"
             printf "${R}║${N}  ${D}NO token exchange was performed — specialist never called${N}\n"
             printf "${R}║${N}  ────────────────────────────────────────────────\n"
             printf "${R}║${N}  blocked agent : ${agent}\n"
@@ -738,7 +802,8 @@ else
     dcr_status &
     # --since prevents replaying the full container log history on every start.
     # Only lines emitted from this moment onwards are parsed.
-    docker logs -f --since "$MONITOR_START" partner-request-manager-full 2>&1 | parse_logs &
-    docker logs -f --since "$MONITOR_START" partner-agent-service-full   2>&1 | parse_logs &
+    docker logs -f --since "$MONITOR_START" partner-request-manager-full  2>&1 | parse_logs &
+    docker logs -f --since "$MONITOR_START" partner-agent-service-full    2>&1 | parse_logs &
+    docker logs -f --since "$MONITOR_START" partner-praxis-gateway-full   2>&1 | parse_logs &
     wait
 fi

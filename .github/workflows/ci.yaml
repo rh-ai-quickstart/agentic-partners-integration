@@ -139,25 +139,10 @@ jobs:
           cd ../request-manager && uv lock --check
           cd ../kubernetes-partner-agent && uv lock --check
 
-  opa-tests:
-    name: OPA Policy Tests
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install OPA
-        run: |
-          curl -L -o /usr/local/bin/opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
-          chmod +x /usr/local/bin/opa
-
-      - name: Run OPA policy tests
-        run: opa test policies/ -v
-
   e2e-tests:
     name: E2E Tests
     runs-on: ubuntu-latest
-    needs: [unit-tests, opa-tests]
+    needs: [unit-tests]
 
     steps:
       - uses: actions/checkout@v6
@@ -179,11 +164,11 @@ jobs:
           echo "=== Agent Service ==="
           docker logs partner-agent-service-full 2>&1 | tail -50
           echo ""
+          echo "=== Praxis Gateway ==="
+          docker logs partner-praxis-gateway-full 2>&1 | tail -30
+          echo ""
           echo "=== RAG API ==="
           docker logs partner-rag-api-full 2>&1 | tail -50
-          echo ""
-          echo "=== OPA ==="
-          docker logs partner-opa-full 2>&1 | tail -20
           echo ""
           echo "=== Keycloak ==="
           docker logs partner-keycloak-full 2>&1 | tail -20

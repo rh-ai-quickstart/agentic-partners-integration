@@ -1,5 +1,6 @@
 """Additional tests for request_manager.communication_strategy — registry and edge cases."""
 
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -7,6 +8,7 @@ import pytest
 from request_manager.communication_strategy import (
     DirectHTTPStrategy,
     UnifiedRequestProcessor,
+    _registry_cache,
 )
 
 
@@ -18,7 +20,7 @@ class TestDirectHTTPStrategyEnsureRegistry:
     async def test_registry_all_local_agents(self, mock_httpx):
         """When registry has no remote endpoints, logs 'all agents local'."""
         strategy = DirectHTTPStrategy()
-        strategy._registry_fetched = False
+        _registry_cache.pop(strategy._agent_service_url, None)
 
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -37,13 +39,13 @@ class TestDirectHTTPStrategyEnsureRegistry:
         mock_httpx.return_value = mock_client
 
         await strategy._ensure_registry()
-        assert strategy._registry_fetched is True
+        assert strategy._agent_service_url in _registry_cache
 
     @patch("request_manager.communication_strategy.httpx.AsyncClient")
     async def test_registry_with_remote_agents(self, mock_httpx):
         """When registry has remote endpoints, populates agent_endpoints."""
         strategy = DirectHTTPStrategy()
-        strategy._registry_fetched = False
+        _registry_cache.pop(strategy._agent_service_url, None)
 
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -68,11 +70,11 @@ class TestDirectHTTPStrategyEnsureRegistry:
 
     @patch("request_manager.communication_strategy.httpx.AsyncClient")
     async def test_registry_fetch_failure(self, mock_httpx):
-        """When registry is unreachable, falls back gracefully."""
+        """When registry is unreachable, falls back gracefully without caching."""
         import httpx as real_httpx
 
         strategy = DirectHTTPStrategy()
-        strategy._registry_fetched = False
+        _registry_cache.pop(strategy._agent_service_url, None)
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(
@@ -83,12 +85,12 @@ class TestDirectHTTPStrategyEnsureRegistry:
         mock_httpx.return_value = mock_client
 
         await strategy._ensure_registry()
-        assert strategy._registry_fetched is True
+        assert strategy._agent_service_url not in _registry_cache
 
     async def test_registry_cached_after_first_call(self):
         """Second call to _ensure_registry does nothing (cached)."""
         strategy = DirectHTTPStrategy()
-        strategy._registry_fetched = True
+        _registry_cache[strategy._agent_service_url] = ({}, datetime.now(timezone.utc))
 
         with patch("request_manager.communication_strategy.httpx.AsyncClient") as mock_httpx:
             mock_client = AsyncMock()

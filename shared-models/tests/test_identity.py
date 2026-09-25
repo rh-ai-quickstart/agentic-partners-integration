@@ -2,6 +2,8 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from shared_models.identity import (
     WorkloadIdentity,
     extract_identity,
@@ -28,7 +30,6 @@ class TestWorkloadIdentity:
     def test_entity_type_single_path_segment(self):
         """A SPIFFE ID with a single path segment has the domain as entity_type."""
         wid = WorkloadIdentity(spiffe_id="spiffe://example.com/solo")
-        # parts = ['spiffe:', '', 'example.com', 'solo'], parts[-2] = 'example.com'
         assert wid.entity_type == "example.com"
 
     def test_entity_type_unknown_for_bare_id(self):
@@ -70,10 +71,9 @@ class TestMakeSpiffeId:
 
 
 class TestExtractIdentity:
-    """Tests for extract_identity() in mock mode."""
+    """Tests for extract_identity()."""
 
-    @patch("shared_models.identity.MOCK_SPIFFE", True)
-    def test_extracts_from_header_in_mock_mode(self):
+    def test_extracts_from_header(self):
         request = MagicMock()
         request.headers = {"X-SPIFFE-ID": "spiffe://example.com/user/alice"}
 
@@ -82,25 +82,25 @@ class TestExtractIdentity:
         assert identity.spiffe_id == "spiffe://example.com/user/alice"
         assert identity.name == "alice"
 
-    @patch("shared_models.identity.MOCK_SPIFFE", True)
-    def test_returns_none_when_no_header(self):
+    def test_returns_none_when_no_header_no_transport(self):
         request = MagicMock()
         request.headers = {}
-
-        identity = extract_identity(request)
-        assert identity is None
-
-    @patch("shared_models.identity.MOCK_SPIFFE", False)
-    def test_real_mode_no_transport_returns_none(self):
-        request = MagicMock()
         request.scope = {}
 
         identity = extract_identity(request)
         assert identity is None
 
-    @patch("shared_models.identity.MOCK_SPIFFE", False)
-    def test_real_mode_no_peercert_returns_none(self):
+    def test_no_transport_returns_none(self):
         request = MagicMock()
+        request.headers = {}
+        request.scope = {}
+
+        identity = extract_identity(request)
+        assert identity is None
+
+    def test_no_peercert_returns_none(self):
+        request = MagicMock()
+        request.headers = {}
         transport = MagicMock()
         transport.get_extra_info.return_value = None
         request.scope = {"transport": transport}
@@ -108,10 +108,10 @@ class TestExtractIdentity:
         identity = extract_identity(request)
         assert identity is None
 
-    @patch("shared_models.identity.MOCK_SPIFFE", False)
-    def test_real_mode_extracts_spiffe_from_peercert(self):
-        """Real mode should extract SPIFFE ID from mTLS peer certificate SAN."""
+    def test_extracts_spiffe_from_peercert(self):
+        """Should extract SPIFFE ID from mTLS peer certificate SAN."""
         request = MagicMock()
+        request.headers = {}
         transport = MagicMock()
         peercert = {
             "subjectAltName": [
@@ -128,10 +128,10 @@ class TestExtractIdentity:
         assert identity.name == "my-svc"
         assert identity.entity_type == "service"
 
-    @patch("shared_models.identity.MOCK_SPIFFE", False)
-    def test_real_mode_no_spiffe_san_returns_none(self):
-        """Real mode with cert but no SPIFFE SAN should return None."""
+    def test_no_spiffe_san_returns_none(self):
+        """Cert with non-SPIFFE SAN should return None."""
         request = MagicMock()
+        request.headers = {}
         transport = MagicMock()
         peercert = {
             "subjectAltName": [
@@ -145,10 +145,10 @@ class TestExtractIdentity:
         identity = extract_identity(request)
         assert identity is None
 
-    @patch("shared_models.identity.MOCK_SPIFFE", False)
-    def test_real_mode_empty_san_returns_none(self):
-        """Real mode with cert but empty SAN should return None."""
+    def test_empty_san_returns_none(self):
+        """Cert with empty SAN should return None."""
         request = MagicMock()
+        request.headers = {}
         transport = MagicMock()
         peercert = {"subjectAltName": ()}
         transport.get_extra_info.return_value = peercert
@@ -157,10 +157,10 @@ class TestExtractIdentity:
         identity = extract_identity(request)
         assert identity is None
 
-    @patch("shared_models.identity.MOCK_SPIFFE", False)
-    def test_real_mode_no_san_key_returns_none(self):
-        """Real mode with cert but no subjectAltName key should return None."""
+    def test_no_san_key_returns_none(self):
+        """Cert without subjectAltName key should return None."""
         request = MagicMock()
+        request.headers = {}
         transport = MagicMock()
         peercert = {}
         transport.get_extra_info.return_value = peercert
@@ -169,47 +169,93 @@ class TestExtractIdentity:
         identity = extract_identity(request)
         assert identity is None
 
+    def test_header_takes_precedence_over_cert(self):
+        """X-SPIFFE-ID header should take precedence over mTLS cert."""
+        request = MagicMock()
+        request.headers = {"X-SPIFFE-ID": "spiffe://example.com/user/alice"}
+        transport = MagicMock()
+        peercert = {
+            "subjectAltName": [
+                ("URI", "spiffe://trust.domain/service/my-svc"),
+            ]
+        }
+        transport.get_extra_info.return_value = peercert
+        request.scope = {"transport": transport}
+
+        identity = extract_identity(request)
+        assert identity is not None
+        assert identity.spiffe_id == "spiffe://example.com/user/alice"
+
 
 class TestOutboundIdentityHeaders:
     """Tests for outbound_identity_headers()."""
 
-    @patch("shared_models.identity.MOCK_SPIFFE", True)
-    @patch("shared_models.identity.TRUST_DOMAIN", "test.example.com")
-    def test_mock_mode_sets_spiffe_header(self):
-        headers = outbound_identity_headers("request-manager")
-        assert (
-            headers["X-SPIFFE-ID"]
-            == "spiffe://test.example.com/service/request-manager"
-        )
+    @patch("shared_models.identity.get_spire_client")
+    @patch("shared_models.identity.SPIFFE_AVAILABLE", True)
+    def test_sets_spiffe_header_from_spire(self, mock_get_spire):
+        mock_client = MagicMock()
+        mock_svid = MagicMock()
+        mock_svid.spiffe_id = "spiffe://test.example.com/service/request-manager"
+        mock_client.fetch_svid.return_value = mock_svid
+        mock_get_spire.return_value = mock_client
 
-    @patch("shared_models.identity.MOCK_SPIFFE", False)
-    def test_real_mode_no_spiffe_header(self):
         headers = outbound_identity_headers("request-manager")
-        assert "X-SPIFFE-ID" not in headers
+        assert headers["X-SPIFFE-ID"] == "spiffe://test.example.com/service/request-manager"
 
-    @patch("shared_models.identity.MOCK_SPIFFE", True)
-    @patch("shared_models.identity.TRUST_DOMAIN", "test.example.com")
-    def test_delegation_user_header(self):
+    @patch("shared_models.identity.SPIFFE_AVAILABLE", False)
+    def test_raises_when_spiffe_unavailable(self):
+        with pytest.raises(RuntimeError, match="SPIFFE library not available"):
+            outbound_identity_headers("request-manager")
+
+    @patch("shared_models.identity.get_spire_client")
+    @patch("shared_models.identity.SPIFFE_AVAILABLE", True)
+    def test_raises_when_svid_fetch_fails(self, mock_get_spire):
+        mock_client = MagicMock()
+        mock_client.fetch_svid.return_value = None
+        mock_get_spire.return_value = mock_client
+
+        with pytest.raises(RuntimeError, match="Failed to fetch SVID"):
+            outbound_identity_headers("request-manager")
+
+    @patch("shared_models.identity.get_spire_client")
+    @patch("shared_models.identity.SPIFFE_AVAILABLE", True)
+    def test_delegation_user_header(self, mock_get_spire):
+        mock_client = MagicMock()
+        mock_svid = MagicMock()
+        mock_svid.spiffe_id = "spiffe://test.example.com/service/request-manager"
+        mock_client.fetch_svid.return_value = mock_svid
+        mock_get_spire.return_value = mock_client
+
         headers = outbound_identity_headers(
             "request-manager",
             delegation_user="spiffe://test.example.com/user/alice",
         )
         assert headers["X-Delegation-User"] == "spiffe://test.example.com/user/alice"
 
-    @patch("shared_models.identity.MOCK_SPIFFE", True)
-    @patch("shared_models.identity.TRUST_DOMAIN", "test.example.com")
-    def test_delegation_agent_header(self):
+    @patch("shared_models.identity.get_spire_client")
+    @patch("shared_models.identity.SPIFFE_AVAILABLE", True)
+    def test_delegation_agent_header(self, mock_get_spire):
+        mock_client = MagicMock()
+        mock_svid = MagicMock()
+        mock_svid.spiffe_id = "spiffe://test.example.com/service/request-manager"
+        mock_client.fetch_svid.return_value = mock_svid
+        mock_get_spire.return_value = mock_client
+
         headers = outbound_identity_headers(
             "request-manager",
             delegation_agent="spiffe://test.example.com/agent/support",
         )
-        assert (
-            headers["X-Delegation-Agent"] == "spiffe://test.example.com/agent/support"
-        )
+        assert headers["X-Delegation-Agent"] == "spiffe://test.example.com/agent/support"
 
-    @patch("shared_models.identity.MOCK_SPIFFE", True)
-    @patch("shared_models.identity.TRUST_DOMAIN", "test.example.com")
-    def test_both_delegation_headers(self):
+    @patch("shared_models.identity.get_spire_client")
+    @patch("shared_models.identity.SPIFFE_AVAILABLE", True)
+    def test_both_delegation_headers(self, mock_get_spire):
+        mock_client = MagicMock()
+        mock_svid = MagicMock()
+        mock_svid.spiffe_id = "spiffe://test.example.com/service/request-manager"
+        mock_client.fetch_svid.return_value = mock_svid
+        mock_get_spire.return_value = mock_client
+
         headers = outbound_identity_headers(
             "request-manager",
             delegation_user="spiffe://test.example.com/user/alice",
@@ -218,8 +264,3 @@ class TestOutboundIdentityHeaders:
         assert "X-SPIFFE-ID" in headers
         assert "X-Delegation-User" in headers
         assert "X-Delegation-Agent" in headers
-
-    @patch("shared_models.identity.MOCK_SPIFFE", False)
-    def test_no_delegation_returns_empty(self):
-        headers = outbound_identity_headers("request-manager")
-        assert headers == {}
