@@ -1,0 +1,192 @@
+{{- $fullName := include "partner-agent.fullname" . -}}
+{{- if .Values.praxis.enabled -}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-praxis
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+    app: {{ $fullName }}-praxis
+    component: praxis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "partner-agent.selectorLabels" . | nindent 6 }}
+      app: {{ $fullName }}-praxis
+  template:
+    metadata:
+      labels:
+        {{- include "partner-agent.labels" . | nindent 8 }}
+        app: {{ $fullName }}-praxis
+        component: praxis
+    spec:
+      serviceAccountName: {{ include "partner-agent.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: praxis
+        image: "{{ .Values.praxis.image }}:{{ .Values.praxis.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+          name: http
+        env:
+        - name: PRAXIS_CONFIG
+          value: "/etc/praxis/config.yaml"
+        - name: PRAXIS_LOG_FORMAT
+          value: "json"
+        - name: RUST_LOG
+          value: "info"
+        volumeMounts:
+        - name: praxis-config
+          mountPath: /etc/praxis/config.yaml
+          subPath: config.yaml
+          readOnly: true
+        - name: praxis-policy
+          mountPath: /etc/praxis/policy.yaml
+          subPath: policy.yaml
+          readOnly: true
+        - name: agent-capabilities
+          mountPath: /etc/praxis/agent_capabilities.yaml
+          subPath: agent_capabilities.yaml
+          readOnly: true
+        {{- if .Values.praxis.resources }}
+        resources:
+          {{- toYaml .Values.praxis.resources | nindent 10 }}
+        {{- end }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      volumes:
+      - name: praxis-config
+        configMap:
+          name: {{ $fullName }}-praxis-config
+      - name: praxis-policy
+        configMap:
+          name: {{ $fullName }}-praxis-policy
+      - name: agent-capabilities
+        configMap:
+          name: {{ $fullName }}-agent-capabilities
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-praxis
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+    app: {{ $fullName }}-praxis
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "partner-agent.selectorLabels" . | nindent 4 }}
+    app: {{ $fullName }}-praxis
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullName }}-praxis-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    admin:
+      address: "127.0.0.1:9901"
+
+    body_limits:
+      max_request_bytes: 10485760
+      max_response_bytes: 10485760
+
+    runtime:
+      threads: 0
+      work_stealing: true
+      upstream_keepalive_pool_size: 32
+
+    shutdown_timeout_secs: 15
+
+    listeners:
+      - name: gateway
+        address: "0.0.0.0:8080"
+        max_connections: 1000
+        downstream_read_timeout_ms: 30000
+        filter_chains:
+          - security
+          - routing
+
+    filter_chains:
+      - name: security
+        filters:
+          - filter: request_id
+          - filter: access_log
+          - filter: policy
+            config_path: /etc/praxis/policy.yaml
+
+      - name: routing
+        filters:
+          - filter: router
+            routes:
+              - path_prefix: "/"
+                cluster: agent-service
+          - filter: load_balancer
+            clusters:
+              - name: agent-service
+                connection_timeout_ms: 5000
+                read_timeout_ms: 120000
+                idle_timeout_ms: 60000
+                endpoints:
+                  - "{{ $fullName }}-agent-service:80"
+
+    insecure_options:
+      allow_private_endpoints: true
+      allow_private_upstreams: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullName }}-praxis-policy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+data:
+  policy.yaml: |
+    global:
+      attribute_files:
+        - /etc/praxis/agent_capabilities.yaml
+
+      authorization:
+        pre_invocation:
+          - allow
+{{- end }}

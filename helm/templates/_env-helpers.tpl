@@ -96,16 +96,77 @@ LLM environment variables
 {{- end }}
 
 {{/*
+Keycloak admin environment variables (used by seed job and services that need admin access)
+*/}}
+{{- define "partner-agent.keycloakAdminEnvVars" }}
+- name: KEYCLOAK_ADMIN_USERNAME
+  value: {{ .Values.keycloak.adminUsername | quote }}
+- name: KEYCLOAK_ADMIN_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "partner-agent.fullname" . }}-keycloak-credentials
+      key: admin-password
+{{- end }}
+
+{{/*
+DCR environment variables (Dynamic Client Registration)
+*/}}
+{{- define "partner-agent.dcrEnvVars" }}
+{{- if .Values.dcr.enabled }}
+- name: DCR_ENABLED
+  value: "true"
+- name: KEYCLOAK_DCR_ENDPOINT
+  value: "http://{{ include "partner-agent.fullname" . }}-keycloak:8080/realms/partner-agent/clients-registrations/openid-connect"
+- name: KEYCLOAK_DCR_INITIAL_ACCESS_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "partner-agent.fullname" . }}-seed-results
+      key: dcr-initial-access-token
+      optional: true
+{{- include "partner-agent.keycloakAdminEnvVars" . }}
+{{- else }}
+- name: DCR_ENABLED
+  value: "false"
+{{- end }}
+{{- end }}
+
+{{/*
+SPIRE/SPIFFE environment variables
+*/}}
+{{- define "partner-agent.spireEnvVars" }}
+{{- if .Values.spire.enabled }}
+- name: MOCK_SPIFFE
+  value: "false"
+- name: SPIFFE_TRUST_DOMAIN
+  value: {{ .Values.spire.trustDomain | default "partner.example.com" | quote }}
+- name: SPIFFE_ENDPOINT_SOCKET
+  value: "/run/spire/sockets/agent.sock"
+{{- else }}
+- name: MOCK_SPIFFE
+  value: "true"
+- name: SPIFFE_TRUST_DOMAIN
+  value: {{ .Values.spire.trustDomain | default "partner.example.com" | quote }}
+{{- end }}
+{{- end }}
+
+{{/*
 Request Manager environment variables
 */}}
 {{- define "partner-agent.requestManagerEnvVars" }}
 {{- include "partner-agent.dbEnvVars" . }}
 {{- include "partner-agent.commonEnvVars" . }}
 {{- include "partner-agent.llmEnvVars" . }}
+{{- include "partner-agent.dcrEnvVars" . }}
+{{- include "partner-agent.spireEnvVars" . }}
 - name: COMMUNICATION_MODE
   value: "http"
+{{- if .Values.praxis.enabled }}
+- name: AGENT_SERVICE_URL
+  value: "http://{{ include "partner-agent.fullname" . }}-praxis:8080"
+{{- else }}
 - name: AGENT_SERVICE_URL
   value: "http://{{ include "partner-agent.fullname" . }}-agent-service:80"
+{{- end }}
 - name: AGENT_TIMEOUT
   value: "120"
 - name: AAA_ENABLED
@@ -124,12 +185,12 @@ Request Manager environment variables
   value: "partner-agent"
 - name: KEYCLOAK_CLIENT_ID
   value: "partner-agent-ui"
-- name: OPA_URL
-  value: "http://{{ include "partner-agent.fullname" . }}-opa:8181"
-- name: MOCK_SPIFFE
-  value: "true"
-- name: SPIFFE_TRUST_DOMAIN
-  value: "partner.example.com"
+- name: POLICY_CAPABILITIES_PATH
+  value: "/etc/praxis/agent_capabilities.yaml"
+- name: REGISTRY_TTL_SECONDS
+  value: "300"
+- name: AGENT_CARD_DISCOVERY
+  value: "false"
 {{- end }}
 
 {{/*
@@ -139,16 +200,20 @@ Agent Service environment variables
 {{- include "partner-agent.dbEnvVars" . }}
 {{- include "partner-agent.commonEnvVars" . }}
 {{- include "partner-agent.llmEnvVars" . }}
+{{- include "partner-agent.dcrEnvVars" . }}
+{{- include "partner-agent.spireEnvVars" . }}
 - name: COMMUNICATION_MODE
   value: "http"
 - name: RAG_API_ENDPOINT
   value: "http://{{ include "partner-agent.fullname" . }}-rag-api:80/answer"
-- name: OPA_URL
-  value: "http://{{ include "partner-agent.fullname" . }}-opa:8181"
-- name: MOCK_SPIFFE
-  value: "true"
-- name: SPIFFE_TRUST_DOMAIN
-  value: "partner.example.com"
+- name: KEYCLOAK_URL
+  value: "http://{{ include "partner-agent.fullname" . }}-keycloak:8080"
+- name: KEYCLOAK_REALM
+  value: "partner-agent"
+- name: GATEWAY_BASE_URL
+  value: "http://{{ include "partner-agent.fullname" . }}-agent-service:80"
+- name: POLICY_CAPABILITIES_PATH
+  value: "/etc/praxis/agent_capabilities.yaml"
 - name: KUBERNETES_SUPPORT_ENDPOINT
   value: "http://{{ include "partner-agent.fullname" . }}-kubernetes-agent:80/api/v1/agents/kubernetes-support/invoke"
 {{- end }}

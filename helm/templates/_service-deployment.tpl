@@ -36,10 +36,81 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+      - name: wait-for-keycloak
+        image: "{{ $context.Values.image.registry }}/{{ index $context.Values.image $imageKey }}:{{ $context.Values.image.tag | default $context.Chart.AppVersion }}"
+        imagePullPolicy: {{ $context.Values.image.pullPolicy }}
+        command: ["python3", "-c"]
+        args:
+          - |
+            import json, os, sys, time, urllib.request, urllib.error
+            KC = os.environ.get("KEYCLOAK_URL", "")
+            if not KC:
+                print("No KEYCLOAK_URL — skipping init")
+                sys.exit(0)
+            ADMIN_USER = os.environ.get("KEYCLOAK_ADMIN_USERNAME", "admin")
+            ADMIN_PASS = os.environ.get("KEYCLOAK_ADMIN_PASSWORD", "admin123")
+            print(f"Waiting for Keycloak at {KC}...")
+            for i in range(120):
+                try:
+                    urllib.request.urlopen(f"{KC}/realms/partner-agent", timeout=5)
+                    break
+                except Exception:
+                    if i == 119:
+                        print("Keycloak not ready", file=sys.stderr)
+                        sys.exit(1)
+                    time.sleep(2)
+            print("Keycloak ready, fetching client secret...")
+            try:
+                r = urllib.request.urlopen(urllib.request.Request(
+                    f"{KC}/realms/master/protocol/openid-connect/token",
+                    data=f"client_id=admin-cli&grant_type=password&username={ADMIN_USER}&password={ADMIN_PASS}".encode(),
+                    headers={"Content-Type": "application/x-www-form-urlencoded"}), timeout=30)
+                token = json.loads(r.read())["access_token"]
+                r2 = urllib.request.urlopen(urllib.request.Request(
+                    f"{KC}/admin/realms/partner-agent/clients?clientId=partner-agent-ui",
+                    headers={"Authorization": f"Bearer {token}"}), timeout=30)
+                clients = json.loads(r2.read())
+                if not clients:
+                    print("Client not found, skipping"); sys.exit(0)
+                cid = clients[0]["id"]
+                r3 = urllib.request.urlopen(urllib.request.Request(
+                    f"{KC}/admin/realms/partner-agent/clients/{cid}/client-secret",
+                    headers={"Authorization": f"Bearer {token}"}), timeout=30)
+                secret = json.loads(r3.read()).get("value", "")
+                with open("/tmp/kc-init/client-secret", "w") as f:
+                    f.write(secret)
+                print(f"Client secret written ({secret[:10]}...)")
+            except Exception as e:
+                print(f"Warning: {e}")
+                with open("/tmp/kc-init/client-secret", "w") as f:
+                    f.write("")
+        env:
+        - name: KEYCLOAK_URL
+          value: "http://{{ $fullName }}-keycloak:8080"
+        {{- include "partner-agent.keycloakAdminEnvVars" $context | nindent 8 }}
+        volumeMounts:
+        - name: kc-init
+          mountPath: /tmp/kc-init
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
       containers:
       - name: {{ $serviceName }}
         image: "{{ $context.Values.image.registry }}/{{ index $context.Values.image $imageKey }}:{{ $context.Values.image.tag | default $context.Chart.AppVersion }}"
         imagePullPolicy: {{ $context.Values.image.pullPolicy }}
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            if [ -f /tmp/kc-init/client-secret ]; then
+              export KEYCLOAK_CLIENT_SECRET=$(cat /tmp/kc-init/client-secret)
+            fi
+            exec python3 -m uvicorn {{ if eq $serviceName "request-manager" }}request_manager.main:app{{ else }}agent_service.main:app{{ end }} --host 0.0.0.0 --port 8080 --workers ${UVICORN_WORKERS:-4}
         ports:
         - containerPort: 8080
           protocol: TCP
@@ -54,8 +125,15 @@ spec:
         - name: UVICORN_WORKERS
           value: {{ $serviceConfig.uvicornWorkers | quote }}
         {{- end }}
-        {{- if eq $serviceName "agent-service" }}
         volumeMounts:
+        - name: kc-init
+          mountPath: /tmp/kc-init
+          readOnly: true
+        - name: agent-capabilities
+          mountPath: /etc/praxis/agent_capabilities.yaml
+          subPath: agent_capabilities.yaml
+          readOnly: true
+        {{- if eq $serviceName "agent-service" }}
         - name: agent-config
           mountPath: /app/config/agents/kubernetes-support-agent.yaml
           subPath: kubernetes-support-agent.yaml
@@ -103,8 +181,13 @@ spec:
           periodSeconds: 5
           timeoutSeconds: 5
           failureThreshold: 30
-      {{- if eq $serviceName "agent-service" }}
       volumes:
+      - name: kc-init
+        emptyDir: {}
+      - name: agent-capabilities
+        configMap:
+          name: {{ $fullName }}-agent-capabilities
+      {{- if eq $serviceName "agent-service" }}
       - name: agent-config
         configMap:
           name: {{ $fullName }}-agent-config

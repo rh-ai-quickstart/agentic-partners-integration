@@ -24,7 +24,7 @@ serviceAccount:
 # Database configuration
 database:
   # Expected Alembic migration version
-  expectedMigrationVersion: "009"
+  expectedMigrationVersion: "010"
 
 # PostgreSQL with pgvector for both application data and vector storage
 postgresql:
@@ -138,6 +138,19 @@ dbMigration:
       memory: "256Mi"
       cpu: "300m"
 
+# Keycloak seed job — creates users, groups, configures confidential client,
+# DCR Initial Access Token, and token-exchange authorization.
+keycloakSeed:
+  enabled: true
+  image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "128Mi"
+      cpu: "200m"
+
 # Network policies
 networkPolicies:
   enabled: true
@@ -151,6 +164,8 @@ keycloak:
   tag: "26.5"
   adminUsername: admin
   adminPassword: admin123  # Change in production - use external secret
+  # Keycloak features to enable (token-exchange for RFC 8693, admin-fine-grained-authz for DCR permissions)
+  features: "token-exchange,admin-fine-grained-authz"
   resources:
     requests:
       memory: "512Mi"
@@ -159,9 +174,31 @@ keycloak:
       memory: "1Gi"
       cpu: "500m"
 
-# OPA policy engine
-opa:
+# Praxis Policy Gateway (reverse proxy between request-manager and agent-service)
+praxis:
   enabled: true
+  image: ghcr.io/praxis-proxy/praxis
+  tag: "0.7.0"
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "256Mi"
+      cpu: "500m"
+
+# Dynamic Client Registration (RFC 7591) — services self-register with Keycloak
+dcr:
+  enabled: true
+
+# SPIFFE/SPIRE workload identity
+spire:
+  enabled: false  # Set to true when SPIRE operator is deployed on cluster
+  trustDomain: "partner.example.com"
+
+# OPA policy engine (deprecated — policy evaluation is now done locally via agent_capabilities.yaml)
+opa:
+  enabled: false
   image: openpolicyagent/opa
   tag: "latest"
   resources:

@@ -6,9 +6,31 @@ Services:
 - RAG API:         {{ include "partner-agent.fullname" . }}-rag-api (port 80)
 - PF Chat UI:      {{ include "partner-agent.fullname" . }}-pf-chat-ui (port 3000)
 - PostgreSQL:      {{ include "partner-agent.fullname" . }}-postgresql (port 5432, with pgvector for RAG)
+{{- if .Values.praxis.enabled }}
+- Praxis Gateway:  {{ include "partner-agent.fullname" . }}-praxis (port 8080, policy enforcement)
+{{- end }}
+{{- if .Values.keycloak.enabled }}
+- Keycloak:        {{ include "partner-agent.fullname" . }}-keycloak (port 8080)
+{{- end }}
+
+Security features:
+{{- if .Values.dcr.enabled }}
+- DCR (RFC 7591): Services self-register with Keycloak on startup
+- Token Exchange (RFC 8693): DCR credentials used as actor_token → auth_method=dcr-actor
+{{- end }}
+{{- if .Values.praxis.enabled }}
+- Praxis Gateway: Transparent reverse proxy with policy enforcement
+{{- end }}
+- SPIFFE workload identity: {{ if .Values.spire.enabled }}SPIRE-backed{{ else }}mock mode{{ end }}
 
 To access the Web UI:
   kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "partner-agent.fullname" . }}-pf-chat-ui 3000:3000
 
 To access the API directly:
   kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "partner-agent.fullname" . }}-request-manager 8000:80
+
+Test users (created by seed job):
+  carlos@example.com / carlos123 — software + kubernetes support
+  luis@example.com / luis123     — network support only
+  sharon@example.com / sharon123 — all agents (admin)
+  josh@example.com / josh123    — no agents (restricted)

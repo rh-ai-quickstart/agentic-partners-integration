@@ -1,0 +1,394 @@
+{{- if and .Values.keycloak.enabled .Values.keycloakSeed.enabled }}
+{{- $fullName := include "partner-agent.fullname" . -}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $fullName }}-keycloak-seed
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fullName }}-keycloak-seed
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["create", "update", "patch", "get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fullName }}-keycloak-seed
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $fullName }}-keycloak-seed
+subjects:
+- kind: ServiceAccount
+  name: {{ $fullName }}-keycloak-seed
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullName }}-keycloak-seed
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+    app: {{ $fullName }}-keycloak-seed
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "2"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 5
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        {{- include "partner-agent.labels" . | nindent 8 }}
+        app: {{ $fullName }}-keycloak-seed
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ $fullName }}-keycloak-seed
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: seed
+        image: "{{ .Values.image.registry }}/{{ .Values.image.requestManager }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command: ["python3", "-c"]
+        args:
+          - |
+            import json, os, sys, time, urllib.request, urllib.error, base64, ssl
+
+            KC_URL = os.environ["KEYCLOAK_URL"]
+            REALM = "partner-agent"
+            ADMIN_USER = os.environ["KEYCLOAK_ADMIN_USERNAME"]
+            ADMIN_PASS = os.environ["KEYCLOAK_ADMIN_PASSWORD"]
+            NAMESPACE = os.environ["POD_NAMESPACE"]
+            SECRET_NAME = os.environ["SECRET_NAME"]
+            DCR_ENABLED = os.environ.get("DCR_ENABLED", "false") == "true"
+            K8S_HOST = os.environ.get("KUBERNETES_SERVICE_HOST", "kubernetes.default.svc")
+            K8S_PORT = os.environ.get("KUBERNETES_SERVICE_PORT", "443")
+
+            ssl_ctx = ssl.create_default_context()
+            ssl_ctx.load_verify_locations("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
+
+            def k8s_token():
+                with open("/var/run/secrets/kubernetes.io/serviceaccount/token") as f:
+                    return f.read().strip()
+
+            def kc_request(method, path, data=None, token=None, expect_json=True):
+                url = f"{KC_URL}{path}"
+                headers = {"Content-Type": "application/json"}
+                if token:
+                    headers["Authorization"] = f"Bearer {token}"
+                body = json.dumps(data).encode() if data else None
+                if method == "POST" and not data and "token" in path:
+                    headers["Content-Type"] = "application/x-www-form-urlencoded"
+                req = urllib.request.Request(url, data=body, headers=headers, method=method)
+                try:
+                    with urllib.request.urlopen(req, timeout=30) as resp:
+                        raw = resp.read().decode()
+                        if expect_json and raw:
+                            return json.loads(raw)
+                        return raw
+                except urllib.error.HTTPError as e:
+                    if e.code in (409, 404):
+                        return None
+                    print(f"HTTP {e.code}: {e.read().decode()[:500]}", file=sys.stderr)
+                    raise
+
+            def kc_form(path, data_str, token=None):
+                url = f"{KC_URL}{path}"
+                headers = {"Content-Type": "application/x-www-form-urlencoded"}
+                if token:
+                    headers["Authorization"] = f"Bearer {token}"
+                req = urllib.request.Request(url, data=data_str.encode(), headers=headers, method="POST")
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    return json.loads(resp.read().decode())
+
+            # Wait for Keycloak
+            print("Waiting for Keycloak...")
+            for i in range(120):
+                try:
+                    urllib.request.urlopen(f"{KC_URL}/realms/master", timeout=5)
+                    print("Keycloak is ready")
+                    break
+                except Exception:
+                    if i == 119:
+                        print("Keycloak not ready after 120 attempts", file=sys.stderr)
+                        sys.exit(1)
+                    time.sleep(2)
+
+            # Get admin token
+            resp = kc_form("/realms/master/protocol/openid-connect/token",
+                f"client_id=admin-cli&grant_type=password&username={ADMIN_USER}&password={ADMIN_PASS}")
+            admin_token = resp["access_token"]
+            print("Got admin token")
+
+            # Create groups
+            GROUPS = ["engineering", "software", "network", "kubernetes", "admin"]
+            group_ids = {}
+            for g in GROUPS:
+                existing = kc_request("GET", f"/admin/realms/{REALM}/groups?search={g}&exact=true", token=admin_token)
+                if existing and len(existing) > 0:
+                    group_ids[g] = existing[0]["id"]
+                    print(f"  Group exists: {g}")
+                else:
+                    try:
+                        req = urllib.request.Request(
+                            f"{KC_URL}/admin/realms/{REALM}/groups",
+                            data=json.dumps({"name": g}).encode(),
+                            headers={"Content-Type": "application/json", "Authorization": f"Bearer {admin_token}"},
+                            method="POST")
+                        with urllib.request.urlopen(req, timeout=30) as resp:
+                            loc = resp.headers.get("Location", "")
+                            gid = loc.rsplit("/", 1)[-1]
+                            group_ids[g] = gid
+                            print(f"  Created group: {g} ({gid})")
+                    except urllib.error.HTTPError as e:
+                        if e.code == 409:
+                            existing = kc_request("GET", f"/admin/realms/{REALM}/groups?search={g}&exact=true", token=admin_token)
+                            if existing:
+                                group_ids[g] = existing[0]["id"]
+                            print(f"  Group exists: {g}")
+                        else:
+                            raise
+
+            # Create users
+            USERS = [
+                ("carlos", "carlos@example.com", "carlos123", "Carlos", "Camacho", ["engineering", "software", "kubernetes"]),
+                ("luis", "luis@example.com", "luis123", "Luis", "Arizmendi", ["engineering", "network"]),
+                ("sharon", "sharon@example.com", "sharon123", "Sharon", "Admin", ["engineering", "software", "network", "kubernetes", "admin"]),
+                ("josh", "josh@example.com", "josh123", "Josh", "Restricted", []),
+            ]
+            for username, email, password, first, last, groups in USERS:
+                existing = kc_request("GET", f"/admin/realms/{REALM}/users?email={email}&exact=true", token=admin_token)
+                if existing and len(existing) > 0:
+                    uid = existing[0]["id"]
+                    print(f"  User exists: {email}")
+                else:
+                    try:
+                        req = urllib.request.Request(
+                            f"{KC_URL}/admin/realms/{REALM}/users",
+                            data=json.dumps({
+                                "username": username, "email": email,
+                                "firstName": first, "lastName": last,
+                                "emailVerified": True, "enabled": True,
+                            }).encode(),
+                            headers={"Content-Type": "application/json", "Authorization": f"Bearer {admin_token}"},
+                            method="POST")
+                        with urllib.request.urlopen(req, timeout=30) as resp:
+                            loc = resp.headers.get("Location", "")
+                            uid = loc.rsplit("/", 1)[-1]
+                            print(f"  Created user: {email}")
+                    except urllib.error.HTTPError as e:
+                        if e.code == 409:
+                            existing = kc_request("GET", f"/admin/realms/{REALM}/users?email={email}&exact=true", token=admin_token)
+                            uid = existing[0]["id"]
+                            print(f"  User exists: {email}")
+                        else:
+                            raise
+
+                    # Set password
+                    kc_request("PUT", f"/admin/realms/{REALM}/users/{uid}/reset-password",
+                        data={"type": "password", "value": password, "temporary": False},
+                        token=admin_token, expect_json=False)
+
+                    # Assign groups
+                    for g in groups:
+                        if g in group_ids:
+                            try:
+                                kc_request("PUT", f"/admin/realms/{REALM}/users/{uid}/groups/{group_ids[g]}",
+                                    token=admin_token, expect_json=False)
+                            except Exception:
+                                pass
+
+            # Configure confidential client + extract secret
+            print("\nConfiguring partner-agent-ui client...")
+            clients = kc_request("GET", f"/admin/realms/{REALM}/clients?clientId=partner-agent-ui", token=admin_token)
+            if not clients:
+                print("partner-agent-ui client not found!", file=sys.stderr)
+                sys.exit(1)
+            client_uuid = clients[0]["id"]
+
+            kc_request("PUT", f"/admin/realms/{REALM}/clients/{client_uuid}",
+                data={
+                    "id": client_uuid, "clientId": "partner-agent-ui",
+                    "enabled": True, "publicClient": False,
+                    "directAccessGrantsEnabled": True, "standardFlowEnabled": True,
+                    "serviceAccountsEnabled": True,
+                    "attributes": {
+                        "oauth2.token.exchange.grant.enabled": "true",
+                        "client.secret.creation.time": "0",
+                    },
+                }, token=admin_token, expect_json=False)
+            print("  Configured as confidential with token exchange")
+
+            # Enable management permissions
+            try:
+                kc_request("PUT", f"/admin/realms/{REALM}/clients/{client_uuid}/management/permissions",
+                    data={"enabled": True}, token=admin_token)
+            except Exception:
+                pass
+
+            # Get client secret
+            secret_resp = kc_request("GET", f"/admin/realms/{REALM}/clients/{client_uuid}/client-secret", token=admin_token)
+            client_secret = secret_resp.get("value", "") if secret_resp else ""
+            print(f"  Client secret: {client_secret[:20]}...")
+
+            # DCR Initial Access Token
+            dcr_iat = ""
+            if DCR_ENABLED:
+                print("\nConfiguring DCR...")
+                existing_iats = kc_request("GET", f"/admin/realms/{REALM}/clients-initial-access", token=admin_token) or []
+                iat_resp = kc_request("POST", f"/admin/realms/{REALM}/clients-initial-access",
+                    data={"count": 100, "expiration": 0}, token=admin_token)
+                if iat_resp and "token" in iat_resp:
+                    dcr_iat = iat_resp["token"]
+                    print(f"  DCR IAT created: {dcr_iat[:20]}...")
+
+                # Authorization services for token exchange
+                print("  Configuring token-exchange authorization...")
+                client_config = kc_request("GET", f"/admin/realms/{REALM}/clients/{client_uuid}", token=admin_token)
+                client_config["authorizationServicesEnabled"] = True
+                client_config["serviceAccountsEnabled"] = True
+                try:
+                    kc_request("PUT", f"/admin/realms/{REALM}/clients/{client_uuid}",
+                        data=client_config, token=admin_token, expect_json=False)
+                except Exception as e:
+                    print(f"  Warning: authz services setup: {e}")
+
+                # Create token-exchange scope
+                try:
+                    existing_scopes = kc_request("GET",
+                        f"/admin/realms/{REALM}/clients/{client_uuid}/authz/resource-server/scope?name=token-exchange",
+                        token=admin_token) or []
+                    if not existing_scopes:
+                        kc_request("POST",
+                            f"/admin/realms/{REALM}/clients/{client_uuid}/authz/resource-server/scope",
+                            data={"name": "token-exchange"}, token=admin_token)
+                        print("  Created token-exchange scope")
+                    else:
+                        print("  Token-exchange scope exists")
+
+                    # Create resource
+                    existing_res = kc_request("GET",
+                        f"/admin/realms/{REALM}/clients/{client_uuid}/authz/resource-server/resource?name=client.resource.{client_uuid}",
+                        token=admin_token) or []
+                    if not existing_res:
+                        kc_request("POST",
+                            f"/admin/realms/{REALM}/clients/{client_uuid}/authz/resource-server/resource",
+                            data={"name": f"client.resource.{client_uuid}", "type": "urn:token-exchange",
+                                  "ownerManagedAccess": False, "scopes": [{"name": "token-exchange"}]},
+                            token=admin_token)
+                        print("  Created token-exchange resource")
+
+                    # Create role policy for impersonation
+                    rm_clients = kc_request("GET", f"/admin/realms/{REALM}/clients?clientId=realm-management", token=admin_token) or []
+                    if rm_clients:
+                        rm_id = rm_clients[0]["id"]
+                        imp_role = kc_request("GET", f"/admin/realms/{REALM}/clients/{rm_id}/roles/impersonation", token=admin_token)
+                        if imp_role:
+                            existing_pol = kc_request("GET",
+                                f"/admin/realms/{REALM}/clients/{client_uuid}/authz/resource-server/policy?name=dcr-impersonation-role-policy",
+                                token=admin_token) or []
+                            if not existing_pol:
+                                kc_request("POST",
+                                    f"/admin/realms/{REALM}/clients/{client_uuid}/authz/resource-server/policy/role",
+                                    data={"name": "dcr-impersonation-role-policy", "logic": "POSITIVE",
+                                          "decisionStrategy": "UNANIMOUS",
+                                          "roles": [{"id": imp_role["id"], "required": True}]},
+                                    token=admin_token)
+                                print("  Created impersonation role policy")
+                except Exception as e:
+                    print(f"  Warning: token-exchange authz setup: {e}")
+
+            # Write results to K8s Secret
+            print(f"\nWriting seed results to K8s Secret {SECRET_NAME}...")
+            token = k8s_token()
+            secret_data = {
+                "client-secret": base64.b64encode(client_secret.encode()).decode(),
+                "dcr-initial-access-token": base64.b64encode(dcr_iat.encode()).decode(),
+            }
+            k8s_secret = {
+                "apiVersion": "v1", "kind": "Secret",
+                "metadata": {"name": SECRET_NAME, "namespace": NAMESPACE},
+                "type": "Opaque", "data": secret_data,
+            }
+            k8s_url = f"https://{K8S_HOST}:{K8S_PORT}/api/v1/namespaces/{NAMESPACE}/secrets/{SECRET_NAME}"
+            headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
+
+            # Try update first, then create
+            try:
+                req = urllib.request.Request(k8s_url, data=json.dumps(k8s_secret).encode(),
+                    headers=headers, method="PUT")
+                urllib.request.urlopen(req, timeout=10, context=ssl_ctx)
+                print("  Updated existing Secret")
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    create_url = f"https://{K8S_HOST}:{K8S_PORT}/api/v1/namespaces/{NAMESPACE}/secrets"
+                    req = urllib.request.Request(create_url, data=json.dumps(k8s_secret).encode(),
+                        headers=headers, method="POST")
+                    urllib.request.urlopen(req, timeout=10, context=ssl_ctx)
+                    print("  Created new Secret")
+                else:
+                    raise
+
+            print("\nKeycloak seeding complete!")
+        env:
+        - name: KEYCLOAK_URL
+          value: "http://{{ $fullName }}-keycloak:8080"
+        - name: KEYCLOAK_ADMIN_USERNAME
+          value: {{ .Values.keycloak.adminUsername | quote }}
+        - name: KEYCLOAK_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-keycloak-credentials
+              key: admin-password
+        - name: DCR_ENABLED
+          value: {{ .Values.dcr.enabled | quote }}
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: SECRET_NAME
+          value: {{ $fullName }}-seed-results
+        {{- if .Values.keycloakSeed.resources }}
+        resources:
+          {{- toYaml .Values.keycloakSeed.resources | nindent 10 }}
+        {{- end }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+{{- end }}

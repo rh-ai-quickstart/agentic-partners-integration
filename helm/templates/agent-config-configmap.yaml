@@ -12,3 +12,14 @@ data:
     description: "Handles Kubernetes issues, pod failures, deployment problems, cluster troubleshooting, container orchestration"
     departments: ["kubernetes"]
     endpoint: "http://{{ $fullName }}-kubernetes-agent:80/api/v1/agents/kubernetes-support/invoke"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullName }}-agent-capabilities
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+data:
+  agent_capabilities.yaml: |
+{{ .Files.Get "policies/agent_capabilities.yaml" | indent 4 }}
