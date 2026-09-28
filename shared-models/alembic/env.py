@@ -2,12 +2,13 @@
 
 from logging.config import fileConfig
 
+from sqlalchemy import pool
+
 from alembic import context
 
 # Import the shared database configuration
 from shared_models.database import get_db_config
 from shared_models.models import Base
-from sqlalchemy import pool
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

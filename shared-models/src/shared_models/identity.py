@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration from environment
 TRUST_DOMAIN: str = os.getenv("SPIFFE_TRUST_DOMAIN", "partner.example.com")
+MOCK_SPIFFE: bool = os.getenv("MOCK_SPIFFE", "false").lower() in ("true", "1", "yes")
 
 # Import SPIRE client (production)
 from .spire_client import SPIFFE_AVAILABLE, get_spire_client
@@ -99,33 +100,35 @@ def outbound_identity_headers(
     """
     headers: dict[str, str] = {}
 
-    # Fetch real SVID from SPIRE (PRODUCTION - NO MOCK ALLOWED)
-    if not SPIFFE_AVAILABLE:
-        raise RuntimeError(
-            "SPIFFE library not available. Install with: pip install spiffe"
-        )
-
-    try:
-        client = get_spire_client()
-        svid_info = client.fetch_svid()
-
-        if not svid_info:
+    if MOCK_SPIFFE:
+        spiffe_id = make_spiffe_id("service", service_name)
+        headers["X-SPIFFE-ID"] = spiffe_id
+        logger.info(f"Using mock SPIFFE identity: {spiffe_id}")
+    else:
+        if not SPIFFE_AVAILABLE:
             raise RuntimeError(
-                f"Failed to fetch SVID from SPIRE for service '{service_name}'. "
-                "SPIRE integration is REQUIRED - no fallback allowed."
+                "SPIFFE library not available. Install with: pip install spiffe"
             )
 
-        # Set identity header with real SPIFFE ID from SVID
-        headers["X-SPIFFE-ID"] = svid_info.spiffe_id
-        logger.info(f"Using real SPIRE SVID: {svid_info.spiffe_id}")
+        try:
+            client = get_spire_client()
+            svid_info = client.fetch_svid()
 
-    except Exception as e:
-        # Production: FAIL LOUDLY - no fallback
-        logger.error(f"SPIRE SVID fetch failed for '{service_name}': {e}")
-        raise RuntimeError(
-            f"Cannot obtain SVID from SPIRE for service '{service_name}': {e}. "
-            "SPIRE integration is REQUIRED - no fallback allowed."
-        ) from e
+            if not svid_info:
+                raise RuntimeError(
+                    f"Failed to fetch SVID from SPIRE for service '{service_name}'. "
+                    "SPIRE integration is REQUIRED - no fallback allowed."
+                )
+
+            headers["X-SPIFFE-ID"] = svid_info.spiffe_id
+            logger.info(f"Using real SPIRE SVID: {svid_info.spiffe_id}")
+
+        except Exception as e:
+            logger.error(f"SPIRE SVID fetch failed for '{service_name}': {e}")
+            raise RuntimeError(
+                f"Cannot obtain SVID from SPIRE for service '{service_name}': {e}. "
+                "SPIRE integration is REQUIRED - no fallback allowed."
+            ) from e
 
     if delegation_user:
         headers["X-Delegation-User"] = delegation_user

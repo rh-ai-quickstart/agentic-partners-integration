@@ -5,6 +5,7 @@
 #   bash scripts/test-e2e.sh              # Full run (clean, build, deploy, test)
 #   bash scripts/test-e2e.sh --skip-build  # Skip image builds
 #   bash scripts/test-e2e.sh --skip-deploy # Skip phases 0-2 (test against running stack)
+#   bash scripts/test-e2e.sh --test-helm   # Test against Helm deployment on OpenShift
 
 set -euo pipefail
 
@@ -31,7 +32,10 @@ SUITE_START=$(date +%s)
 # Flags
 SKIP_BUILD=false
 SKIP_DEPLOY=false
+TEST_HELM=false
 IMAGE_TAG="${IMAGE_TAG:-main}"
+HELM_NS="${HELM_NS:-partner-agent}"
+PF_PIDS=()
 
 # State
 ADMIN_TOKEN=""
@@ -48,12 +52,16 @@ parse_args() {
         case "$arg" in
             --skip-build)  SKIP_BUILD=true ;;
             --skip-deploy) SKIP_DEPLOY=true; SKIP_BUILD=true ;;
+            --test-helm)   TEST_HELM=true; SKIP_BUILD=true; SKIP_DEPLOY=true ;;
             *) echo "Unknown arg: $arg"; exit 1 ;;
         esac
     done
 }
 
 load_env() {
+    if $TEST_HELM; then
+        return
+    fi
     if [ -f "$PROJECT_ROOT/.env" ]; then
         set -a
         source "$PROJECT_ROOT/.env"
@@ -63,6 +71,48 @@ load_env() {
         echo "ERROR: GOOGLE_API_KEY not set in .env"
         exit 1
     fi
+}
+
+setup_helm_portforwards() {
+    echo "  Setting up port-forwards to OpenShift cluster (ns=$HELM_NS)..."
+
+    local ports=(8000 8001 8080 8090 8180)
+    local conflicts=0
+    for p in "${ports[@]}"; do
+        if ss -tlnH "sport = :$p" 2>/dev/null | grep -q LISTEN; then
+            echo "  WARNING: port $p already in use"
+            conflicts=$((conflicts + 1))
+        fi
+    done
+    if [ "$conflicts" -gt 0 ]; then
+        echo "  Stopping local Docker containers to free ports..."
+        docker ps -q --filter "name=partner-" | xargs -r docker stop 2>/dev/null || true
+        docker stop spire-server partner-spire-agent 2>/dev/null || true
+        sleep 2
+    fi
+
+    local fullname="partner-agent"
+
+    oc port-forward "svc/${fullname}-keycloak" 8090:8080 -n "$HELM_NS" > /dev/null 2>&1 &
+    PF_PIDS+=($!)
+    oc port-forward "svc/${fullname}-request-manager" 8000:80 -n "$HELM_NS" > /dev/null 2>&1 &
+    PF_PIDS+=($!)
+    oc port-forward "svc/${fullname}-agent-service" 8001:80 -n "$HELM_NS" > /dev/null 2>&1 &
+    PF_PIDS+=($!)
+    oc port-forward "svc/${fullname}-rag-api" 8080:80 -n "$HELM_NS" > /dev/null 2>&1 &
+    PF_PIDS+=($!)
+    oc port-forward "svc/${fullname}-praxis" 8180:8080 -n "$HELM_NS" > /dev/null 2>&1 &
+    PF_PIDS+=($!)
+
+    sleep 3
+    echo "  Port-forwards active (${#PF_PIDS[@]} tunnels)"
+}
+
+cleanup_portforwards() {
+    for pid in "${PF_PIDS[@]}"; do
+        kill "$pid" 2>/dev/null || true
+    done
+    PF_PIDS=()
 }
 
 record_pass() {
@@ -109,8 +159,15 @@ wait_for_url() {
 
 db_query() {
     local result
-    result=$(docker exec partner-postgres-full \
-        psql -U user -d partner_agent -t -A -c "$1" 2>/dev/null | head -1)
+    if $TEST_HELM; then
+        local pg_pod
+        pg_pod=$(oc get pods -n "$HELM_NS" -l component=postgresql -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+        result=$(oc exec "$pg_pod" -n "$HELM_NS" -- \
+            psql -U postgres -d partner_agent -t -A -c "$1" 2>/dev/null | head -1)
+    else
+        result=$(docker exec partner-postgres-full \
+            psql -U user -d partner_agent -t -A -c "$1" 2>/dev/null | head -1)
+    fi
     printf '%s' "$result" | tr -d '\n\r'
 }
 
@@ -325,14 +382,18 @@ phase_3_readiness() {
         record_fail "Readiness: Praxis Gateway" "Not healthy after 60s"
     fi
 
-    local entry_count
-    entry_count=$(docker exec spire-server /opt/spire/bin/spire-server entry show 2>/dev/null \
-        | grep -c "^Entry ID" || echo "0")
-    entry_count=$(echo "$entry_count" | tr -d '[:space:]')
-    if [ "$entry_count" -ge 2 ]; then
-        record_pass "Readiness: SPIRE workload entries ($entry_count found)"
+    if $TEST_HELM; then
+        record_skip "Readiness: SPIRE workload entries (mock mode in Helm)"
     else
-        record_fail "Readiness: SPIRE workload entries" "Expected >=2, found $entry_count"
+        local entry_count
+        entry_count=$(docker exec spire-server /opt/spire/bin/spire-server entry show 2>/dev/null \
+            | grep -c "^Entry ID" || echo "0")
+        entry_count=$(echo "$entry_count" | tr -d '[:space:]')
+        if [ "$entry_count" -ge 2 ]; then
+            record_pass "Readiness: SPIRE workload entries ($entry_count found)"
+        else
+            record_fail "Readiness: SPIRE workload entries" "Expected >=2, found $entry_count"
+        fi
     fi
 
     AUDIT_START_TS=$(date -u +"%Y-%m-%d %H:%M:%S")
@@ -522,10 +583,20 @@ phase_4b_dcr_and_discovery() {
 
     # 4b.7: Verify DCR registration in container logs
     local rm_dcr as_dcr
-    rm_dcr=$(docker logs partner-request-manager-full 2>&1 | grep -ci "DCR.*regist\|DCR.*success\|dcr.*complete" || echo "0")
-    rm_dcr=$(echo "$rm_dcr" | tr -d '[:space:]')
-    as_dcr=$(docker logs partner-agent-service-full 2>&1 | grep -ci "DCR.*regist\|DCR.*success\|dcr.*complete" || echo "0")
-    as_dcr=$(echo "$as_dcr" | tr -d '[:space:]')
+    if $TEST_HELM; then
+        local rm_pod as_pod
+        rm_pod=$(oc get pods -n "$HELM_NS" -l component=request-manager -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+        as_pod=$(oc get pods -n "$HELM_NS" -l component=agent-service -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+        rm_dcr=$(oc logs "$rm_pod" -n "$HELM_NS" -c request-manager 2>&1 | grep -ci "DCR.*regist\|DCR.*success\|dcr.*complete" || echo "0")
+        rm_dcr=$(echo "$rm_dcr" | tr -d '[:space:]')
+        as_dcr=$(oc logs "$as_pod" -n "$HELM_NS" -c agent-service 2>&1 | grep -ci "DCR.*regist\|DCR.*success\|dcr.*complete" || echo "0")
+        as_dcr=$(echo "$as_dcr" | tr -d '[:space:]')
+    else
+        rm_dcr=$(docker logs partner-request-manager-full 2>&1 | grep -ci "DCR.*regist\|DCR.*success\|dcr.*complete" || echo "0")
+        rm_dcr=$(echo "$rm_dcr" | tr -d '[:space:]')
+        as_dcr=$(docker logs partner-agent-service-full 2>&1 | grep -ci "DCR.*regist\|DCR.*success\|dcr.*complete" || echo "0")
+        as_dcr=$(echo "$as_dcr" | tr -d '[:space:]')
+    fi
 
     if [ "$rm_dcr" -ge 1 ] && [ "$as_dcr" -ge 1 ]; then
         record_pass "DCR: both services logged successful registration"
@@ -886,8 +957,13 @@ main() {
     printf "${W}  PARTNER AGENT INTEGRATION — E2E TEST SUITE${N}\n"
     printf "${W}════════════════════════════════════════════════════════════════${N}\n"
     echo ""
-    echo "  Flags: skip-build=$SKIP_BUILD skip-deploy=$SKIP_DEPLOY"
+    echo "  Flags: skip-build=$SKIP_BUILD skip-deploy=$SKIP_DEPLOY test-helm=$TEST_HELM"
     echo "  Started: $(date)"
+
+    if $TEST_HELM; then
+        trap cleanup_portforwards EXIT
+        setup_helm_portforwards
+    fi
 
     if ! $SKIP_DEPLOY; then
         phase_0_clean

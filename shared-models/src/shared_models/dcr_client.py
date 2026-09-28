@@ -22,13 +22,13 @@ migrating from legacy client_secret auth.
 
 
 import asyncio
-import logging
 import os
 from typing import Optional
 
 import httpx
+import structlog
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # ── Feature flag ──────────────────────────────────────────────────────────────
 # Default True — agents self-register on startup using Keycloak IAT.

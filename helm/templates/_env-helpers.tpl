@@ -52,6 +52,36 @@ Common environment variables for all services
 LLM environment variables
 */}}
 {{- define "partner-agent.llmEnvVars" }}
+- name: AI_API_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "partner-agent.fullname" . }}-llm-credentials
+      key: ai-api-key
+      optional: true
+- name: AI_GEMINI_API_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "partner-agent.fullname" . }}-llm-credentials
+      key: ai-gemini-api-key
+      optional: true
+- name: AI_OPENAI_API_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "partner-agent.fullname" . }}-llm-credentials
+      key: ai-openai-api-key
+      optional: true
+- name: AI_ANTHROPIC_API_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "partner-agent.fullname" . }}-llm-credentials
+      key: ai-anthropic-api-key
+      optional: true
+- name: AI_MODEL
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "partner-agent.fullname" . }}-llm-credentials
+      key: ai-model
+      optional: true
 - name: LLM_BACKEND
   valueFrom:
     secretKeyRef:

@@ -303,3 +303,21 @@ class TestOutboundIdentityHeaders:
 
         headers = outbound_identity_headers("request-manager", request_id=None)
         assert "X-Request-ID" not in headers
+
+    @patch("shared_models.identity.MOCK_SPIFFE", True)
+    def test_mock_spiffe_generates_synthetic_identity(self):
+        headers = outbound_identity_headers("request-manager")
+        assert headers["X-SPIFFE-ID"] == "spiffe://partner.example.com/service/request-manager"
+
+    @patch("shared_models.identity.MOCK_SPIFFE", True)
+    def test_mock_spiffe_with_delegation(self):
+        headers = outbound_identity_headers(
+            "request-manager",
+            delegation_user="spiffe://partner.example.com/user/alice",
+            delegation_agent="spiffe://partner.example.com/agent/k8s",
+            request_id="req-123",
+        )
+        assert headers["X-SPIFFE-ID"] == "spiffe://partner.example.com/service/request-manager"
+        assert headers["X-Delegation-User"] == "spiffe://partner.example.com/user/alice"
+        assert headers["X-Delegation-Agent"] == "spiffe://partner.example.com/agent/k8s"
+        assert headers["X-Request-ID"] == "req-123"

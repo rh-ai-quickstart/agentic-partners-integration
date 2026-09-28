@@ -36,6 +36,18 @@ spec:
           protocol: TCP
           name: http
         env:
+        - name: AI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-llm-credentials
+              key: ai-api-key
+              optional: true
+        - name: AI_GEMINI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-llm-credentials
+              key: ai-gemini-api-key
+              optional: true
         - name: GOOGLE_API_KEY
           valueFrom:
             secretKeyRef:

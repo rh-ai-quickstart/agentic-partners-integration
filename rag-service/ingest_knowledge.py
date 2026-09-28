@@ -8,6 +8,7 @@ Loads support tickets and documentation into PostgreSQL/pgvector for RAG.
 import asyncio
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
