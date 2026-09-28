@@ -27,14 +27,17 @@ fi
 
 cd "$PROJECT_ROOT"
 
+IMAGE_TAG="${IMAGE_TAG:-main}"
+export IMAGE_TAG
+
 # =============================================================================
 # STEP 1: Rebuild Containers (use cache for speed)
 # =============================================================================
 echo ""
-echo "[1/8] Rebuilding application containers (using cache)..."
+echo "[1/8] Rebuilding application containers (tag: ${IMAGE_TAG})..."
 if command -v docker &> /dev/null; then
     echo "  - Building request-manager..."
-    docker build -t partner-request-manager:latest -f request-manager/Containerfile . > /tmp/build-request-manager.log 2>&1
+    docker build -t partner-request-manager:${IMAGE_TAG} -f request-manager/Containerfile . > /tmp/build-request-manager.log 2>&1
     if [ $? -eq 0 ]; then
         echo "  ✓ Request Manager built"
     else
@@ -44,7 +47,7 @@ if command -v docker &> /dev/null; then
     fi
 
     echo "  - Building agent-service..."
-    docker build -t partner-agent-service:latest -f agent-service/Containerfile . > /tmp/build-agent-service.log 2>&1
+    docker build -t partner-agent-service:${IMAGE_TAG} -f agent-service/Containerfile . > /tmp/build-agent-service.log 2>&1
     if [ $? -eq 0 ]; then
         echo "  ✓ Agent Service built"
     else
@@ -53,10 +56,8 @@ if command -v docker &> /dev/null; then
         exit 1
     fi
 
-    # Rebuild RAG API (rag-service directory, partner-rag-api image)
-    # NOTE: Always rebuild with --no-cache to ensure no stale chromadb code (we use pgvector only)
     echo "  - Building rag-api (from rag-service/)..."
-    docker build --no-cache -t partner-rag-api:latest -f rag-service/Containerfile . > /tmp/build-rag-api.log 2>&1
+    docker build --no-cache -t partner-rag-api:${IMAGE_TAG} -f rag-service/Containerfile . > /tmp/build-rag-api.log 2>&1
     if [ $? -eq 0 ]; then
         echo "  ✓ RAG API built (pgvector only, no chromadb)"
     else
@@ -65,10 +66,9 @@ if command -v docker &> /dev/null; then
         exit 1
     fi
 
-    # Rebuild chat UI
     if [ -f "pf-chat-ui/Containerfile" ]; then
         echo "  - Building pf-chat-ui..."
-        docker build -t partner-pf-chat-ui:latest -f pf-chat-ui/Containerfile . > /tmp/build-pf-chat-ui.log 2>&1
+        docker build -t partner-pf-chat-ui:${IMAGE_TAG} -f pf-chat-ui/Containerfile . > /tmp/build-pf-chat-ui.log 2>&1
         if [ $? -eq 0 ]; then
             echo "  ✓ Chat UI built"
         else

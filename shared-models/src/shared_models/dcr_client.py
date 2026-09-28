@@ -50,6 +50,7 @@ _SPIRE_OIDC_JWKS = os.getenv(
     "SPIRE_OIDC_JWKS_URI",
     "http://spire-oidc-provider:8443/.well-known/jwks.json",
 )
+_SPIRE_AUTH_MODE = os.getenv("SPIRE_AUTH_MODE", "iat")
 # Retry config for startup race with Keycloak cold-start
 _DCR_MAX_RETRIES = int(os.getenv("DCR_MAX_RETRIES", "10"))
 _DCR_RETRY_DELAY = float(os.getenv("DCR_RETRY_DELAY_SECONDS", "3"))
@@ -161,25 +162,30 @@ class DCRClient:
         except Exception:
             return False
 
-    async def _register(self) -> None:
-        """POST RFC 7591 registration to Keycloak using the Initial Access Token.
+    def _get_jwt_svid_assertion(self) -> str | None:
+        """Fetch a JWT-SVID from SPIRE to use as client_assertion.
 
-        The IAT was created by seed-keycloak.sh and is passed via
-        KEYCLOAK_DCR_INITIAL_ACCESS_TOKEN.  The registered client uses
-        private_key_jwt auth backed by the SPIRE OIDC JWKS endpoint so the
-        agent authenticates with its SVID private key — no stored secrets.
+        Returns the JWT string, or None if SPIRE is unavailable.
         """
-        if not _DCR_INITIAL_ACCESS_TOKEN:
-            raise RuntimeError(
-                "Cannot DCR-register: KEYCLOAK_DCR_INITIAL_ACCESS_TOKEN is not set. "
-                "Ensure seed-keycloak.sh ran successfully before starting agents."
-            )
+        try:
+            from .spire_client import get_spire_client
+            spire = get_spire_client()
+            issuer_url = f"{_KEYCLOAK_BASE}/realms/{_KEYCLOAK_REALM}"
+            return spire.fetch_jwt_svid(audience=issuer_url)
+        except Exception as exc:
+            logger.debug("SPIFFE JWT-SVID fetch failed: %s", exc)
+            return None
 
-        # client_id is NOT included — Keycloak generates a UUID.
-        # The SPIFFE URI is stored in client_name (human-readable label)
-        # and in the "spiffe_id" attribute for our own lookup.
-        # Keycloak's DCR endpoint rejects user-supplied client_id values
-        # (error: "Client Identifier included").
+    async def _register(self) -> None:
+        """POST RFC 7591 registration to Keycloak.
+
+        Authentication depends on SPIRE_AUTH_MODE:
+        - ``iat`` (default): Uses the Initial Access Token from
+          KEYCLOAK_DCR_INITIAL_ACCESS_TOKEN as Authorization bearer.
+        - ``spiffe``: Uses a SPIRE JWT-SVID as ``client_assertion``
+          (RFC 7523), proving workload identity without a pre-shared
+          secret.  Falls back to IAT if SPIRE is unavailable.
+        """
         payload = {
             "client_name": f"{self._client_name} ({self._spiffe_id})",
             "grant_types": [
@@ -189,15 +195,40 @@ class DCRClient:
             "redirect_uris": [],
         }
 
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+
+        if _SPIRE_AUTH_MODE == "spiffe":
+            jwt_svid = self._get_jwt_svid_assertion()
+            if jwt_svid:
+                payload["token_endpoint_auth_method"] = "private_key_jwt"
+                payload["token_endpoint_auth_signing_alg"] = "RS256"
+                payload["jwks_uri"] = _SPIRE_OIDC_JWKS
+                headers["Authorization"] = f"Bearer {jwt_svid}"
+                logger.info("DCR registration using SPIFFE JWT-SVID assertion")
+            else:
+                logger.warning(
+                    "SPIRE_AUTH_MODE=spiffe but JWT-SVID unavailable — falling back to IAT"
+                )
+                if not _DCR_INITIAL_ACCESS_TOKEN:
+                    raise RuntimeError(
+                        "Cannot DCR-register: SPIFFE JWT-SVID unavailable and "
+                        "KEYCLOAK_DCR_INITIAL_ACCESS_TOKEN is not set."
+                    )
+                headers["Authorization"] = f"Bearer {_DCR_INITIAL_ACCESS_TOKEN}"
+        else:
+            if not _DCR_INITIAL_ACCESS_TOKEN:
+                raise RuntimeError(
+                    "Cannot DCR-register: KEYCLOAK_DCR_INITIAL_ACCESS_TOKEN is not set. "
+                    "Ensure seed-keycloak.sh ran successfully before starting agents."
+                )
+            headers["Authorization"] = f"Bearer {_DCR_INITIAL_ACCESS_TOKEN}"
+
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 resp = await client.post(
                     _DCR_ENDPOINT,
                     json=payload,
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {_DCR_INITIAL_ACCESS_TOKEN}",
-                    },
+                    headers=headers,
                 )
         except httpx.RequestError as e:
             raise RuntimeError(
@@ -228,9 +259,6 @@ class DCRClient:
             self._keycloak_client_id,
         )
 
-        # Keycloak 26+: DCR registers with standard.token.exchange.enabled (strict audience check).
-        # Switch to oauth2.token.exchange.grant.enabled (legacy, permissive) so the DCR client
-        # can exchange tokens issued for other clients (e.g. partner-agent-ui).
         await self._enable_legacy_token_exchange()
 
 

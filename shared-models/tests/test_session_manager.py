@@ -382,6 +382,75 @@ class TestCreateSessionRetryExhaustion:
         mock_db_session.rollback.assert_called_once()
 
 
+class TestCreateSessionFallbackRaise:
+    """Test for the fallback IntegrityError at end of retry loop (line 131)."""
+
+    async def test_raises_when_max_retries_zero(self, mock_db_session):
+        """With max_retries=0, the for loop never runs, hitting the fallback raise."""
+        manager = BaseSessionManager(mock_db_session)
+
+        session_data = SessionCreate(
+            user_id="user-123",
+            integration_type="WEB",
+        )
+
+        with pytest.raises(IntegrityError):
+            await manager.create_session(session_data, max_retries=0)
+
+
+class TestUpdateSessionKwargsStatus:
+    """Test for backward compat status in kwargs (line 223).
+
+    Line 223 guards against callers who pass status via **kwargs. Since
+    Python binds 'status' to the named parameter in normal call syntax,
+    we use co_posonlyargcount to make all named params positional-only,
+    so 'status' as a keyword arg lands in **kwargs.
+    """
+
+    async def test_kwargs_status_branch(self, mock_db_session):
+        """Exercise the elif 'status' in kwargs branch (line 223)."""
+        import types
+
+        manager = BaseSessionManager(mock_db_session)
+
+        mock_updated_row = _make_mock_session_row()
+        mock_updated_row.version = 1
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_updated_row
+        mock_db_session.execute.return_value = mock_result
+
+        with patch(
+            "shared_models.session_manager.SessionResponse.model_validate"
+        ) as mock_validate:
+            mock_validate.return_value = MagicMock(session_id="sess-123")
+
+            original = BaseSessionManager.update_session
+            # Make all 8 params (self through expected_version) positional-only.
+            # Then 'status' as a keyword goes to **kwargs instead.
+            modified_code = original.__code__.replace(co_posonlyargcount=8)
+            modified_fn = types.FunctionType(
+                modified_code,
+                original.__globals__,
+                original.__name__,
+                original.__defaults__,
+                original.__closure__,
+            )
+
+            result = await modified_fn(
+                manager,
+                "sess-123",
+                None,  # agent_id (positional-only)
+                None,  # conversation_thread_id (positional-only)
+                None,  # status param (positional-only, remains None)
+                None,  # conversation_context (positional-only)
+                None,  # user_context (positional-only)
+                None,  # expected_version (positional-only)
+                status="INACTIVE",  # goes to **kwargs, exercises line 223
+            )
+
+        assert result is not None
+
+
 class TestIncrementRequestCount:
     """Tests for BaseSessionManager.increment_request_count()."""
 

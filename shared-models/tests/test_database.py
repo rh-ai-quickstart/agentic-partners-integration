@@ -615,3 +615,66 @@ class TestGetDbSessionDependency:
 
         mock_session.rollback.assert_called_once()
         mock_session.close.assert_called_once()
+
+
+class TestGetDbConfig:
+    """Tests for get_db_config() module-level function (line 283)."""
+
+    def test_returns_config(self, monkeypatch):
+        """get_db_config returns the config from the global manager."""
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+
+        import shared_models.database as db_module
+        db_module._db_manager = None
+
+        try:
+            config = db_module.get_db_config()
+            assert config is db_module.get_database_manager().config
+        finally:
+            db_module._db_manager = None
+
+
+class TestWaitForMigrationExceptionBranch:
+    """Tests for wait_for_migration() exception branch (lines 247-253)."""
+
+    async def test_exception_during_query_retries(self, monkeypatch):
+        """When execute raises an exception, it retries with sleep."""
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        monkeypatch.delenv("EXPECTED_MIGRATION_VERSION", raising=False)
+
+        manager = DatabaseManager.__new__(DatabaseManager)
+
+        mock_session = AsyncMock()
+
+        # First call: raises exception (covers lines 247-253)
+        # Second call: returns version row (success)
+        exc_result = Exception("table does not exist")
+
+        mock_version_result = MagicMock()
+        mock_version_row = MagicMock()
+        mock_version_row.__getitem__ = MagicMock(return_value="abc123")
+        mock_version_result.fetchone.return_value = mock_version_row
+
+        call_count = 0
+
+        async def execute_side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise exc_result
+            return mock_version_result
+
+        mock_session.execute = AsyncMock(side_effect=execute_side_effect)
+        mock_session.rollback = AsyncMock()
+        mock_session.close = AsyncMock()
+
+        mock_session_ctx = AsyncMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+        manager.async_session = MagicMock(return_value=mock_session_ctx)
+
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            result = await manager.wait_for_migration(timeout=30)
+
+        assert result is True
+        assert call_count >= 2

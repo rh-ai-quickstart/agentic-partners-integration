@@ -146,6 +146,30 @@ class TestResolveCanonicalUserId:
         )
         assert result == expected_uid
 
+    async def test_uuid_constraint_error_retry_finds_nothing(self, mock_db_session):
+        """UUID user creation fails with constraint error, retry lookup finds nothing -> re-raise (line 279)."""
+        uid = str(uuid.uuid4())
+
+        # First execute: user does not exist
+        mock_result_none = MagicMock()
+        mock_result_none.scalar_one_or_none.return_value = None
+
+        # flush raises a unique constraint error
+        mock_db_session.flush = AsyncMock(
+            side_effect=Exception("unique constraint violation")
+        )
+
+        # Retry lookup: still no user found
+        mock_result_still_none = MagicMock()
+        mock_result_still_none.scalar_one_or_none.return_value = None
+
+        mock_db_session.execute = AsyncMock(
+            side_effect=[mock_result_none, mock_result_still_none]
+        )
+
+        with pytest.raises(Exception, match="unique constraint violation"):
+            await resolve_canonical_user_id(uid, db=mock_db_session)
+
 
 class TestEnsureEmailMapping:
     """Tests for _ensure_email_mapping()."""

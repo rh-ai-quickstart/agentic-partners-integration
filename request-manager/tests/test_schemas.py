@@ -142,6 +142,17 @@ class TestBaseRequest:
         )
         assert req.integration_type == IntegrationType.WEB
 
+    def test_normalize_integration_type_non_string_passthrough(self):
+        """Non-string values pass through the validator unchanged (line 25)."""
+        # Pass an integer — the before-validator returns it as-is (line 25),
+        # then pydantic's own coercion rejects it.
+        with pytest.raises(ValidationError):
+            BaseRequest(
+                integration_type=42,
+                user_id="user1",
+                content="content",
+            )
+
     def test_invalid_integration_type(self):
         """An invalid integration_type string should raise ValidationError."""
         with pytest.raises(ValidationError):

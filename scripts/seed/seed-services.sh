@@ -7,6 +7,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+IMAGE_TAG="${IMAGE_TAG:-main}"
 
 echo "════════════════════════════════════════════════════════════"
 echo "STARTING APPLICATION SERVICES"
@@ -49,7 +50,7 @@ docker run --rm --name partner-db-migrate \
     --network partner-agent-network \
     -e DATABASE_URL="$DB_URL" \
     -w /app \
-    partner-request-manager:latest \
+    partner-request-manager:${IMAGE_TAG} \
     bash -c "cd /app/shared-models && python3 -m alembic upgrade head" 2>&1 | grep -E "INFO|upgrade|ERROR" || true
 echo "  OK Migrations complete"
 echo ""
@@ -69,7 +70,7 @@ docker run -d \
     -e "DATABASE_URL=$DB_URL" \
     -e "EMBEDDING_MODEL=models/gemini-embedding-001" \
     -e "LLM_MODEL=gemini-2.5-flash" \
-    partner-rag-api:latest > /dev/null
+    partner-rag-api:${IMAGE_TAG} > /dev/null
 
 echo "  OK RAG API started"
 sleep 3
@@ -107,7 +108,7 @@ docker run -d \
     -e "KEYCLOAK_ADMIN_USERNAME=${KEYCLOAK_ADMIN_USERNAME:-admin}" \
     -e "KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin123}" \
     -e "POLICY_CAPABILITIES_PATH=/etc/praxis/agent_capabilities.yaml" \
-    partner-agent-service:latest > /dev/null
+    partner-agent-service:${IMAGE_TAG} > /dev/null
 
 echo "  OK Agent Service started"
 sleep 3
@@ -175,7 +176,7 @@ docker run -d \
     -e "KEYCLOAK_ADMIN_USERNAME=${KEYCLOAK_ADMIN_USERNAME:-admin}" \
     -e "KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin123}" \
     -e "POLICY_CAPABILITIES_PATH=/etc/praxis/agent_capabilities.yaml" \
-    partner-request-manager:latest > /dev/null
+    partner-request-manager:${IMAGE_TAG} > /dev/null
 
 echo "  OK Request Manager started"
 sleep 3
@@ -192,7 +193,7 @@ docker run -d \
     --name partner-pf-chat-ui-full \
     --network partner-agent-network \
     -p 3000:8080 \
-    partner-pf-chat-ui:latest > /dev/null
+    partner-pf-chat-ui:${IMAGE_TAG} > /dev/null
 
 echo "  OK Web UI started"
 sleep 2

@@ -421,3 +421,176 @@ class TestAdkAuditLog:
         with pytest.raises(HTTPException) as exc_info:
             await adk_audit_log(http_request, limit=50, db=db)
         assert exc_info.value.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# adk_chat — act_claim extraction (line 122)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestAdkChatActClaim:
+    """Tests for act_claim extraction in adk_chat (line 122)."""
+
+    @patch(
+        "request_manager.adk_endpoints._append_conversation_turn",
+        new_callable=AsyncMock,
+    )
+    @patch("request_manager.adk_endpoints.UnifiedRequestProcessor")
+    @patch("request_manager.adk_endpoints.get_communication_strategy")
+    @patch("request_manager.adk_endpoints.AAAMiddleware")
+    @patch("request_manager.adk_endpoints.decode_token")
+    async def test_adk_chat_with_act_claim(
+        self,
+        mock_decode,
+        mock_aaa,
+        mock_get_strategy,
+        mock_processor_cls,
+        mock_append,
+    ):
+        """When token has act claim, it is included in user_context (line 122)."""
+        from request_manager.adk_endpoints import ADKChatRequest, ADKUser, adk_chat
+
+        mock_decode.return_value = {
+            "email": "user@example.com",
+            "act": {"sub": "gateway-svc"},
+        }
+
+        mock_aaa.get_user_context = AsyncMock(
+            return_value={
+                "email": "user@example.com",
+                "role": "user",
+                "departments": ["engineering"],
+            }
+        )
+
+        mock_processor = AsyncMock()
+        mock_processor.process_request_sync = AsyncMock(
+            return_value={
+                "content": "Response text",
+                "agent_id": "routing-agent",
+                "session_id": "sess-act",
+                "metadata": {},
+            }
+        )
+        mock_processor_cls.return_value = mock_processor
+
+        http_request = MagicMock()
+        http_request.headers = {"Authorization": "Bearer valid-token"}
+
+        db = AsyncMock()
+        request = ADKChatRequest(
+            message="Hello agent!",
+            user=ADKUser(email="user@example.com"),
+        )
+
+        result = await adk_chat(request, http_request, db)
+        assert result.response == "Response text"
+
+        # Verify process_request_sync was called and the request's metadata
+        # includes user_context with act_claim
+        call_args = mock_processor.process_request_sync.call_args
+        web_request = call_args[0][0]  # First positional arg is the WebRequest
+        user_ctx = web_request.metadata.get("user_context", {})
+        assert user_ctx.get("act_claim") == {"sub": "gateway-svc"}
+
+
+# ---------------------------------------------------------------------------
+# adk_chat — _append_conversation_turn failure (lines 180-181)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestAdkChatConversationTurnFailure:
+    """Tests for _append_conversation_turn failure in adk_chat (lines 180-181)."""
+
+    @patch("request_manager.adk_endpoints.UnifiedRequestProcessor")
+    @patch("request_manager.adk_endpoints.get_communication_strategy")
+    @patch("request_manager.adk_endpoints.AAAMiddleware")
+    @patch("request_manager.adk_endpoints.decode_token")
+    async def test_conversation_turn_failure_does_not_break_response(
+        self,
+        mock_decode,
+        mock_aaa,
+        mock_get_strategy,
+        mock_processor_cls,
+    ):
+        """When _append_conversation_turn fails, chat still returns response (lines 180-181)."""
+        from request_manager.adk_endpoints import ADKChatRequest, ADKUser, adk_chat
+
+        mock_decode.return_value = {"email": "user@example.com"}
+
+        mock_aaa.get_user_context = AsyncMock(
+            return_value={
+                "email": "user@example.com",
+                "role": "user",
+                "departments": [],
+            }
+        )
+
+        mock_processor = AsyncMock()
+        mock_processor.process_request_sync = AsyncMock(
+            return_value={
+                "content": "Response text",
+                "agent_id": "routing-agent",
+                "session_id": "sess-fail",
+                "metadata": {},
+            }
+        )
+        mock_processor_cls.return_value = mock_processor
+
+        http_request = MagicMock()
+        http_request.headers = {"Authorization": "Bearer valid-token"}
+
+        db = AsyncMock()
+        request = ADKChatRequest(
+            message="Hello",
+            user=ADKUser(email="user@example.com"),
+        )
+
+        # Make _append_conversation_turn raise an error
+        with patch(
+            "request_manager.adk_endpoints._append_conversation_turn",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("DB write failed"),
+        ):
+            result = await adk_chat(request, http_request, db)
+
+        # Response should still be returned despite conversation turn failure
+        assert result.response == "Response text"
+
+
+# ---------------------------------------------------------------------------
+# adk_audit_log — general exception (lines 356-358)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestAdkAuditLogException:
+    """Tests for adk_audit_log general exception path (lines 356-358)."""
+
+    @patch("request_manager.adk_endpoints.AAAService")
+    @patch("request_manager.adk_endpoints.decode_token")
+    async def test_audit_log_general_exception_raises_500(self, mock_decode, mock_aaa):
+        """When an unexpected exception occurs, raise 500 (lines 356-358)."""
+        from request_manager.adk_endpoints import adk_audit_log
+
+        mock_decode.return_value = {"email": "user@example.com"}
+
+        mock_user = MagicMock()
+        mock_user.user_id = "uid-1"
+        mock_user.role = MagicMock()
+        mock_user.role.value = "user"
+        mock_aaa.get_user_by_email = AsyncMock(return_value=mock_user)
+
+        db = AsyncMock()
+        # Make DB execute raise an unexpected error
+        db.execute = AsyncMock(side_effect=RuntimeError("Database connection lost"))
+
+        http_request = MagicMock()
+        http_request.headers = {"Authorization": "Bearer valid"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await adk_audit_log(http_request, limit=50, db=db)
+        assert exc_info.value.status_code == 500
+        assert "Failed to get audit log" in exc_info.value.detail

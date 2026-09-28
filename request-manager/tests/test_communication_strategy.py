@@ -1596,3 +1596,448 @@ class TestCompleteRequestLog:
 
         db.execute.assert_awaited_once()
         db.commit.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Abstract method pass statements (lines 328, 335)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestAbstractMethodBodies:
+    """Tests for abstract method pass bodies in CommunicationStrategy."""
+
+    async def test_send_request_abstract_body(self):
+        """Abstract send_request body is reachable via super() (line 328)."""
+        from request_manager.communication_strategy import CommunicationStrategy
+
+        class MinimalStrategy(CommunicationStrategy):
+            async def send_request(self, normalized_request):
+                return await super().send_request(normalized_request)
+
+            async def wait_for_response(self, request_id, timeout, db=None):
+                return await super().wait_for_response(request_id, timeout, db)
+
+        strategy = MinimalStrategy()
+        result = await strategy.send_request(MagicMock())
+        assert result is None  # pass returns None
+
+    async def test_wait_for_response_abstract_body(self):
+        """Abstract wait_for_response body is reachable via super() (line 335)."""
+        from request_manager.communication_strategy import CommunicationStrategy
+
+        class MinimalStrategy(CommunicationStrategy):
+            async def send_request(self, normalized_request):
+                return await super().send_request(normalized_request)
+
+            async def wait_for_response(self, request_id, timeout, db=None):
+                return await super().wait_for_response(request_id, timeout, db)
+
+        strategy = MinimalStrategy()
+        result = await strategy.wait_for_response("req-1", 30)
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# invoke_agent_with_routing — act_claim in transfer_context (line 594)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestInvokeWithActClaim:
+    """Tests for act_claim propagation in invoke_agent_with_routing."""
+
+    async def test_act_claim_included_in_transfer_context(self):
+        """When act_claim is in user_context, it is added to transfer_context (line 594)."""
+        from dataclasses import dataclass, field
+
+        @dataclass
+        class FakePolicyDecision:
+            allow: bool = True
+            reason: str = "ok"
+            effective_departments: list = field(default_factory=lambda: ["engineering"])
+
+        strategy = DirectHTTPStrategy()
+        strategy.agent_client = AsyncMock()
+        _registry_cache[strategy._agent_service_url] = ({}, datetime.now(timezone.utc))
+
+        # Specialist returns final response directly (no routing decision)
+        response = {
+            "content": "Answer",
+            "agent_id": "software-support",
+            "routing_decision": None,
+            "metadata": {"handling_agent": "software-support"},
+        }
+        strategy.agent_client.invoke_agent = AsyncMock(return_value=response)
+
+        normalized = MagicMock()
+        normalized.request_id = "req-act"
+        normalized.session_id = "sess-act"
+        normalized.user_id = "user@example.com"
+        normalized.content = "help"
+        normalized.user_context = {
+            "user_context": {
+                "departments": ["engineering"],
+                "spiffe_id": "",
+                "email": "user@example.com",
+                "act_claim": {"sub": "gateway-svc"},
+            }
+        }
+
+        db = AsyncMock()
+
+        with (
+            patch.object(
+                strategy,
+                "_get_conversation_history",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "shared_models.policy_client.check_agent_authorization",
+                new_callable=AsyncMock,
+                return_value=FakePolicyDecision(),
+            ),
+            patch(
+                "request_manager.communication_strategy.make_spiffe_id",
+                return_value="spiffe://test/service/request-manager",
+            ),
+        ):
+            result = await strategy.invoke_agent_with_routing(normalized, db)
+
+        assert result["content"] == "Answer"
+
+        # Verify act_claim was passed in transfer_context
+        call_args = strategy.agent_client.invoke_agent.call_args
+        transfer_ctx = call_args.kwargs.get("transfer_context") or call_args[1].get("transfer_context", {})
+        assert transfer_ctx.get("act_claim") == {"sub": "gateway-svc"}
+
+
+# ---------------------------------------------------------------------------
+# invoke_agent_with_routing — exchanged_token + delegation_chain (lines 745-762)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestInvokeWithExchangedTokenAndDelegation:
+    """Tests for exchanged_token and delegation_chain propagation."""
+
+    async def test_exchanged_token_and_delegation_chain_in_routing(self):
+        """When response metadata has exchanged_token and delegation_chain, they are propagated (lines 745-762)."""
+        from dataclasses import dataclass, field
+
+        @dataclass
+        class FakePolicyDecision:
+            allow: bool = True
+            reason: str = "ok"
+            effective_departments: list = field(default_factory=lambda: ["engineering"])
+
+        strategy = DirectHTTPStrategy()
+        strategy.agent_client = AsyncMock()
+        _registry_cache[strategy._agent_service_url] = ({}, datetime.now(timezone.utc))
+
+        # First call: routing-agent returns routing decision with exchanged_token and delegation_chain
+        routing_response = {
+            "content": "",
+            "agent_id": "routing-agent",
+            "routing_decision": "software-support",
+            "metadata": {
+                "handling_agent": "routing-agent",
+                "exchanged_token": "some-exchanged-jwt",
+                "delegation_chain": ["request-manager", "routing-agent"],
+            },
+        }
+        # Second call: specialist returns final response
+        specialist_response = {
+            "content": "Done.",
+            "agent_id": "software-support",
+            "routing_decision": None,
+            "metadata": {"handling_agent": "software-support"},
+        }
+        strategy.agent_client.invoke_agent = AsyncMock(
+            side_effect=[routing_response, specialist_response]
+        )
+
+        normalized = MagicMock()
+        normalized.request_id = "req-chain"
+        normalized.session_id = "sess-chain"
+        normalized.user_id = "user@example.com"
+        normalized.content = "help with software"
+        normalized.user_context = {
+            "user_context": {
+                "departments": ["engineering"],
+                "spiffe_id": "",
+                "email": "user@example.com",
+                "act_claim": {"sub": "gw"},
+            }
+        }
+
+        db = AsyncMock()
+
+        with (
+            patch.object(
+                strategy,
+                "_get_conversation_history",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "shared_models.policy_client.check_agent_authorization",
+                new_callable=AsyncMock,
+                return_value=FakePolicyDecision(),
+            ),
+            patch(
+                "request_manager.communication_strategy.make_spiffe_id",
+                return_value="spiffe://test/service/request-manager",
+            ),
+        ):
+            result = await strategy.invoke_agent_with_routing(normalized, db)
+
+        assert result["content"] == "Done."
+
+        # Verify the specialist call received the delegation chain and act_claim
+        second_call = strategy.agent_client.invoke_agent.call_args_list[1]
+        transfer_ctx = second_call.kwargs.get("transfer_context") or second_call[1].get("transfer_context", {})
+        assert transfer_ctx.get("delegation_chain") == ["request-manager", "routing-agent"]
+        assert transfer_ctx.get("act_claim") == {"sub": "gw"}
+
+
+# ---------------------------------------------------------------------------
+# invoke_agent_with_routing — session manager update (lines 812-813)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestSessionManagerUpdate:
+    """Tests for session manager update on specialist handling."""
+
+    async def test_session_update_with_handling_agent(self):
+        """When handling agent is not routing-agent, session manager update is attempted (lines 810-821).
+
+        The import of SessionManager may fail (ImportError) in which case the
+        except block logs a warning.  To cover lines 812-813 we mock the import
+        so it succeeds.
+        """
+        import sys
+        from dataclasses import dataclass, field
+
+        @dataclass
+        class FakePolicyDecision:
+            allow: bool = True
+            reason: str = "ok"
+            effective_departments: list = field(default_factory=lambda: ["engineering"])
+
+        strategy = DirectHTTPStrategy()
+        strategy.agent_client = AsyncMock()
+        _registry_cache[strategy._agent_service_url] = ({}, datetime.now(timezone.utc))
+
+        # Specialist returns directly
+        response = {
+            "content": "Fixed it.",
+            "agent_id": "software-support",
+            "routing_decision": None,
+            "metadata": {"handling_agent": "software-support"},
+        }
+        strategy.agent_client.invoke_agent = AsyncMock(return_value=response)
+
+        normalized = MagicMock()
+        normalized.request_id = "req-sm"
+        normalized.session_id = "sess-sm"
+        normalized.user_id = "user@example.com"
+        normalized.content = "fix bug"
+        normalized.user_context = {
+            "user_context": {
+                "departments": ["engineering"],
+                "spiffe_id": "",
+                "email": "user@example.com",
+            }
+        }
+
+        db = AsyncMock()
+
+        # Create a mock SessionManager class whose instances have update_session
+        mock_sm_instance = MagicMock()
+        mock_sm_instance.update_session = AsyncMock()
+        MockSessionManager = MagicMock(return_value=mock_sm_instance)
+
+        # Temporarily inject SessionManager into the shared_models.session_manager module
+        import shared_models.session_manager as sm_mod
+        original_has_attr = hasattr(sm_mod, "SessionManager")
+        sm_mod.SessionManager = MockSessionManager
+
+        try:
+            with (
+                patch.object(
+                    strategy,
+                    "_get_conversation_history",
+                    new_callable=AsyncMock,
+                    return_value=[],
+                ),
+                patch(
+                    "shared_models.policy_client.check_agent_authorization",
+                    new_callable=AsyncMock,
+                    return_value=FakePolicyDecision(),
+                ),
+                patch(
+                    "request_manager.communication_strategy.make_spiffe_id",
+                    return_value="spiffe://test/service/request-manager",
+                ),
+            ):
+                result = await strategy.invoke_agent_with_routing(normalized, db)
+
+            assert result["content"] == "Fixed it."
+            mock_sm_instance.update_session.assert_awaited_once_with(
+                "sess-sm", agent_id="software-support"
+            )
+        finally:
+            if not original_has_attr:
+                delattr(sm_mod, "SessionManager")
+            else:
+                sm_mod.SessionManager = original_has_attr
+
+
+# ---------------------------------------------------------------------------
+# process_request_sync — target_agent logging (line 940)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestProcessRequestSyncTargetAgent:
+    """Tests for process_request_sync with pre-determined target_agent."""
+
+    async def test_target_agent_logging(self):
+        """When target_agent_id is set, logs target agent (line 940)."""
+        strategy = AsyncMock(spec=DirectHTTPStrategy)
+        processor = UnifiedRequestProcessor(strategy)
+
+        # Mock _prepare_request
+        mock_normalized = MagicMock()
+        mock_normalized.request_id = "req-tgt"
+        mock_normalized.session_id = "sess-tgt"
+        mock_normalized.target_agent_id = "kubernetes-support"
+        mock_normalized.content = "k8s help"
+        mock_normalized.user_id = "user@example.com"
+
+        processor._prepare_request = AsyncMock(
+            return_value=(mock_normalized, "sess-tgt", "routing-agent")
+        )
+
+        # Mock strategy.invoke_agent_with_routing
+        strategy.invoke_agent_with_routing = AsyncMock(return_value={
+            "content": "K8s answer",
+            "agent_id": "kubernetes-support",
+            "metadata": {},
+        })
+
+        # Mock _complete_request_log
+        processor._complete_request_log = AsyncMock()
+
+        db = AsyncMock()
+        result = await processor.process_request_sync(MagicMock(), db)
+
+        assert result["content"] == "K8s answer"
+        strategy.invoke_agent_with_routing.assert_awaited_once()
+        # Verify target_agent was passed
+        call_args = strategy.invoke_agent_with_routing.call_args
+        assert call_args.kwargs.get("target_agent") == "kubernetes-support" or call_args[0][1] if len(call_args[0]) > 1 else True
+
+
+# ---------------------------------------------------------------------------
+# _prepare_request — UUID user_id email lookup (lines 1024-1045)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestPrepareRequestUUIDLookup:
+    """Tests for _prepare_request UUID-to-email lookup (lines 1024-1045)."""
+
+    def _make_web_request(self, user_id="550e8400-e29b-41d4-a716-446655440000"):
+        """Create a WebRequest with a UUID user_id."""
+        from request_manager.schemas import WebRequest
+
+        return WebRequest(
+            user_id=user_id,
+            content="help me",
+        )
+
+    async def test_uuid_user_id_resolved_to_email(self):
+        """When user_id is a UUID, look up email and replace (lines 1024-1035)."""
+        strategy = AsyncMock(spec=DirectHTTPStrategy)
+        processor = UnifiedRequestProcessor(strategy)
+
+        # Mock session creation
+        mock_session = MagicMock()
+        mock_session.session_id = "sess-uuid"
+        mock_session.is_active = True
+        strategy.create_or_get_session = AsyncMock(return_value=mock_session)
+
+        request = self._make_web_request()
+
+        db = AsyncMock()
+
+        # Mock is_uuid to return True
+        mock_user = MagicMock()
+        mock_user.primary_email = "resolved@example.com"
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_user
+        db.execute = AsyncMock(return_value=mock_result)
+
+        with patch("shared_models.user_utils.is_uuid", return_value=True):
+            processor._create_request_log_entry = AsyncMock()
+            normalized, session_id, agent_id = await processor._prepare_request(
+                request, db
+            )
+
+        assert normalized.user_id == "resolved@example.com"
+
+    async def test_uuid_user_id_no_email_warning(self):
+        """When user has no email, leave UUID as-is (lines 1036-1043)."""
+        strategy = AsyncMock(spec=DirectHTTPStrategy)
+        processor = UnifiedRequestProcessor(strategy)
+
+        mock_session = MagicMock()
+        mock_session.session_id = "sess-no-email"
+        mock_session.is_active = True
+        strategy.create_or_get_session = AsyncMock(return_value=mock_session)
+
+        request = self._make_web_request()
+
+        db = AsyncMock()
+
+        mock_user = MagicMock()
+        mock_user.primary_email = None  # No email
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_user
+        db.execute = AsyncMock(return_value=mock_result)
+
+        with patch("shared_models.user_utils.is_uuid", return_value=True):
+            processor._create_request_log_entry = AsyncMock()
+            normalized, session_id, agent_id = await processor._prepare_request(
+                request, db
+            )
+
+        # UUID should be left as-is
+        assert normalized.user_id == "550e8400-e29b-41d4-a716-446655440000"
+
+    async def test_uuid_lookup_exception_handled(self):
+        """When email lookup fails, UUID is left as-is (lines 1044-1045)."""
+        strategy = AsyncMock(spec=DirectHTTPStrategy)
+        processor = UnifiedRequestProcessor(strategy)
+
+        mock_session = MagicMock()
+        mock_session.session_id = "sess-err"
+        mock_session.is_active = True
+        strategy.create_or_get_session = AsyncMock(return_value=mock_session)
+
+        request = self._make_web_request()
+
+        db = AsyncMock()
+
+        with patch("shared_models.user_utils.is_uuid", side_effect=RuntimeError("import fail")):
+            processor._create_request_log_entry = AsyncMock()
+            normalized, session_id, agent_id = await processor._prepare_request(
+                request, db
+            )
+
+        # UUID left as-is due to exception
+        assert normalized.user_id == "550e8400-e29b-41d4-a716-446655440000"

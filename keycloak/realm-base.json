@@ -28,7 +28,86 @@
   },
   "groups": [],
   "users": [],
+  "identityProviders": [
+    {
+      "alias": "spiffe",
+      "displayName": "SPIFFE/SPIRE Workload Identity",
+      "providerId": "oidc",
+      "enabled": true,
+      "trustEmail": true,
+      "config": {
+        "clientId": "spiffe-federation",
+        "clientAuthMethod": "private_key_jwt",
+        "useJwksUrl": "true",
+        "jwksUrl": "http://spire-oidc-provider:8443/keys",
+        "tokenUrl": "",
+        "authorizationUrl": "",
+        "issuer": "https://oidc-discovery.partner.example.com",
+        "defaultScope": "openid",
+        "syncMode": "IMPORT",
+        "validateSignature": "true"
+      }
+    }
+  ],
   "clients": [
+    {
+      "clientId": "agent-service",
+      "name": "Agent Service (audience-only target)",
+      "description": "Audience-only target client for RFC 8693 token exchange — agent-service validates tokens scoped to this audience",
+      "enabled": true,
+      "publicClient": false,
+      "bearerOnly": true,
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "protocol": "openid-connect",
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "introspection.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "kubernetes-agent",
+      "name": "Kubernetes Agent (audience-only target)",
+      "description": "Audience-only target client for RFC 8693 token exchange",
+      "enabled": true,
+      "publicClient": false,
+      "bearerOnly": true,
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "protocol": "openid-connect",
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "introspection.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups"
+          }
+        }
+      ]
+    },
     {
       "clientId": "partner-agent-ui",
       "name": "Partner Agent UI Client",
@@ -55,6 +134,7 @@
         "+"
       ],
       "defaultClientScopes": [
+        "basic",
         "web-origins",
         "acr",
         "profile",
@@ -70,7 +150,7 @@
       "attributes": {
         "access.token.lifespan": "1800",
         "pkce.code.challenge.method": "S256",
-        "oauth2.token.exchange.grant.enabled": "true"
+        "standard.token.exchange.enabled": "true"
       },
       "protocolMappers": [
         {
@@ -89,27 +169,34 @@
           }
         },
         {
-          "name": "dynamic-audience-mapper",
+          "name": "audience-resolve",
           "protocol": "openid-connect",
-          "protocolMapper": "oidc-script-based-protocol-mapper",
+          "protocolMapper": "oidc-audience-resolve-mapper",
+          "consentRequired": false,
+          "config": {}
+        },
+        {
+          "name": "audience-agent-service",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
           "consentRequired": false,
           "config": {
-            "script": "var requestedSubject = session.getContext().getAuthenticationSession().getClientNote('requested_subject'); if (requestedSubject) { token.addAudience(requestedSubject); }",
+            "included.client.audience": "agent-service",
             "id.token.claim": "false",
             "access.token.claim": "true",
-            "userinfo.token.claim": "false"
+            "introspection.token.claim": "true"
           }
         },
         {
-          "name": "act-delegation-chain-mapper",
+          "name": "audience-kubernetes-agent",
           "protocol": "openid-connect",
-          "protocolMapper": "oidc-script-based-protocol-mapper",
+          "protocolMapper": "oidc-audience-mapper",
           "consentRequired": false,
           "config": {
-            "script": "var actorToken = session.getContext().getAuthenticationSession().getClientNote('actor_token'); if (actorToken) { var act = JSON.parse(actorToken); token.getOtherClaims().put('act', act); }",
+            "included.client.audience": "kubernetes-agent",
             "id.token.claim": "false",
             "access.token.claim": "true",
-            "userinfo.token.claim": "false"
+            "introspection.token.claim": "true"
           }
         }
       ]

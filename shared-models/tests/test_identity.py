@@ -264,3 +264,42 @@ class TestOutboundIdentityHeaders:
         assert "X-SPIFFE-ID" in headers
         assert "X-Delegation-User" in headers
         assert "X-Delegation-Agent" in headers
+
+    @patch("shared_models.identity.get_spire_client")
+    @patch("shared_models.identity.SPIFFE_AVAILABLE", True)
+    def test_request_id_header_when_provided(self, mock_get_spire):
+        mock_client = MagicMock()
+        mock_svid = MagicMock()
+        mock_svid.spiffe_id = "spiffe://test.example.com/service/request-manager"
+        mock_client.fetch_svid.return_value = mock_svid
+        mock_get_spire.return_value = mock_client
+
+        headers = outbound_identity_headers(
+            "request-manager",
+            request_id="req-abc-123",
+        )
+        assert headers["X-Request-ID"] == "req-abc-123"
+
+    @patch("shared_models.identity.get_spire_client")
+    @patch("shared_models.identity.SPIFFE_AVAILABLE", True)
+    def test_no_request_id_header_when_omitted(self, mock_get_spire):
+        mock_client = MagicMock()
+        mock_svid = MagicMock()
+        mock_svid.spiffe_id = "spiffe://test.example.com/service/request-manager"
+        mock_client.fetch_svid.return_value = mock_svid
+        mock_get_spire.return_value = mock_client
+
+        headers = outbound_identity_headers("request-manager")
+        assert "X-Request-ID" not in headers
+
+    @patch("shared_models.identity.get_spire_client")
+    @patch("shared_models.identity.SPIFFE_AVAILABLE", True)
+    def test_no_request_id_header_when_none(self, mock_get_spire):
+        mock_client = MagicMock()
+        mock_svid = MagicMock()
+        mock_svid.spiffe_id = "spiffe://test.example.com/service/request-manager"
+        mock_client.fetch_svid.return_value = mock_svid
+        mock_get_spire.return_value = mock_client
+
+        headers = outbound_identity_headers("request-manager", request_id=None)
+        assert "X-Request-ID" not in headers

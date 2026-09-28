@@ -81,6 +81,7 @@ def outbound_identity_headers(
     service_name: str,
     delegation_user: Optional[str] = None,
     delegation_agent: Optional[str] = None,
+    request_id: Optional[str] = None,
 ) -> dict[str, str]:
     """Build identity headers for outgoing service-to-service requests.
 
@@ -91,6 +92,7 @@ def outbound_identity_headers(
         service_name: Name of the calling service (e.g. "request-manager")
         delegation_user: SPIFFE ID of the user who delegated access (optional)
         delegation_agent: SPIFFE ID of the agent acting on behalf of user (optional)
+        request_id: Correlation ID propagated across service calls (optional)
 
     Raises:
         RuntimeError: If SPIRE SVID fetch fails (production - no fallback allowed)
@@ -129,5 +131,7 @@ def outbound_identity_headers(
         headers["X-Delegation-User"] = delegation_user
     if delegation_agent:
         headers["X-Delegation-Agent"] = delegation_agent
+    if request_id:
+        headers["X-Request-ID"] = request_id
 
     return headers

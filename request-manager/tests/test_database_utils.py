@@ -254,3 +254,31 @@ class TestExpireOldSessions:
 
         assert count == 0
         mock_db_session.rollback.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# cleanup_old_sessions — empty sessions_to_deactivate (line 154)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestCleanupEmptyDeactivateList:
+    """Test for line 154: empty sessions_to_deactivate check."""
+
+    async def test_single_session_returns_zero_early(self, mock_db_session):
+        """When exactly one session exists, sessions_to_deactivate is empty (line 154)."""
+        # This case is covered by `len(all_sessions) <= 1` at line 144.
+        # Line 154 (`if not sessions_to_deactivate`) is actually unreachable
+        # because the for loop always adds sessions when len > 1.
+        # However, we can still test the <= 1 early return:
+        sess = MagicMock()
+        sess.session_id = "only-sess"
+        scalars_mock = MagicMock()
+        scalars_mock.all.return_value = [sess]
+        result_mock = MagicMock()
+        result_mock.scalars.return_value = scalars_mock
+        mock_db_session.execute = AsyncMock(return_value=result_mock)
+
+        count = await cleanup_old_sessions(mock_db_session, "user-1")
+
+        assert count == 0

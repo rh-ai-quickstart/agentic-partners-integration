@@ -90,30 +90,20 @@ publish:
 .PHONY: stop
 stop:
 	@echo "Stopping all containers..."
-	@if command -v docker-compose >/dev/null 2>&1; then \
-		docker-compose down; \
-	elif docker compose version >/dev/null 2>&1; then \
-		docker compose down; \
-	else \
-		echo "Stopping containers manually..."; \
-		docker stop $$(docker ps -q --filter "name=partner-") 2>/dev/null || true; \
-	fi
+	@docker stop $$(docker ps -q --filter "name=partner-") 2>/dev/null || true
+	@docker stop spire-server 2>/dev/null || true
 	@echo "✓ All containers stopped"
 
 .PHONY: clean
 clean:
 	@echo "Stopping and removing all containers, networks, and volumes..."
-	@if command -v docker-compose >/dev/null 2>&1; then \
-		docker-compose down -v; \
-	elif docker compose version >/dev/null 2>&1; then \
-		docker compose down -v; \
-	else \
-		echo "Removing containers manually..."; \
-		docker stop $$(docker ps -q --filter "name=partner-") 2>/dev/null || true; \
-		docker rm $$(docker ps -aq --filter "name=partner-") 2>/dev/null || true; \
-		docker volume rm $$(docker volume ls -q --filter "name=partner-") 2>/dev/null || true; \
-		docker network rm partner-agent-network 2>/dev/null || true; \
-	fi
+	@docker stop $$(docker ps -q --filter "name=partner-") 2>/dev/null || true
+	@docker stop spire-server 2>/dev/null || true
+	@docker rm $$(docker ps -aq --filter "name=partner-") 2>/dev/null || true
+	@docker rm spire-server 2>/dev/null || true
+	@docker volume rm $$(docker volume ls -q --filter "name=partner-") 2>/dev/null || true
+	@docker volume rm spire-socket 2>/dev/null || true
+	@docker network rm partner-agent-network 2>/dev/null || true
 	@echo "✓ Clean complete"
 
 # ============================================================

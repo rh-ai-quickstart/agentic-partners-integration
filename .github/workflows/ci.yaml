@@ -39,16 +39,16 @@ jobs:
           cd ../kubernetes-partner-agent && uv sync --quiet
 
       - name: Run shared-models tests
-        run: cd shared-models && uv run python -m pytest tests/ --cov=shared_models --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=97 -q
+        run: cd shared-models && uv run python -m pytest tests/ --cov=shared_models --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=100 -q
 
       - name: Run agent-service tests
-        run: cd agent-service && uv run python -m pytest tests/ --cov=agent_service --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=99 -q
+        run: cd agent-service && uv run python -m pytest tests/ --cov=agent_service --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=100 -q
 
       - name: Run request-manager tests
-        run: cd request-manager && uv run python -m pytest tests/ --cov=request_manager --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=97 -q
+        run: cd request-manager && uv run python -m pytest tests/ --cov=request_manager --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=100 -q
 
       - name: Run kubernetes-partner-agent tests
-        run: cd kubernetes-partner-agent && uv run python -m pytest tests/ --cov=kubernetes_agent --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=97 -q
+        run: cd kubernetes-partner-agent && uv run python -m pytest tests/ --cov=kubernetes_agent --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=100 -q
 
       - name: Run agent-service A2A protocol E2E
         run: cd agent-service && uv run python test_a2a_e2e.py
@@ -139,6 +139,22 @@ jobs:
           cd ../request-manager && uv lock --check
           cd ../kubernetes-partner-agent && uv lock --check
 
+  helm-lint:
+    name: Helm Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Lint chart
+        run: helm lint helm/
+
+      - name: Template chart
+        run: helm template test-release helm/ > /dev/null
+
   e2e-tests:
     name: E2E Tests
     runs-on: ubuntu-latest
@@ -152,7 +168,7 @@ jobs:
         timeout-minutes: 15
 
       - name: Run E2E tests
-        run: bash scripts/test.sh
+        run: bash scripts/test-e2e.sh --skip-build
         timeout-minutes: 5
 
       - name: Dump logs on failure

@@ -126,12 +126,13 @@ class TestAgentClient403Handling:
         mock_resp.raise_for_status.side_effect = error
         client.client.post = AsyncMock(return_value=mock_resp)
 
-        result = await client.invoke_agent(
-            agent_name="test-agent",
-            session_id="s1",
-            user_id="user@example.com",
-            message="help",
-        )
+        with mock_infra():
+            result = await client.invoke_agent(
+                agent_name="test-agent",
+                session_id="s1",
+                user_id="user@example.com",
+                message="help",
+            )
 
         assert "unavailable" in result["content"]
         assert "status 500" in result["content"]
@@ -150,12 +151,13 @@ class TestAgentClient403Handling:
         mock_resp.raise_for_status.side_effect = httpx.ConnectError("Connection refused")
         client.client.post = AsyncMock(return_value=mock_resp)
 
-        result = await client.invoke_agent(
-            agent_name="test-agent",
-            session_id="s1",
-            user_id="user@example.com",
-            message="help",
-        )
+        with mock_infra():
+            result = await client.invoke_agent(
+                agent_name="test-agent",
+                session_id="s1",
+                user_id="user@example.com",
+                message="help",
+            )
 
         assert "could not be reached" in result["content"]
         assert result["agent_id"] == "test-agent"

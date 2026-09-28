@@ -104,6 +104,15 @@ curl -s -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${CLIENT_UUID}" \
 
 echo "  ✓ Token exchange enabled with proper attributes"
 
+# Ensure 'basic' scope is assigned (Keycloak 26+ requires it for 'sub' claim)
+BASIC_SCOPE_ID=$(curl -s "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" | jq -r '.[] | select(.name=="basic") | .id // empty')
+if [ -n "$BASIC_SCOPE_ID" ]; then
+    curl -s -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${CLIENT_UUID}/default-client-scopes/${BASIC_SCOPE_ID}" \
+        -H "Authorization: Bearer $ADMIN_TOKEN" 2>/dev/null
+    echo "  ✓ 'basic' scope assigned (sub claim enabled)"
+fi
+
 # Get client secret
 echo ""
 echo "[3/3] Fetching client secret..."

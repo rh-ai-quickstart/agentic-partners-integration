@@ -107,6 +107,17 @@ class TestTokenIdExtraction:
         assert TokenAuditTracker.extract_token_id("") == "empty_token_id"
         assert TokenAuditTracker.extract_token_id(None) == "empty_token_id"
 
+    @patch("request_manager.audit_token_tracker.jwt.decode")
+    def test_extract_token_id_generic_exception(self, mock_decode):
+        """Generic Exception during jti extraction falls back to hash (lines 129-131)."""
+        mock_decode.side_effect = TypeError("unexpected type error")
+
+        token = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjMifQ.sig"
+        token_id = TokenAuditTracker.extract_token_id(token)
+
+        # Should fall back to hash
+        assert token_id.startswith("hash_")
+
     @patch("request_manager.audit_token_tracker.jwt")
     def test_extract_token_id_consistency(self, mock_jwt):
         """Extract token ID returns consistent hash for same token."""

@@ -180,12 +180,13 @@ class TestEnhancedAgentClient:
         )
         client.client.post = AsyncMock(return_value=mock_resp)
 
-        result = await client.invoke_agent(
-            agent_name="bad-agent",
-            session_id="s1",
-            user_id="u1",
-            message="oops",
-        )
+        with mock_infra():
+            result = await client.invoke_agent(
+                agent_name="bad-agent",
+                session_id="s1",
+                user_id="u1",
+                message="oops",
+            )
 
         assert "unavailable" in result["content"]
         assert result["agent_id"] == "bad-agent"
@@ -420,3 +421,288 @@ class TestEnhancedAgentClient:
         assert payload["user_id"] == "bob@example.com"
         assert payload["message"] == "What is the status?"
         assert payload["transfer_context"]["key"] == "val"
+
+    # -- Token exchange with delegation (current_token) ---------------------
+
+    @patch("request_manager.agent_client_enhanced.CredentialService")
+    async def test_invoke_agent_with_current_token_delegation(self, mock_cred):
+        """When current_token is provided, use exchange_with_delegation (lines 180-226)."""
+        import jwt as pyjwt
+
+        mock_cred.get_token.return_value = None  # Not used when current_token is given
+
+        client = self._make_client()
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"content": "ok"}
+        mock_resp.raise_for_status = MagicMock()
+        client.client.post = AsyncMock(return_value=mock_resp)
+
+        # Create a realistic token with act claim
+        current_tok = pyjwt.encode(
+            {"sub": "svc-1", "aud": "agent-a", "act": {"sub": "gateway"}, "exp": 9999999999},
+            "secret",
+            algorithm="HS256",
+        )
+
+        with mock_infra():
+            await client.invoke_agent(
+                agent_name="agent-b",
+                session_id="s1",
+                user_id="u1",
+                message="msg",
+                current_token=current_tok,
+            )
+
+        call_kwargs = client.client.post.call_args
+        headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
+        assert headers.get("Authorization") == "Bearer exchanged-test-token"
+
+    @patch("request_manager.agent_client_enhanced.CredentialService")
+    async def test_invoke_agent_current_token_with_bearer_prefix(self, mock_cred):
+        """current_token with Bearer prefix is stripped (line 168)."""
+        mock_cred.get_token.return_value = None
+
+        client = self._make_client()
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"content": "ok"}
+        mock_resp.raise_for_status = MagicMock()
+        client.client.post = AsyncMock(return_value=mock_resp)
+
+        with mock_infra():
+            await client.invoke_agent(
+                agent_name="agent-b",
+                session_id="s1",
+                user_id="u1",
+                message="msg",
+                current_token="Bearer some-jwt-token",
+            )
+
+        call_kwargs = client.client.post.call_args
+        headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
+        assert headers.get("Authorization") == "Bearer exchanged-test-token"
+
+    @patch("request_manager.agent_client_enhanced.CredentialService")
+    async def test_invoke_agent_current_token_decode_error(self, mock_cred):
+        """When current_token cannot be decoded, exchange proceeds (lines 195-201)."""
+        mock_cred.get_token.return_value = None
+
+        client = self._make_client()
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"content": "ok"}
+        mock_resp.raise_for_status = MagicMock()
+        client.client.post = AsyncMock(return_value=mock_resp)
+
+        with mock_infra():
+            await client.invoke_agent(
+                agent_name="agent-b",
+                session_id="s1",
+                user_id="u1",
+                message="msg",
+                current_token="not-a-valid-jwt",
+            )
+
+        # Should still succeed
+        call_kwargs = client.client.post.call_args
+        headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
+        assert "Authorization" in headers
+
+    @patch("request_manager.agent_client_enhanced.CredentialService")
+    async def test_invoke_agent_short_exchanged_token(self, mock_cred):
+        """When exchanged token is shorter than 28 chars, use full token_id (line 239)."""
+        mock_cred.get_token.return_value = "test-user-token"
+
+        client = self._make_client()
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"content": "ok"}
+        mock_resp.raise_for_status = MagicMock()
+        client.client.post = AsyncMock(return_value=mock_resp)
+
+        mock_te = MagicMock()
+        mock_te.exchange_for_agent = AsyncMock(return_value={
+            "access_token": "short",  # < 28 chars
+            "token_type": "Bearer",
+        })
+        with patch(
+            "request_manager.agent_client_enhanced.TokenExchangeClient",
+            return_value=mock_te,
+        ), patch(
+            "request_manager.agent_client_enhanced.outbound_identity_headers",
+            return_value={"X-SPIFFE-ID": "spiffe://test/service/request-manager"},
+        ):
+            await client.invoke_agent(
+                agent_name="agent-x",
+                session_id="s1",
+                user_id="u1",
+                message="msg",
+            )
+
+        # Should succeed without error
+        call_kwargs = client.client.post.call_args
+        headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
+        assert headers.get("Authorization") == "Bearer short"
+
+    # -- Long token ID formatting (lines 215, 239) --------------------------
+
+    @patch("request_manager.agent_client_enhanced.CredentialService")
+    async def test_invoke_agent_long_token_delegation_path(self, mock_cred):
+        """When delegation exchange returns a long token (>= 28 chars), token_id uses first20...last8 (line 215)."""
+        import jwt as pyjwt
+
+        mock_cred.get_token.return_value = None
+
+        client = self._make_client()
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"content": "ok"}
+        mock_resp.raise_for_status = MagicMock()
+        client.client.post = AsyncMock(return_value=mock_resp)
+
+        current_tok = pyjwt.encode(
+            {"sub": "svc-1", "aud": "agent-a", "act": {"sub": "gateway"}, "exp": 9999999999},
+            "secret",
+            algorithm="HS256",
+        )
+
+        long_token = "A" * 40  # >= 28 chars to hit line 215
+        mock_te = MagicMock()
+        mock_te.exchange_with_delegation = AsyncMock(return_value={
+            "access_token": long_token,
+            "token_type": "Bearer",
+            "delegation_chain": [],
+        })
+        with patch(
+            "request_manager.agent_client_enhanced.TokenExchangeClient",
+            return_value=mock_te,
+        ), patch(
+            "request_manager.agent_client_enhanced.outbound_identity_headers",
+            return_value={"X-SPIFFE-ID": "spiffe://test/service/request-manager"},
+        ):
+            await client.invoke_agent(
+                agent_name="agent-b",
+                session_id="s1",
+                user_id="u1",
+                message="msg",
+                current_token=current_tok,
+            )
+
+        call_kwargs = client.client.post.call_args
+        headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
+        assert headers.get("Authorization") == f"Bearer {long_token}"
+
+    @patch("request_manager.agent_client_enhanced.CredentialService")
+    async def test_invoke_agent_long_token_first_hop_path(self, mock_cred):
+        """When first-hop exchange returns a long token (>= 28 chars), token_id uses first20...last8 (line 239)."""
+        mock_cred.get_token.return_value = "test-user-token"
+
+        client = self._make_client()
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"content": "ok"}
+        mock_resp.raise_for_status = MagicMock()
+        client.client.post = AsyncMock(return_value=mock_resp)
+
+        long_token = "B" * 40  # >= 28 chars to hit line 239
+        mock_te = MagicMock()
+        mock_te.exchange_for_agent = AsyncMock(return_value={
+            "access_token": long_token,
+            "token_type": "Bearer",
+        })
+        with patch(
+            "request_manager.agent_client_enhanced.TokenExchangeClient",
+            return_value=mock_te,
+        ), patch(
+            "request_manager.agent_client_enhanced.outbound_identity_headers",
+            return_value={"X-SPIFFE-ID": "spiffe://test/service/request-manager"},
+        ):
+            await client.invoke_agent(
+                agent_name="agent-x",
+                session_id="s1",
+                user_id="u1",
+                message="msg",
+            )
+
+        call_kwargs = client.client.post.call_args
+        headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
+        assert headers.get("Authorization") == f"Bearer {long_token}"
+
+    # -- Token exchange error handling (lines 250-277) ----------------------
+
+    @patch("request_manager.agent_client_enhanced.CredentialService")
+    async def test_invoke_agent_token_exchange_error_raises_runtime(self, mock_cred):
+        """TokenExchangeError during exchange raises RuntimeError (lines 250-264)."""
+        from request_manager.token_exchange import TokenExchangeError
+
+        mock_cred.get_token.return_value = "test-user-token"
+
+        client = self._make_client()
+
+        mock_te = MagicMock()
+        mock_te.exchange_for_agent = AsyncMock(
+            side_effect=TokenExchangeError(
+                "exchange failed",
+                status_code=401,
+                detail="Invalid token",
+            )
+        )
+        with patch(
+            "request_manager.agent_client_enhanced.TokenExchangeClient",
+            return_value=mock_te,
+        ), patch(
+            "request_manager.agent_client_enhanced.outbound_identity_headers",
+            return_value={"X-SPIFFE-ID": "spiffe://test/service/request-manager"},
+        ):
+            with pytest.raises(RuntimeError, match="Token exchange failed"):
+                await client.invoke_agent(
+                    agent_name="agent-x",
+                    session_id="s1",
+                    user_id="u1",
+                    message="msg",
+                )
+
+    @patch("request_manager.agent_client_enhanced.CredentialService")
+    async def test_invoke_agent_unexpected_exchange_error_raises_runtime(self, mock_cred):
+        """Unexpected exception during exchange raises RuntimeError (lines 265-277)."""
+        mock_cred.get_token.return_value = "test-user-token"
+
+        client = self._make_client()
+
+        mock_te = MagicMock()
+        mock_te.exchange_for_agent = AsyncMock(
+            side_effect=ValueError("something unexpected")
+        )
+        with patch(
+            "request_manager.agent_client_enhanced.TokenExchangeClient",
+            return_value=mock_te,
+        ), patch(
+            "request_manager.agent_client_enhanced.outbound_identity_headers",
+            return_value={"X-SPIFFE-ID": "spiffe://test/service/request-manager"},
+        ):
+            with pytest.raises(RuntimeError, match="Unexpected error"):
+                await client.invoke_agent(
+                    agent_name="agent-x",
+                    session_id="s1",
+                    user_id="u1",
+                    message="msg",
+                )
+
+    # -- Unreachable "no exchanged token" branch (line 296) -----------------
+
+    @patch("request_manager.agent_client_enhanced.CredentialService")
+    async def test_invoke_agent_no_subject_token_raises_runtime(self, mock_cred):
+        """When subject_token is None/empty, no exchange happens and RuntimeError raised (line 296)."""
+        mock_cred.get_token.return_value = None  # No token at all
+
+        client = self._make_client()
+
+        with mock_infra():
+            with pytest.raises(RuntimeError, match="No exchanged token available"):
+                await client.invoke_agent(
+                    agent_name="agent-x",
+                    session_id="s1",
+                    user_id="u1",
+                    message="msg",
+                )

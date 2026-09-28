@@ -141,11 +141,19 @@ SPIRE/SPIFFE environment variables
   value: {{ .Values.spire.trustDomain | default "partner.example.com" | quote }}
 - name: SPIFFE_ENDPOINT_SOCKET
   value: "/run/spire/sockets/agent.sock"
+- name: SPIRE_AUTH_MODE
+  value: {{ .Values.spire.authenticationMode | default "iat" | quote }}
+- name: SPIRE_REQUIRED
+  value: {{ .Values.spire.required | default false | quote }}
 {{- else }}
 - name: MOCK_SPIFFE
   value: "true"
 - name: SPIFFE_TRUST_DOMAIN
   value: {{ .Values.spire.trustDomain | default "partner.example.com" | quote }}
+- name: SPIRE_AUTH_MODE
+  value: "iat"
+- name: SPIRE_REQUIRED
+  value: "false"
 {{- end }}
 {{- end }}
 

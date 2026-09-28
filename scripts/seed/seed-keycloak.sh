@@ -195,6 +195,70 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Audience-only target clients for RFC 8693 token exchange
+# ---------------------------------------------------------------------------
+echo ""
+echo "Creating audience-only target clients..."
+AUDIENCE_CLIENTS=("agent-service" "kubernetes-agent")
+
+# Get partner-agent-ui UUID for adding audience mappers
+PAU_UUID=$(curl -sf "${KEYCLOAK_URL}/admin/realms/${REALM}/clients?clientId=partner-agent-ui" \
+    -H "Authorization: Bearer ${ADMIN_TOKEN}" | jq -r '.[0].id // empty')
+
+for aud_client in "${AUDIENCE_CLIENTS[@]}"; do
+    AUD_EXISTS=$(curl -sf "${KEYCLOAK_URL}/admin/realms/${REALM}/clients?clientId=${aud_client}" \
+        -H "Authorization: Bearer ${ADMIN_TOKEN}" | jq -r '.[0].id // empty')
+
+    if [ -z "$AUD_EXISTS" ]; then
+        curl -sf -X POST "${KEYCLOAK_URL}/admin/realms/${REALM}/clients" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{
+                \"clientId\": \"${aud_client}\",
+                \"name\": \"${aud_client} (audience-only target)\",
+                \"enabled\": true,
+                \"publicClient\": false,
+                \"bearerOnly\": true,
+                \"directAccessGrantsEnabled\": false,
+                \"standardFlowEnabled\": false,
+                \"serviceAccountsEnabled\": false,
+                \"protocol\": \"openid-connect\"
+            }"
+        echo "  OK Created audience client: ${aud_client}"
+    else
+        echo "  - Audience client exists: ${aud_client}"
+    fi
+
+    # Add explicit audience mapper on partner-agent-ui for this target
+    if [ -n "$PAU_UUID" ]; then
+        MAPPER_NAME="audience-${aud_client}"
+        MAPPER_EXISTS=$(curl -sf "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${PAU_UUID}/protocol-mappers/models" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" | jq -r --arg n "$MAPPER_NAME" '.[] | select(.name==$n) | .id // empty')
+
+        if [ -z "$MAPPER_EXISTS" ]; then
+            curl -sf -X POST "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${PAU_UUID}/protocol-mappers/models" \
+                -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+                -H "Content-Type: application/json" \
+                -d "{
+                    \"name\": \"${MAPPER_NAME}\",
+                    \"protocol\": \"openid-connect\",
+                    \"protocolMapper\": \"oidc-audience-mapper\",
+                    \"consentRequired\": false,
+                    \"config\": {
+                        \"included.client.audience\": \"${aud_client}\",
+                        \"id.token.claim\": \"false\",
+                        \"access.token.claim\": \"true\",
+                        \"introspection.token.claim\": \"true\"
+                    }
+                }"
+            echo "  OK Added audience mapper: ${MAPPER_NAME}"
+        else
+            echo "  - Audience mapper exists: ${MAPPER_NAME}"
+        fi
+    fi
+done
+
+# ---------------------------------------------------------------------------
 # Social login identity providers (Google, GitHub, Microsoft)
 # All three are optional.  Each is skipped when its env vars are not set.
 # When credentials ARE present the provider is created (or left untouched if

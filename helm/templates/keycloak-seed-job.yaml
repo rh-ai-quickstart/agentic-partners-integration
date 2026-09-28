@@ -244,23 +244,38 @@ spec:
                     "directAccessGrantsEnabled": True, "standardFlowEnabled": True,
                     "serviceAccountsEnabled": True,
                     "attributes": {
-                        "oauth2.token.exchange.grant.enabled": "true",
+                        "standard.token.exchange.enabled": "true",
                         "client.secret.creation.time": "0",
                     },
                 }, token=admin_token, expect_json=False)
-            print("  Configured as confidential with token exchange")
-
-            # Enable management permissions
-            try:
-                kc_request("PUT", f"/admin/realms/{REALM}/clients/{client_uuid}/management/permissions",
-                    data={"enabled": True}, token=admin_token)
-            except Exception:
-                pass
+            print("  Configured as confidential with V2 standard token exchange")
 
             # Get client secret
             secret_resp = kc_request("GET", f"/admin/realms/{REALM}/clients/{client_uuid}/client-secret", token=admin_token)
             client_secret = secret_resp.get("value", "") if secret_resp else ""
             print(f"  Client secret: {client_secret[:20]}...")
+
+            # Create audience-only target clients for RFC 8693 V2 exchange
+            AUDIENCE_CLIENTS = ["agent-service", "kubernetes-agent"]
+            print("\nCreating audience-only target clients...")
+            for ac in AUDIENCE_CLIENTS:
+                existing_ac = kc_request("GET", f"/admin/realms/{REALM}/clients?clientId={ac}", token=admin_token) or []
+                if existing_ac:
+                    print(f"  Audience client exists: {ac}")
+                else:
+                    try:
+                        kc_request("POST", f"/admin/realms/{REALM}/clients",
+                            data={
+                                "clientId": ac,
+                                "name": f"{ac} (audience-only target)",
+                                "enabled": True, "publicClient": False,
+                                "bearerOnly": True, "directAccessGrantsEnabled": False,
+                                "standardFlowEnabled": False, "serviceAccountsEnabled": False,
+                                "protocol": "openid-connect",
+                            }, token=admin_token)
+                        print(f"  Created audience client: {ac}")
+                    except Exception as e:
+                        print(f"  Warning: audience client {ac}: {e}")
 
             # DCR Initial Access Token
             dcr_iat = ""
@@ -272,62 +287,6 @@ spec:
                 if iat_resp and "token" in iat_resp:
                     dcr_iat = iat_resp["token"]
                     print(f"  DCR IAT created: {dcr_iat[:20]}...")
-
-                # Authorization services for token exchange
-                print("  Configuring token-exchange authorization...")
-                client_config = kc_request("GET", f"/admin/realms/{REALM}/clients/{client_uuid}", token=admin_token)
-                client_config["authorizationServicesEnabled"] = True
-                client_config["serviceAccountsEnabled"] = True
-                try:
-                    kc_request("PUT", f"/admin/realms/{REALM}/clients/{client_uuid}",
-                        data=client_config, token=admin_token, expect_json=False)
-                except Exception as e:
-                    print(f"  Warning: authz services setup: {e}")
-
-                # Create token-exchange scope
-                try:
-                    existing_scopes = kc_request("GET",
-                        f"/admin/realms/{REALM}/clients/{client_uuid}/authz/resource-server/scope?name=token-exchange",
-                        token=admin_token) or []
-                    if not existing_scopes:
-                        kc_request("POST",
-                            f"/admin/realms/{REALM}/clients/{client_uuid}/authz/resource-server/scope",
-                            data={"name": "token-exchange"}, token=admin_token)
-                        print("  Created token-exchange scope")
-                    else:
-                        print("  Token-exchange scope exists")
-
-                    # Create resource
-                    existing_res = kc_request("GET",
-                        f"/admin/realms/{REALM}/clients/{client_uuid}/authz/resource-server/resource?name=client.resource.{client_uuid}",
-                        token=admin_token) or []
-                    if not existing_res:
-                        kc_request("POST",
-                            f"/admin/realms/{REALM}/clients/{client_uuid}/authz/resource-server/resource",
-                            data={"name": f"client.resource.{client_uuid}", "type": "urn:token-exchange",
-                                  "ownerManagedAccess": False, "scopes": [{"name": "token-exchange"}]},
-                            token=admin_token)
-                        print("  Created token-exchange resource")
-
-                    # Create role policy for impersonation
-                    rm_clients = kc_request("GET", f"/admin/realms/{REALM}/clients?clientId=realm-management", token=admin_token) or []
-                    if rm_clients:
-                        rm_id = rm_clients[0]["id"]
-                        imp_role = kc_request("GET", f"/admin/realms/{REALM}/clients/{rm_id}/roles/impersonation", token=admin_token)
-                        if imp_role:
-                            existing_pol = kc_request("GET",
-                                f"/admin/realms/{REALM}/clients/{client_uuid}/authz/resource-server/policy?name=dcr-impersonation-role-policy",
-                                token=admin_token) or []
-                            if not existing_pol:
-                                kc_request("POST",
-                                    f"/admin/realms/{REALM}/clients/{client_uuid}/authz/resource-server/policy/role",
-                                    data={"name": "dcr-impersonation-role-policy", "logic": "POSITIVE",
-                                          "decisionStrategy": "UNANIMOUS",
-                                          "roles": [{"id": imp_role["id"], "required": True}]},
-                                    token=admin_token)
-                                print("  Created impersonation role policy")
-                except Exception as e:
-                    print(f"  Warning: token-exchange authz setup: {e}")
 
             # Write results to K8s Secret
             print(f"\nWriting seed results to K8s Secret {SECRET_NAME}...")

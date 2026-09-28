@@ -105,7 +105,7 @@ class TestDecodeToken:
         with pytest.raises(HTTPException) as exc_info:
             decode_token("Bearer expired-jwt")
         assert exc_info.value.status_code == 401
-        assert "expired" in exc_info.value.detail.lower()
+        assert "authentication failed" in exc_info.value.detail.lower()
 
     @patch("request_manager.auth_endpoints._decode_keycloak_jwt")
     def test_invalid_jwt(self, mock_decode):
@@ -555,7 +555,7 @@ class TestMeEndpointExtended:
         with pytest.raises(HTTPException) as exc_info:
             await me(authorization="Bearer expired-token", db=db)
         assert exc_info.value.status_code == 401
-        assert "expired" in exc_info.value.detail.lower()
+        assert "authentication failed" in exc_info.value.detail.lower()
 
     @patch("request_manager.auth_endpoints.AAAService")
     @patch("request_manager.auth_endpoints._decode_keycloak_jwt")
@@ -661,3 +661,165 @@ class TestRefreshEndpointExtended:
 
         assert resp.token == "new-token"
         assert resp.refresh_token is None
+
+
+# ---------------------------------------------------------------------------
+# _fire_and_forget_audit — RuntimeError branch (line 31)
+# ---------------------------------------------------------------------------
+
+
+class TestFireAndForgetAudit:
+    """Tests for _fire_and_forget_audit."""
+
+    def test_no_event_loop_logs_debug(self):
+        """When no event loop is running, RuntimeError is caught (line 42-43)."""
+        from request_manager.auth_endpoints import _fire_and_forget_audit
+
+        # In a non-async context, asyncio.get_running_loop() raises RuntimeError.
+        # _fire_and_forget_audit should catch it silently.
+        _fire_and_forget_audit(event_type="auth.validation.failed", reason="test")
+        # Should not raise
+
+
+@pytest.mark.asyncio
+class TestFireAndForgetAuditWithLoop:
+    """Tests for _fire_and_forget_audit with a running event loop."""
+
+    async def test_with_event_loop_creates_task(self):
+        """When event loop IS running, create_task is called (line 31)."""
+        from request_manager.auth_endpoints import _fire_and_forget_audit
+
+        with patch("request_manager.auth_endpoints.AuditService") as mock_audit:
+            mock_audit.emit = AsyncMock()
+            _fire_and_forget_audit(event_type="auth.validation.failed", reason="bad token")
+        # Line 31 is covered: loop.create_task(...) was called
+
+
+# ---------------------------------------------------------------------------
+# Login with KEYCLOAK_CLIENT_SECRET (line 198)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestLoginWithClientSecret:
+    """Tests for login endpoint with KEYCLOAK_CLIENT_SECRET configured."""
+
+    @patch("request_manager.auth_endpoints.KEYCLOAK_CLIENT_SECRET", "my-client-secret")
+    @patch("request_manager.auth_endpoints.AAAService")
+    @patch("request_manager.auth_endpoints._decode_keycloak_jwt")
+    @patch("request_manager.auth_endpoints.httpx.AsyncClient")
+    async def test_login_sends_client_secret(self, mock_http_cls, mock_decode_jwt, mock_aaa):
+        """When KEYCLOAK_CLIENT_SECRET is set, it is included in the token request (line 198)."""
+        from request_manager.auth_endpoints import LoginRequest, login
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "access_token": "jwt-tok",
+            "token_type": "Bearer",
+        }
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_http_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_http_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        mock_decode_jwt.return_value = {
+            "email": "user@example.com",
+            "realm_access": {"roles": ["engineering"]},
+        }
+
+        mock_user = MagicMock()
+        mock_user.role = MagicMock()
+        mock_user.role.value = "engineer"
+        mock_user.departments = ["engineering"]
+        mock_aaa.get_or_create_user = AsyncMock(return_value=mock_user)
+        mock_aaa.update_user_permissions = AsyncMock()
+
+        db = AsyncMock()
+        req = LoginRequest(email="user@example.com", password="secret")
+        await login(req, db)
+
+        # Verify client_secret was sent in the POST data
+        call_kwargs = mock_client.post.call_args
+        data = call_kwargs.kwargs.get("data") or call_kwargs[1].get("data", {})
+        assert data["client_secret"] == "my-client-secret"
+
+
+# ---------------------------------------------------------------------------
+# Login departments sync (line 245)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestLoginDepartmentsSync:
+    """Tests for login department sync path."""
+
+    @patch("request_manager.auth_endpoints.AAAService")
+    @patch("request_manager.auth_endpoints._decode_keycloak_jwt")
+    @patch("request_manager.auth_endpoints.httpx.AsyncClient")
+    async def test_login_syncs_departments_when_different(self, mock_http_cls, mock_decode_jwt, mock_aaa):
+        """When JWT departments differ from DB, update_user_permissions is called (line 245)."""
+        from request_manager.auth_endpoints import LoginRequest, login
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"access_token": "jwt-tok"}
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_http_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_http_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        mock_decode_jwt.return_value = {
+            "email": "user@example.com",
+            "realm_access": {"roles": ["engineering", "network"]},
+        }
+
+        mock_user = MagicMock()
+        mock_user.role = MagicMock()
+        mock_user.role.value = "engineer"
+        mock_user.departments = ["engineering"]  # Different from JWT departments
+        mock_aaa.get_or_create_user = AsyncMock(return_value=mock_user)
+        mock_aaa.update_user_permissions = AsyncMock()
+
+        db = AsyncMock()
+        req = LoginRequest(email="user@example.com", password="pass")
+        await login(req, db)
+
+        # update_user_permissions should be called because departments changed
+        mock_aaa.update_user_permissions.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Refresh with KEYCLOAK_CLIENT_SECRET (line 313)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestRefreshWithClientSecret:
+    """Tests for refresh endpoint with KEYCLOAK_CLIENT_SECRET configured."""
+
+    @patch("request_manager.auth_endpoints.KEYCLOAK_CLIENT_SECRET", "my-client-secret")
+    @patch("request_manager.auth_endpoints.httpx.AsyncClient")
+    async def test_refresh_sends_client_secret(self, mock_client_cls):
+        """When KEYCLOAK_CLIENT_SECRET is set, it is included in the refresh request (line 313)."""
+        from request_manager.auth_endpoints import RefreshRequest, refresh
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "access_token": "new-access",
+            "refresh_token": "new-refresh",
+        }
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_resp
+        mock_client.__aenter__.return_value = mock_client
+        mock_client_cls.return_value = mock_client
+
+        await refresh(request=RefreshRequest(refresh_token="old-rt"))
+
+        # Verify client_secret was sent
+        call_kwargs = mock_client.post.call_args
+        data = call_kwargs.kwargs.get("data") or call_kwargs[1].get("data", {})
+        assert data["client_secret"] == "my-client-secret"

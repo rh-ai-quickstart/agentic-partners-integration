@@ -63,6 +63,34 @@ KEYCLOAK_URL: str = os.getenv("KEYCLOAK_URL", "http://keycloak:8080")
 KEYCLOAK_REALM: str = os.getenv("KEYCLOAK_REALM", "partner-agent")
 KEYCLOAK_CLIENT_ID: str = os.getenv("KEYCLOAK_CLIENT_ID", "partner-agent-ui")
 KEYCLOAK_CLIENT_SECRET: str = os.getenv("KEYCLOAK_CLIENT_SECRET", "")
+SPIRE_AUTH_MODE: str = os.getenv("SPIRE_AUTH_MODE", "iat")
+
+# JWT-SPIFFE client assertion type (RFC 7523 profile for SPIFFE)
+CLIENT_ASSERTION_TYPE_JWT_SPIFFE = (
+    "urn:ietf:params:oauth:client-assertion-type:jwt-spiffe"
+)
+
+
+def _get_spiffe_client_assertion() -> Optional[str]:
+    """Fetch a JWT-SVID to use as client_assertion for token exchange.
+
+    When SPIRE_AUTH_MODE=spiffe, the service authenticates to Keycloak's
+    token endpoint using its SPIFFE JWT-SVID as a client_assertion instead
+    of client_id + client_secret.  The JWT-SVID's audience must be the
+    Keycloak realm issuer URL.
+
+    Returns the JWT-SVID string, or None if SPIRE is unavailable.
+    """
+    if SPIRE_AUTH_MODE != "spiffe":
+        return None
+    try:
+        from shared_models.spire_client import get_spire_client
+        spire = get_spire_client()
+        issuer_url = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}"
+        return spire.fetch_jwt_svid(audience=issuer_url)
+    except Exception as exc:
+        logger.debug("SPIFFE client_assertion fetch failed: %s", exc)
+        return None
 
 
 async def _get_dcr_actor_token(token_endpoint: str) -> Optional[str]:
@@ -269,11 +297,11 @@ class TokenExchangeClient:
             original_aud = "unknown"
 
         # Build RFC 8693 token exchange request.
-        # The exchanger client MUST be in the subject_token audience — partner-agent-ui
-        # is always in the audience because it issues the user's login token.
-        # When DCR_ENABLED, we additionally fetch a service-identity actor_token using
-        # the DCR client credentials; this proves which service is delegating and appears
-        # in the "act" claim of the new token without requiring Keycloak fine-grained auth.
+        # Authentication mode:
+        # - SPIRE_AUTH_MODE=spiffe: use JWT-SVID as client_assertion, omit client_id
+        #   (Keycloak's federated-jwt resolves the client from the assertion's sub)
+        # - SPIRE_AUTH_MODE=iat: use client_id + client_secret (legacy mode)
+        # When DCR_ENABLED, we additionally fetch a service-identity actor_token.
         auth_method = "legacy"
         actor_token_value: Optional[str] = None
         if DCR_ENABLED:
@@ -281,17 +309,25 @@ class TokenExchangeClient:
             if actor_token_value:
                 auth_method = "dcr-actor"
 
-        payload = {
+        # Try SPIFFE client_assertion first (omit client_id per Keycloak requirement)
+        spiffe_assertion = _get_spiffe_client_assertion()
+
+        payload: Dict[str, Any] = {
             "grant_type": GRANT_TYPE_TOKEN_EXCHANGE,
-            "client_id": KEYCLOAK_CLIENT_ID,
             "subject_token": subject_token,
             "subject_token_type": TOKEN_TYPE_ACCESS_TOKEN,
             "requested_token_type": requested_token_type,
+            "audience": target_agent,
         }
 
-        # Add client secret if configured (for confidential clients)
-        if KEYCLOAK_CLIENT_SECRET:
-            payload["client_secret"] = KEYCLOAK_CLIENT_SECRET
+        if spiffe_assertion:
+            payload["client_assertion_type"] = CLIENT_ASSERTION_TYPE_JWT_SPIFFE
+            payload["client_assertion"] = spiffe_assertion
+            auth_method = "spiffe-assertion"
+        else:
+            payload["client_id"] = KEYCLOAK_CLIENT_ID
+            if KEYCLOAK_CLIENT_SECRET:
+                payload["client_secret"] = KEYCLOAK_CLIENT_SECRET
 
         # Include actor token for delegation chain (RFC 8693 §2.1)
         # When DCR is enabled: use the DCR service token as actor_token — the act claim
@@ -330,9 +366,10 @@ class TokenExchangeClient:
             "Token exchange request details",
             token_endpoint=self.token_endpoint,
             grant_type=payload["grant_type"],
-            client_id=payload["client_id"],
+            client_id=payload.get("client_id", "(omitted — spiffe assertion)"),
             auth_method=auth_method,
             has_client_secret=bool(payload.get("client_secret")),
+            has_client_assertion=bool(payload.get("client_assertion")),
             subject_token_length=len(subject_token) if subject_token else 0,
             subject_token_prefix=subject_token[:20] if subject_token else "None",
             requested_token_type=payload["requested_token_type"],
@@ -426,6 +463,33 @@ class TokenExchangeClient:
                 raise TokenExchangeError(
                     "Invalid token exchange response: missing access_token"
                 )
+
+            # Post-exchange sub verification: the exchanged token must
+            # preserve the original subject to prevent subject confusion.
+            try:
+                original_sub = jwt.decode(
+                    subject_token,
+                    options={"verify_signature": False},
+                ).get("sub")
+                exchanged_sub = jwt.decode(
+                    result["access_token"],
+                    options={"verify_signature": False},
+                ).get("sub")
+                if original_sub and exchanged_sub and original_sub != exchanged_sub:
+                    logger.error(
+                        "Post-exchange sub mismatch",
+                        original_sub=original_sub,
+                        exchanged_sub=exchanged_sub,
+                        target_agent=target_agent,
+                    )
+                    raise TokenExchangeError(
+                        "Subject changed during token exchange",
+                        detail=f"original={original_sub} exchanged={exchanged_sub}",
+                    )
+            except TokenExchangeError:
+                raise
+            except Exception as e:
+                logger.debug("Post-exchange sub check skipped: %s", e)
 
             logger.info(
                 "Token exchange successful",

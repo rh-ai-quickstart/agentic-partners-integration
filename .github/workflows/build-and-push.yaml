@@ -47,7 +47,7 @@ jobs:
             build-args: ""
           - name: pf-chat-ui
             containerfile: pf-chat-ui/Containerfile
-            context: pf-chat-ui
+            context: .
             image: partner-pf-chat-ui
             build-args: ""
           - name: kubernetes-agent

@@ -1,5 +1,6 @@
 """Tests for kubernetes_agent.main — FastAPI endpoints."""
 
+import runpy
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -266,6 +267,29 @@ class TestInvokeEndpoint:
         )
 
         assert response.status_code == 200
+
+
+class TestMainEntrypoint:
+    @patch("uvicorn.run")
+    @patch("kubernetes_agent.main.load_agent_config")
+    @patch("kubernetes_agent.main.get_a2a_app")
+    def test_main_entrypoint_runs_uvicorn(self, mock_a2a, mock_load, mock_uvicorn_run):
+        """The if __name__ == '__main__' block invokes uvicorn.run."""
+        from starlette.applications import Starlette
+
+        mock_load.return_value = {"name": "test", "a2a": {}}
+        mock_a2a.return_value = Starlette()
+
+        runpy.run_module(
+            "kubernetes_agent.main",
+            run_name="__main__",
+            alter_sys=False,
+        )
+
+        mock_uvicorn_run.assert_called_once()
+        call_kwargs = mock_uvicorn_run.call_args
+        assert call_kwargs[1]["host"] == "0.0.0.0"
+        assert call_kwargs[1]["port"] == 8080
 
 
 class TestAgentCard:

@@ -96,3 +96,15 @@ class TestAddServiceContext:
         result = config._add_service_context(None, "info", event_dict)
         assert result["extra_key"] == "value"
         assert result["service"] == "test-svc"
+
+
+class TestConfigureStructlogConsole:
+    """Test configure_structlog with console output (line 100)."""
+
+    def test_console_renderer_when_not_json(self, monkeypatch):
+        """When LOG_FORMAT is not 'json', ConsoleRenderer is used."""
+        monkeypatch.setenv("LOG_FORMAT", "text")
+        config = LoggingConfig(service_name="test-svc")
+        assert config.enable_json is False
+        # This exercises line 100 (the else branch)
+        config.configure_structlog()

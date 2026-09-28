@@ -53,6 +53,14 @@ class TestSessionCreate:
         )
         assert session.integration_type == IntegrationType.WEB
 
+    def test_normalize_integration_type_non_string_passthrough(self):
+        """Non-string value triggers the `return v` branch (line 30)."""
+        with pytest.raises(ValidationError):
+            SessionCreate(
+                user_id="user-1",
+                integration_type=123,  # non-string triggers `return v`
+            )
+
     def test_with_optional_fields(self):
         session = SessionCreate(
             user_id="user-123",

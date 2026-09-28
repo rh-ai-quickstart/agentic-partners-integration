@@ -29,6 +29,31 @@ spec:
   ingress:
   - from:
     - podSelector: {}
+{{- if .Values.praxis.enabled }}
+---
+# Restrict agent-service ingress to Praxis gateway only (defense-in-depth)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullName }}-agent-service-praxis-only
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ $fullName }}-agent-service
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: {{ $fullName }}-praxis
+    ports:
+    - protocol: TCP
+      port: 80
+{{- end }}
 {{- if ne .Values.networkPolicies.platform "none" }}
 ---
 # Allow ingress from ingress controller for external routes

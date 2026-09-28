@@ -296,3 +296,29 @@ class TestKubernetesAgentExecutor:
         messages = call_args.kwargs.get("messages") or call_args[1].get("messages") or call_args[0][0]
         msg_content = messages[0]["content"] if isinstance(messages[0], dict) else str(messages[0])
         assert "K8S-101" in msg_content
+
+    @patch("kubernetes_agent.agent.KubernetesAgent")
+    @patch("kubernetes_agent.a2a.executor.httpx.AsyncClient")
+    async def test_execute_a2a_server_error_reraised_directly(
+        self, mock_httpx, mock_agent_cls, mock_context, mock_event_queue
+    ):
+        """A2AServerError raised during execution is re-raised without wrapping."""
+        from kubernetes_agent.a2a.executor import KubernetesAgentExecutor
+
+        mock_agent = MagicMock()
+        mock_agent.create_response_with_retry = AsyncMock(
+            side_effect=A2AServerError("upstream A2A failure")
+        )
+        mock_agent_cls.return_value = mock_agent
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = MagicMock(
+            status_code=200, json=MagicMock(return_value={"response": "", "sources": []})
+        )
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_httpx.return_value = mock_client
+
+        executor = KubernetesAgentExecutor()
+        with pytest.raises(A2AServerError, match="upstream A2A failure"):
+            await executor.execute(mock_context, mock_event_queue)

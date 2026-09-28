@@ -31,6 +31,7 @@ SUITE_START=$(date +%s)
 # Flags
 SKIP_BUILD=false
 SKIP_DEPLOY=false
+IMAGE_TAG="${IMAGE_TAG:-main}"
 
 # State
 ADMIN_TOKEN=""
@@ -206,7 +207,7 @@ phase_1_build() {
     cd "$PROJECT_ROOT"
 
     echo "  Building request-manager..."
-    if docker build -t partner-request-manager:latest -f request-manager/Containerfile . > /tmp/build-request-manager.log 2>&1; then
+    if docker build -t partner-request-manager:${IMAGE_TAG} -f request-manager/Containerfile . > /tmp/build-request-manager.log 2>&1; then
         record_pass "Build: request-manager"
     else
         tail -20 /tmp/build-request-manager.log
@@ -215,7 +216,7 @@ phase_1_build() {
     fi
 
     echo "  Building agent-service..."
-    if docker build -t partner-agent-service:latest -f agent-service/Containerfile . > /tmp/build-agent-service.log 2>&1; then
+    if docker build -t partner-agent-service:${IMAGE_TAG} -f agent-service/Containerfile . > /tmp/build-agent-service.log 2>&1; then
         record_pass "Build: agent-service"
     else
         tail -20 /tmp/build-agent-service.log
@@ -224,7 +225,7 @@ phase_1_build() {
     fi
 
     echo "  Building rag-api (--no-cache)..."
-    if docker build --no-cache -t partner-rag-api:latest -f rag-service/Containerfile . > /tmp/build-rag-api.log 2>&1; then
+    if docker build --no-cache -t partner-rag-api:${IMAGE_TAG} -f rag-service/Containerfile . > /tmp/build-rag-api.log 2>&1; then
         record_pass "Build: rag-api"
     else
         tail -20 /tmp/build-rag-api.log
@@ -234,7 +235,7 @@ phase_1_build() {
 
     if [ -f "pf-chat-ui/Containerfile" ]; then
         echo "  Building pf-chat-ui..."
-        if docker build -t partner-pf-chat-ui:latest -f pf-chat-ui/Containerfile . > /tmp/build-pf-chat-ui.log 2>&1; then
+        if docker build -t partner-pf-chat-ui:${IMAGE_TAG} -f pf-chat-ui/Containerfile . > /tmp/build-pf-chat-ui.log 2>&1; then
             record_pass "Build: pf-chat-ui"
         else
             record_skip "Build: pf-chat-ui (non-critical)"
@@ -275,6 +276,7 @@ phase_2_deploy() {
     export LLM_BACKEND
     export KEYCLOAK_URL
     export REALM
+    export IMAGE_TAG
     bash "$SEED_DIR/seed-services.sh"
 
     record_pass "Deploy: Full stack started"

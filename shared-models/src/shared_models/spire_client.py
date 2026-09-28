@@ -150,12 +150,14 @@ class SPIREClient:
         discovery endpoint, so recipients can verify it without contacting
         SPIRE directly.
 
-        This is the credential used for Dynamic Client Registration (DCR):
-        the agent presents this JWT to Keycloak's DCR endpoint to prove its
-        identity without a pre-shared secret.
+        This is the credential used for SPIFFE-based authentication with
+        Keycloak: the agent presents this JWT as a ``client_assertion`` to
+        prove its workload identity without a pre-shared secret.  Used for
+        both DCR registration and token exchange flows.
 
         Args:
-            audience: The ``aud`` claim value (e.g. the Keycloak DCR URL).
+            audience: The ``aud`` claim value — the Keycloak realm issuer
+                URL (e.g. ``http://keycloak:8080/realms/partner-agent``).
 
         Returns:
             The JWT-SVID as a raw string (no "Bearer " prefix).

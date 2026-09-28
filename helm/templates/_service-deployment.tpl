@@ -138,12 +138,6 @@ spec:
           mountPath: /app/config/agents/kubernetes-support-agent.yaml
           subPath: kubernetes-support-agent.yaml
           readOnly: true
-        {{- if and $context.Values.aroAgent $context.Values.aroAgent.enabled }}
-        - name: agent-config
-          mountPath: /app/config/agents/aro-support-agent.yaml
-          subPath: aro-support-agent.yaml
-          readOnly: true
-        {{- end }}
         {{- end }}
         {{- if $serviceConfig.resources }}
         resources:

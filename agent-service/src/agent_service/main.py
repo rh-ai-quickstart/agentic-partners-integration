@@ -117,6 +117,13 @@ from shared_models.identity_middleware import IdentityMiddleware
 
 app.add_middleware(IdentityMiddleware)
 
+# JWT validation — per-hop defense-in-depth
+from .jwt_auth import (
+    JWT_VALIDATION_ENABLED as _JWT_VALIDATION_ENABLED,
+    JWTAuthError,
+    validate_bearer_token,
+)
+
 
 def _enforce_agent_auth() -> bool:
     """Check if agent authentication enforcement is enabled.
@@ -249,6 +256,31 @@ async def invoke_agent(
                     "or mTLS certificate"
                 ),
             )
+
+        # Per-hop JWT validation: verify the Bearer token independently
+        if _JWT_VALIDATION_ENABLED:
+            auth_header = http_request.headers.get("Authorization")
+            if auth_header:
+                try:
+                    validate_bearer_token(auth_header)
+                except JWTAuthError:
+                    logger.warning(
+                        "JWT validation failed at agent-service",
+                        agent_name=agent_name,
+                    )
+                    await AuditService.emit(
+                        event_type="auth.jwt.invalid",
+                        actor="unknown",
+                        action="invoke_agent",
+                        resource=agent_name,
+                        outcome="failure",
+                        reason="JWT validation failed",
+                        service="agent-service",
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Authentication failed",
+                    )
 
         # If delegation context is present (a service acting on behalf of
         # a user), verify authorization via policy engine. Without delegation headers,

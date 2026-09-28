@@ -201,6 +201,18 @@ class TestAgentResponse:
         assert resp.followup_actions == []
         assert isinstance(resp.created_at, datetime)
 
+    def test_normalize_integration_type_non_string_passthrough(self):
+        """Non-string value triggers the `return v` branch (line 364)."""
+        with pytest.raises(ValidationError):
+            NormalizedRequest(
+                request_id="req-1",
+                session_id="sess-1",
+                user_id="user-1",
+                integration_type=123,  # non-string triggers `return v`
+                request_type="query",
+                content="test",
+            )
+
     def test_missing_required_fields(self):
         with pytest.raises(ValidationError):
             AgentResponse(request_id="req-1")

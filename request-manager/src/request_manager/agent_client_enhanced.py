@@ -173,8 +173,9 @@ class EnhancedAgentClient:
                 # Initialize token exchange client
                 token_exchange_client = TokenExchangeClient()
 
-                # Use agent SPIFFE ID as the target audience
-                target_agent = make_spiffe_id("agent", agent_name)
+                # Use the Keycloak audience-only client as the target audience.
+                # agent-service validates tokens scoped to this audience.
+                target_agent = "agent-service"
 
                 # If we have a current_token, extract its act claim for delegation chain
                 if current_token:

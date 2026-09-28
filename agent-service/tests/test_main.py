@@ -911,3 +911,242 @@ class TestMainBlock:
             reload=True,
             log_level="info",
         )
+
+
+class TestAgentServiceStartup:
+    """Tests for _agent_service_startup (lines 29-45)."""
+
+    @pytest.mark.asyncio
+    async def test_dcr_startup_spire_success_dcr_success(self):
+        """Lines 29-43: DCR_ENABLED, SPIRE works, DCR registration succeeds."""
+        mock_svid = MagicMock()
+        mock_svid.spiffe_id = "spiffe://partner.example.com/agent-service"
+
+        mock_spire = MagicMock()
+        mock_spire.fetch_svid.return_value = mock_svid
+
+        mock_dcr = AsyncMock()
+        mock_dcr.ensure_registered = AsyncMock()
+
+        with (
+            patch("shared_models.dcr_client.DCR_ENABLED", True),
+            patch("shared_models.spire_client.get_spire_client", return_value=mock_spire),
+            patch(
+                "shared_models.dcr_client.get_dcr_client", return_value=mock_dcr
+            ) as mock_get_dcr,
+        ):
+            from agent_service.main import _agent_service_startup
+
+            await _agent_service_startup()
+
+        mock_spire.fetch_svid.assert_called_once()
+        mock_get_dcr.assert_called_once_with(
+            spiffe_id="spiffe://partner.example.com/agent-service",
+            client_name="agent-service",
+        )
+        mock_dcr.ensure_registered.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_dcr_startup_spire_fails_falls_back_to_env(self, monkeypatch):
+        """Lines 37-38: SPIRE failure falls back to SPIFFE_ID env var."""
+        monkeypatch.setenv("SPIFFE_ID", "spiffe://env-fallback/agent-service")
+
+        mock_dcr = AsyncMock()
+        mock_dcr.ensure_registered = AsyncMock()
+
+        with (
+            patch("shared_models.dcr_client.DCR_ENABLED", True),
+            patch(
+                "shared_models.spire_client.get_spire_client",
+                side_effect=RuntimeError("SPIRE not available"),
+            ),
+            patch(
+                "shared_models.dcr_client.get_dcr_client", return_value=mock_dcr
+            ) as mock_get_dcr,
+        ):
+            from agent_service.main import _agent_service_startup
+
+            await _agent_service_startup()
+
+        mock_get_dcr.assert_called_once_with(
+            spiffe_id="spiffe://env-fallback/agent-service",
+            client_name="agent-service",
+        )
+
+    @pytest.mark.asyncio
+    async def test_dcr_startup_registration_fails_logs_warning(self):
+        """Lines 44-45: DCR registration failure logs warning, does not crash."""
+        mock_svid = MagicMock()
+        mock_svid.spiffe_id = "spiffe://partner.example.com/agent-service"
+
+        mock_spire = MagicMock()
+        mock_spire.fetch_svid.return_value = mock_svid
+
+        mock_dcr = AsyncMock()
+        mock_dcr.ensure_registered = AsyncMock(
+            side_effect=RuntimeError("Registration failed")
+        )
+
+        with (
+            patch("shared_models.dcr_client.DCR_ENABLED", True),
+            patch("shared_models.spire_client.get_spire_client", return_value=mock_spire),
+            patch("shared_models.dcr_client.get_dcr_client", return_value=mock_dcr),
+        ):
+            from agent_service.main import _agent_service_startup
+
+            # Should NOT raise
+            await _agent_service_startup()
+
+        mock_dcr.ensure_registered.assert_awaited_once()
+
+
+class TestA2AMount:
+    """Tests for the module-level A2A mount loop (line 76)."""
+
+    def test_a2a_mount_with_specialist_agents(self):
+        """Line 76: app.mount() is called for each specialist agent."""
+        mock_manager = _make_mock_manager()
+        mock_manager.get_specialist_agents.return_value = {
+            "software-support": {"departments": ["software"]},
+        }
+
+        mock_a2a_app = MagicMock()
+
+        with (
+            patch(
+                "agent_service.agents.AgentManager",
+                return_value=mock_manager,
+            ),
+            patch(
+                "agent_service.a2a.server.get_a2a_app",
+                return_value=mock_a2a_app,
+            ) as mock_get_a2a_app,
+        ):
+            import importlib
+
+            import agent_service.main
+
+            importlib.reload(agent_service.main)
+
+        mock_get_a2a_app.assert_any_call(
+            "software-support", {"departments": ["software"]}
+        )
+
+
+class TestRoutingAgentEdgeCases:
+    """Tests for routing-agent edge cases (lines 382, 438)."""
+
+    @patch("agent_service.agents.AgentManager")
+    def test_no_blocked_agents_empty_blocked_section(
+        self, mock_agent_manager_cls, patched_app
+    ):
+        """Line 382: blocked_section = '' when user has access to ALL agents.
+
+        The dept map must only contain agents whose departments are a subset
+        of the user's departments, so no agent is blocked.
+        """
+        from fastapi.testclient import TestClient
+
+        mock_agent = AsyncMock()
+        mock_agent.create_response_with_retry.return_value = (
+            "Hello! How can I help you?",
+            False,
+        )
+        mock_manager = _make_mock_manager()
+        # Override dept map to only include agents the user can access
+        mock_manager.get_agent_dept_map.return_value = {
+            "software-support": ["software"],
+            "network-support": ["network"],
+        }
+        mock_manager.get_agent_descriptions.return_value = {
+            "software-support": "Handles software issues",
+            "network-support": "Handles network issues",
+        }
+        mock_manager.get_agent.return_value = mock_agent
+        mock_manager.agents_dict = {
+            "routing-agent": mock_agent,
+            "software-support": MagicMock(),
+            "network-support": MagicMock(),
+        }
+        mock_agent_manager_cls.return_value = mock_manager
+
+        client = TestClient(patched_app)
+        response = client.post(
+            "/api/v1/agents/routing-agent/invoke",
+            json={
+                "session_id": "sess-no-block-all",
+                "user_id": "admin@test.com",
+                "message": "Hello",
+                "transfer_context": {
+                    "departments": ["software", "network"],
+                },
+            },
+            headers=DEFAULT_HEADERS,
+        )
+
+        assert response.status_code == 200
+        # Verify blocked_section was empty by checking the system prompt
+        call_args = mock_agent.create_response_with_retry.call_args
+        messages = (
+            call_args.kwargs.get("messages")
+            or call_args[1].get("messages")
+            or call_args[0][0]
+        )
+        system_msg = messages[0]["content"]
+        assert "ACCESS RESTRICTION" not in system_msg
+
+    @patch("agent_service.agents.AgentManager")
+    def test_conversation_history_with_agent_attribution(
+        self, mock_agent_manager_cls, patched_app
+    ):
+        """Line 438: assistant turn with 'agent' key gets prefixed with [Agent: ...]."""
+        from fastapi.testclient import TestClient
+
+        mock_agent = AsyncMock()
+        mock_agent.create_response_with_retry.return_value = (
+            "ROUTE:software-support\nRouting to specialist.",
+            False,
+        )
+        mock_manager = _make_mock_manager()
+        mock_manager.get_agent.return_value = mock_agent
+        mock_manager.agents_dict = {
+            "routing-agent": mock_agent,
+            "software-support": MagicMock(),
+        }
+        mock_agent_manager_cls.return_value = mock_manager
+
+        client = TestClient(patched_app)
+        response = client.post(
+            "/api/v1/agents/routing-agent/invoke",
+            json={
+                "session_id": "sess-agent-attr",
+                "user_id": "user@test.com",
+                "message": "Yes, do it",
+                "transfer_context": {
+                    "departments": ["software"],
+                    "conversation_history": [
+                        {"role": "user", "content": "My app crashes"},
+                        {
+                            "role": "assistant",
+                            "content": "I found ticket T-123.",
+                            "agent": "software-support",
+                        },
+                    ],
+                },
+            },
+            headers=DEFAULT_HEADERS,
+        )
+
+        assert response.status_code == 200
+        # Verify the agent attribution was prepended to the message content
+        call_args = mock_agent.create_response_with_retry.call_args
+        messages = (
+            call_args.kwargs.get("messages")
+            or call_args[1].get("messages")
+            or call_args[0][0]
+        )
+        # Find the assistant message from history
+        assistant_msgs = [m for m in messages if m["role"] == "assistant"]
+        assert any(
+            "[Agent: software-support]" in m["content"] for m in assistant_msgs
+        )

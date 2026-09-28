@@ -76,6 +76,18 @@ class ValidationResult:
         """Get the immediate actor (closest in delegation chain)."""
         return self.delegation_chain[-1] if self.delegation_chain else None
 
+    @property
+    def azp(self) -> Optional[str]:
+        """Authorized party — the client that obtained the token."""
+        return self.payload.get("azp")
+
+    @property
+    def actor_identifier(self) -> Optional[str]:
+        """Best-effort actor identification: act.sub then azp fallback."""
+        if self.immediate_actor:
+            return self.immediate_actor.sub
+        return self.azp
+
 
 class JWTValidationError(Exception):
     """Base exception for JWT validation errors."""

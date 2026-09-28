@@ -240,3 +240,21 @@ class TestSpecialistAgentExecutor:
         mock_context.current_task = mock_task
 
         await executor.cancel(mock_context, mock_event_queue)
+
+    @patch(
+        "agent_service.a2a.executor.SpecialistAgentExecutor._invoke_specialist",
+        new_callable=AsyncMock,
+    )
+    async def test_execute_reraises_a2a_server_error_directly(
+        self, mock_invoke, executor, mock_context, mock_event_queue
+    ):
+        """Line 88: A2AServerError is re-raised directly, not wrapped.
+
+        ServerError is NOT a subclass of A2AServerError in the a2a library.
+        This test uses A2AServerError directly to exercise the ``except
+        A2AServerError: raise`` branch.
+        """
+        mock_invoke.side_effect = A2AServerError("A2A protocol error")
+
+        with pytest.raises(A2AServerError, match="A2A protocol error"):
+            await executor.execute(mock_context, mock_event_queue)

@@ -101,13 +101,13 @@ def decode_token(authorization: str) -> dict:
             event_type="auth.token.expired",
             reason="Token expired",
         )
-        raise HTTPException(status_code=401, detail="Token expired")
+        raise HTTPException(status_code=401, detail="Authentication failed")
     except jwt.PyJWTError as e:
         _fire_and_forget_audit(
             event_type="auth.token.invalid",
             reason=str(e),
         )
-        raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
+        raise HTTPException(status_code=401, detail="Authentication failed")
 
 
 def _extract_departments(payload: dict) -> list[str]:
@@ -280,9 +280,9 @@ async def me(
     try:
         payload = _decode_keycloak_jwt(token)
     except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
+        raise HTTPException(status_code=401, detail="Authentication failed")
     except jwt.PyJWTError as e:
-        raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
+        raise HTTPException(status_code=401, detail="Authentication failed")
 
     email = payload.get("email", payload.get("preferred_username", ""))
     departments = _extract_departments(payload)

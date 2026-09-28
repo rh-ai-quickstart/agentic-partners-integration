@@ -150,9 +150,6 @@ async def cleanup_old_sessions(
             if i >= 1:  # Keep the first (most recent) session, deactivate the rest
                 sessions_to_deactivate.append(session.session_id)
 
-        if not sessions_to_deactivate:
-            return 0
-
         # Deactivate old sessions
         deactivate_where_conditions = [
             RequestSession.session_id.in_(sessions_to_deactivate),

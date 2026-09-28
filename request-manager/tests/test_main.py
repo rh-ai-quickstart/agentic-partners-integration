@@ -338,6 +338,88 @@ class TestRequestManagerStartup:
         # Restore original state
         main_module.unified_processor = original_processor
 
+    async def test_dcr_startup_success(self):
+        """DCR startup registers successfully (lines 101, 108)."""
+        import request_manager.main as main_module
+        from request_manager.main import _request_manager_startup
+
+        original_processor = getattr(main_module, "unified_processor", None)
+
+        mock_spire = MagicMock()
+        mock_svid = MagicMock()
+        mock_svid.spiffe_id = "spiffe://test/svc"
+        mock_spire.fetch_svid.return_value = mock_svid
+
+        mock_dcr = MagicMock()
+        mock_dcr.ensure_registered = AsyncMock()
+
+        with (
+            patch("shared_models.dcr_client.DCR_ENABLED", True),
+            patch("shared_models.spire_client.get_spire_client", return_value=mock_spire),
+            patch("shared_models.dcr_client.get_dcr_client", return_value=mock_dcr),
+            patch("request_manager.main.get_communication_strategy") as mock_strat,
+            patch("asyncio.create_task"),
+        ):
+            mock_strat.return_value = MagicMock()
+            await _request_manager_startup()
+
+        mock_dcr.ensure_registered.assert_awaited_once()
+        main_module.unified_processor = original_processor
+
+    async def test_dcr_startup_registration_failure(self):
+        """DCR registration failure is handled gracefully (line 108 exception branch)."""
+        import request_manager.main as main_module
+        from request_manager.main import _request_manager_startup
+
+        original_processor = getattr(main_module, "unified_processor", None)
+
+        mock_spire = MagicMock()
+        mock_svid = MagicMock()
+        mock_svid.spiffe_id = "spiffe://test/svc"
+        mock_spire.fetch_svid.return_value = mock_svid
+
+        mock_dcr = MagicMock()
+        mock_dcr.ensure_registered = AsyncMock(side_effect=RuntimeError("DCR failed"))
+
+        with (
+            patch("shared_models.dcr_client.DCR_ENABLED", True),
+            patch("shared_models.spire_client.get_spire_client", return_value=mock_spire),
+            patch("shared_models.dcr_client.get_dcr_client", return_value=mock_dcr),
+            patch("request_manager.main.get_communication_strategy") as mock_strat,
+            patch("asyncio.create_task"),
+        ):
+            mock_strat.return_value = MagicMock()
+            # Should not raise — graceful fallback
+            await _request_manager_startup()
+
+        main_module.unified_processor = original_processor
+
+    async def test_dcr_startup_spire_failure_falls_back(self):
+        """When SPIRE fails, DCR startup falls back to env SPIFFE_ID (line 101-103)."""
+        import request_manager.main as main_module
+        from request_manager.main import _request_manager_startup
+
+        original_processor = getattr(main_module, "unified_processor", None)
+
+        mock_dcr = MagicMock()
+        mock_dcr.ensure_registered = AsyncMock()
+
+        with (
+            patch("shared_models.dcr_client.DCR_ENABLED", True),
+            patch(
+                "shared_models.spire_client.get_spire_client",
+                side_effect=RuntimeError("SPIRE unavailable"),
+            ),
+            patch("shared_models.dcr_client.get_dcr_client", return_value=mock_dcr),
+            patch("request_manager.main.get_communication_strategy") as mock_strat,
+            patch("asyncio.create_task"),
+        ):
+            mock_strat.return_value = MagicMock()
+            await _request_manager_startup()
+
+        mock_dcr.ensure_registered.assert_awaited_once()
+        main_module.unified_processor = original_processor
+
 
 # ---------------------------------------------------------------------------
 # Exception handlers - extended tests
@@ -469,3 +551,47 @@ class TestDetailedHealthCheck:
         assert result.status == "healthy"
         assert result.database_connected is True
         assert "database" in result.services
+
+
+# ---------------------------------------------------------------------------
+# lifespan function (line 131)
+# ---------------------------------------------------------------------------
+
+
+class TestLifespan:
+    """Tests for the lifespan function (line 131)."""
+
+    def test_lifespan_returns_callable(self):
+        """lifespan() returns a callable context manager (line 131)."""
+        from request_manager.main import lifespan, app
+
+        result = lifespan(app)
+        # lifespan returns an async context manager from create_shared_lifespan
+        assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# __main__ block (lines 270-275)
+# ---------------------------------------------------------------------------
+
+
+class TestMainBlock:
+    """Tests for the __main__ block (lines 270-275)."""
+
+    def test_main_block_invokes_uvicorn(self):
+        """__main__ block calls uvicorn.run with correct params (lines 270-275)."""
+        with patch("uvicorn.run") as mock_uvicorn:
+            import runpy
+
+            # runpy.run_module re-executes the module with __name__ == "__main__",
+            # which triggers the if __name__ == "__main__" guard.
+            try:
+                runpy.run_module(
+                    "request_manager.main", run_name="__main__", alter_sys=False
+                )
+            except Exception:
+                pass  # Module may fail during startup (no DB, etc.)
+
+        mock_uvicorn.assert_called_once()
+        call_args = mock_uvicorn.call_args
+        assert call_args[0][0] == "request_manager.main:app"
