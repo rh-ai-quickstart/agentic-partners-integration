@@ -1,6 +1,7 @@
 """Google Gemini client implementation."""
 
-from typing import List, Optional
+import os
+from typing import Any, List, Optional
 
 from google import genai
 from shared_models import configure_logging
@@ -27,7 +28,11 @@ class GeminiClient(BaseLLMClient):
             api_key: Google API key
             model: Model to use for completions
         """
-        self.client = genai.Client(api_key=api_key)
+        client_kwargs: dict[str, Any] = {"api_key": api_key}
+        endpoint = os.getenv("GEMINI_API_ENDPOINT", "")
+        if endpoint:
+            client_kwargs["http_options"] = {"base_url": endpoint}
+        self.client = genai.Client(**client_kwargs)
         self.model_name = model
 
         logger.info("Initialized Gemini client", model=model)

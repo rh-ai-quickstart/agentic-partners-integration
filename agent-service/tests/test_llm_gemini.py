@@ -1,5 +1,6 @@
 """Tests for agent_service.llm.gemini_client."""
 
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,6 +17,18 @@ class TestGeminiClient:
 
         client = GeminiClient(api_key="test-key", model="gemini-1.5-pro")
         mock_genai.Client.assert_called_once_with(api_key="test-key")
+        assert client.model_name == "gemini-1.5-pro"
+
+    @patch.dict(os.environ, {"GEMINI_API_ENDPOINT": "http://mock:8000"})
+    @patch("agent_service.llm.gemini_client.genai")
+    def test_init_with_custom_endpoint(self, mock_genai):
+        from agent_service.llm.gemini_client import GeminiClient
+
+        client = GeminiClient(api_key="test-key", model="gemini-1.5-pro")
+        mock_genai.Client.assert_called_once_with(
+            api_key="test-key",
+            http_options={"base_url": "http://mock:8000"},
+        )
         assert client.model_name == "gemini-1.5-pro"
 
     @patch("agent_service.llm.gemini_client.genai")

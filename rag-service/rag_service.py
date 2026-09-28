@@ -50,6 +50,8 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "models/gemini-embedding-001")
 LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.5-flash")
 EMBEDDING_DIM = 3072  # Google Gemini embedding-001 dimension (updated from 768)
 
+GEMINI_API_ENDPOINT = os.getenv("GEMINI_API_ENDPOINT", "")
+
 if not GOOGLE_API_KEY:
     logger.error("API key not set - cannot initialize RAG service")
     raise RuntimeError(
@@ -62,7 +64,11 @@ logger.info(
     model=LLM_MODEL,
     api_key_prefix=GOOGLE_API_KEY[:10] if GOOGLE_API_KEY else "NOT_SET",
 )
-genai_client = genai.Client(api_key=GOOGLE_API_KEY)
+_client_kwargs: dict[str, Any] = {"api_key": GOOGLE_API_KEY}
+if GEMINI_API_ENDPOINT:
+    _client_kwargs["http_options"] = {"base_url": GEMINI_API_ENDPOINT}
+    logger.info("Using custom Gemini API endpoint", endpoint=GEMINI_API_ENDPOINT)
+genai_client = genai.Client(**_client_kwargs)
 logger.info("Google GenAI client initialized successfully")
 
 # Database setup

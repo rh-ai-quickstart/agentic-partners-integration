@@ -68,8 +68,8 @@ load_env() {
         set +a
     fi
     if [ -z "${GOOGLE_API_KEY:-}" ]; then
-        echo "ERROR: GOOGLE_API_KEY not set in .env"
-        exit 1
+        echo "  No GOOGLE_API_KEY in .env — mock LLM will be used"
+        export GOOGLE_API_KEY="mock-api-key"
     fi
 }
 

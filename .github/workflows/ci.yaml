@@ -188,6 +188,9 @@ jobs:
           echo ""
           echo "=== Keycloak ==="
           docker logs partner-keycloak-full 2>&1 | tail -20
+          echo ""
+          echo "=== Mock LLM ==="
+          docker logs partner-mock-llm 2>&1 | tail -20 || echo "(not running)"
 
       - name: Cleanup
         if: always()

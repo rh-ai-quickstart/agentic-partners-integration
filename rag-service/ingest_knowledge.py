@@ -35,6 +35,7 @@ DATABASE_URL = os.getenv(
 )
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "models/gemini-embedding-001")
 EMBEDDING_DIM = 3072  # Google Gemini embedding-001 dimension (updated from 768)
+GEMINI_API_ENDPOINT = os.getenv("GEMINI_API_ENDPOINT", "")
 
 # Database setup
 Base = declarative_base()
@@ -241,7 +242,11 @@ async def main_async():
         sys.exit(1)
 
     # Initialize Google GenAI client
-    genai_client = genai.Client(api_key=GOOGLE_API_KEY)
+    client_kwargs: dict[str, Any] = {"api_key": GOOGLE_API_KEY}
+    if GEMINI_API_ENDPOINT:
+        client_kwargs["http_options"] = {"base_url": GEMINI_API_ENDPOINT}
+        logger.info("Using custom Gemini API endpoint", endpoint=GEMINI_API_ENDPOINT)
+    genai_client = genai.Client(**client_kwargs)
     logger.info("Google GenAI client initialized", model=EMBEDDING_MODEL)
 
     # Initialize database connection

@@ -56,6 +56,40 @@ echo "  OK Migrations complete"
 echo ""
 
 # =============================================================================
+# 1b. Mock LLM (when no real API key is set)
+# =============================================================================
+MOCK_LLM=false
+GEMINI_API_ENDPOINT=""
+OPENAI_BASE_URL=""
+
+if [ -z "$GOOGLE_API_KEY" ]; then
+    echo "[1b/7] No API key set — starting mock LLM server..."
+    MOCK_LLM=true
+    GOOGLE_API_KEY="mock-api-key"
+    GEMINI_API_ENDPOINT="http://partner-mock-llm:8000"
+    OPENAI_BASE_URL="http://partner-mock-llm:8000/v1beta/openai/"
+
+    docker stop partner-mock-llm 2>/dev/null || true
+    docker rm partner-mock-llm 2>/dev/null || true
+
+    if ! docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "partner-mock-llm:${IMAGE_TAG}"; then
+        echo "  Building mock-llm image..."
+        docker build -t partner-mock-llm:${IMAGE_TAG} -f "${PROJECT_ROOT}/mock-llm/Containerfile" "${PROJECT_ROOT}/mock-llm/" > /dev/null 2>&1
+    fi
+
+    docker run -d \
+        --name partner-mock-llm \
+        --network partner-agent-network \
+        partner-mock-llm:${IMAGE_TAG} > /dev/null
+
+    echo "  OK Mock LLM started (deterministic responses for CI)"
+    sleep 2
+else
+    echo "[1b/7] Real API key detected — using live Gemini API"
+fi
+echo ""
+
+# =============================================================================
 # 2. RAG API
 # =============================================================================
 echo "[2/7] Starting RAG API..."
@@ -67,6 +101,7 @@ docker run -d \
     --network partner-agent-network \
     -p 8080:8080 \
     -e "GOOGLE_API_KEY=$GOOGLE_API_KEY" \
+    -e "GEMINI_API_ENDPOINT=$GEMINI_API_ENDPOINT" \
     -e "DATABASE_URL=$DB_URL" \
     -e "EMBEDDING_MODEL=models/gemini-embedding-001" \
     -e "LLM_MODEL=gemini-2.5-flash" \
@@ -95,6 +130,7 @@ docker run -d \
     -e "LLM_BACKEND=gemini" \
     -e "GOOGLE_API_KEY=$GOOGLE_API_KEY" \
     -e "GEMINI_MODEL=gemini-2.5-flash" \
+    -e "GEMINI_API_ENDPOINT=$GEMINI_API_ENDPOINT" \
     -e "LOG_LEVEL=INFO" \
     -e "RAG_API_ENDPOINT=http://partner-rag-api-full:8080/answer" \
     -e "SPIFFE_TRUST_DOMAIN=partner.example.com" \
@@ -158,6 +194,7 @@ docker run -d \
     -e "LLM_BACKEND=gemini" \
     -e "GOOGLE_API_KEY=$GOOGLE_API_KEY" \
     -e "GEMINI_MODEL=gemini-2.5-flash" \
+    -e "GEMINI_API_ENDPOINT=$GEMINI_API_ENDPOINT" \
     -e "AGENT_SERVICE_URL=http://partner-praxis-gateway-full:8080" \
     -e "AGENT_TIMEOUT=120" \
     -e "LOG_LEVEL=INFO" \
