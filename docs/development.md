@@ -65,19 +65,6 @@ make clean          # When you want to wipe everything
 
 `make setup` is idempotent -- it stops existing containers, rebuilds images, and starts fresh every time.
 
-## Alternative: Docker Compose
-
-```bash
-docker compose up   # Starts stack with different port mappings
-```
-
-| Method | Command | PG Port | RAG Port |
-|--------|---------|---------|----------|
-| Makefile (recommended) | `make setup` | 5433 | 8003 |
-| Docker Compose | `docker compose up` | 5432 | 8080 |
-
-Both expose Web UI on 3000, Request Manager on 8000, and Agent Service on 8001.
-
 ## Stop / Clean
 
 ```bash

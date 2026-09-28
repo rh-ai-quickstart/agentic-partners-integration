@@ -21,6 +21,8 @@ bash scripts/setup.sh
 - Starts PostgreSQL, Keycloak, OPA
 - Runs database migrations
 - Starts agent-service, request-manager, rag-api, pf-chat-ui
+- Starts Azure MCP server (Red Hat catalog image with Azure AD auth, if `azure-mcp-server/.env` exists)
+- Starts ARO agent with MCP auth credentials
 - Ingests RAG knowledge base
 
 Users are managed in Keycloak and auto-created in the DB on first login.

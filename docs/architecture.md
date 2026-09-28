@@ -17,7 +17,7 @@
 | Keycloak | 8090 | OIDC identity provider (user authentication) |
 | Web UI (nginx) | 3000 | PatternFly chat interface |
 
-> **Note:** Ports above are for `make setup` (uses `scripts/setup.sh`). The `docker-compose.yaml` uses different host port mappings: PostgreSQL on 5432, RAG API on 8080. Internal container ports remain the same.
+> **Note:** Ports above are for local development (`make setup`). For production, deploy with the Helm chart (see `helm/` directory).
 
 ## Request Flow
 
@@ -175,7 +175,7 @@ Available agents:
 
 ## Project Structure
 
-![Complete project structure showing all directories and key files: agent-service (agent processing with YAML configs), request-manager (AAA enforcement and A2A orchestration), rag-service (vector search), pf-chat-ui (PatternFly web interface), kubernetes-partner-agent (standalone remote agent), shared-models (common library), keycloak (OIDC config), policies (OPA Rego rules), data (support tickets), scripts (automation), helm (K8s deployment), and docker-compose](images/architecture-4.svg)
+![Complete project structure showing all directories and key files: agent-service (agent processing with YAML configs), request-manager (AAA enforcement and A2A orchestration), rag-service (vector search), pf-chat-ui (PatternFly web interface), kubernetes-partner-agent (standalone remote agent), shared-models (common library), keycloak (OIDC config), policies (OPA Rego rules), data (support tickets), scripts (automation), and helm (K8s deployment)](images/architecture-4.svg)
 
 ## Container Images
 

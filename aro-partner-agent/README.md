@@ -84,24 +84,12 @@ This is the same API key used by the rest of the quickstart (agent-service, requ
 
 ### Azure credentials (for the MCP server)
 
-The Azure MCP server needs Azure credentials to access your resources.
-
-**For local development** — use your existing Azure CLI login:
-
-```bash
-az login
-az account show  # verify correct subscription
-```
-
-No service principal needed. The MCP server piggybacks on your
-`az login` session.
-
-**For containers / OpenShift** — create a service principal:
+The Azure MCP server uses Azure AD JWT Bearer authentication. You need
+an Azure AD app registration with a service principal:
 
 ```bash
-# Create a service principal with Reader access
+# Create a service principal
 az ad sp create-for-rbac --name "mcp-server-sp" \
-  --role Reader \
   --scopes /subscriptions/$(az account show --query id -o tsv)
 
 # Output:
@@ -111,15 +99,27 @@ az ad sp create-for-rbac --name "mcp-server-sp" \
 #   "tenant": "..."     ← AZURE_TENANT_ID
 # }
 
-export AZURE_TENANT_ID=<tenant>
-export AZURE_CLIENT_ID=<appId>
-export AZURE_CLIENT_SECRET=<password>
-export AZURE_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+# Add an application ID URI (required for incoming JWT auth)
+az ad app update --id <appId> --identifier-uris "api://<appId>"
 ```
 
-> **Note:** `Reader` is enough for read-only operations (list clusters,
-> query logs, search indexes). Add `Contributor` if you need write
-> operations (create VMs, SQL databases, storage accounts).
+Then configure the credentials in `azure-mcp-server/.env`:
+
+```bash
+cp ../azure-mcp-server/.env.example ../azure-mcp-server/.env
+# Edit with your values:
+#   AZURE_TENANT_ID=<tenant>
+#   AZURE_CLIENT_ID=<appId>
+#   AZURE_CLIENT_SECRET=<password>
+#   AZURE_SUBSCRIPTION_ID=<subscription-id>
+```
+
+The same credentials are used for:
+- **MCP server incoming auth** — `AzureAd__ClientId`/`AzureAd__TenantId` validate JWT tokens
+- **MCP server outgoing auth** — `AZURE_CLIENT_ID`/`AZURE_CLIENT_SECRET` authenticate to Azure APIs
+- **ARO agent token acquisition** — `MCP_AZURE_*` vars let the agent acquire Bearer tokens via `client_credentials` grant
+
+> **Note:** The MCP server runs with `--read-only` to prevent destructive operations.
 
 ## Quick start
 
@@ -151,69 +151,42 @@ curl -X POST http://localhost:8080/api/v1/agents/aro-support/invoke \
 
 ### 3. Run with Azure MCP Server (live Azure tools)
 
-#### Start the Azure MCP server
+Ensure you've configured `azure-mcp-server/.env` (see [Azure credentials](#azure-credentials-for-the-mcp-server) above).
 
-**Option A — npm (local development):**
+**Start the MCP server and agent together:**
 
 ```bash
-# Authenticate with Azure first
-az login
-
-# Start the MCP server with HTTP transport
-npx -y @azure/mcp@latest server start --transport http
+# From the project root
+make setup
 ```
 
-The server starts on `http://localhost:5008/mcp` by default.
-
-**Option B — container (production / OpenShift):**
+Or run them individually:
 
 ```bash
-# Create Azure service principal credentials
-az ad sp create-for-rbac --name "mcp-server-sp" --role Reader \
-  --scopes /subscriptions/<SUBSCRIPTION_ID>
-
-# Run the container
+# Start the MCP server (Red Hat catalog image, pinned to v2.0.0-beta.28)
 docker run -d \
   --name azure-mcp-server \
   --network partner-agent-network \
-  -e AZURE_TENANT_ID=<TENANT_ID> \
-  -e AZURE_CLIENT_ID=<CLIENT_ID> \
-  -e AZURE_CLIENT_SECRET=<CLIENT_SECRET> \
-  -e AZURE_SUBSCRIPTION_ID=<SUBSCRIPTION_ID> \
-  -e ASPNETCORE_URLS=http://+:8080 \
-  -e DOTNET_BUNDLE_EXTRACT_BASE_DIR=/tmp/.net \
+  --env-file ../azure-mcp-server/.env \
   -e HOME=/tmp \
-  -e ALLOW_INSECURE_EXTERNAL_BINDING=true \
+  -e DOTNET_ROOT=/usr/lib64/dotnet \
+  -e DOTNET_BUNDLE_EXTRACT_BASE_DIR=/tmp/.net \
+  -e ASPNETCORE_URLS=http://+:8080 \
+  -e AzureAd__ClientId="${AZURE_CLIENT_ID}" \
+  -e AzureAd__TenantId="${AZURE_TENANT_ID}" \
+  -e "AzureAd__Instance=https://login.microsoftonline.com/" \
   -p 5008:8080 \
+  --entrypoint="" \
   quay.io/rhoai-partner-mcp/ubi10-ms-azure-mcp-server:1774539732-dotnet-builder \
-  --transport http
-```
+  /mcp-server/azmcp server start --transport http --read-only \
+    --outgoing-auth-strategy UseHostingEnvironmentIdentity
 
-**Option C — RHAOI catalog on OpenShift/ARO:**
-
-Deploy the Azure MCP server from the Red Hat AI on OpenShift MCP catalog.
-Create the required secrets first:
-
-```bash
-# Azure service principal credentials
-kubectl create secret generic azure-sp-credentials \
-  --from-literal=tenant-id=<AZURE_TENANT_ID> \
-  --from-literal=client-id=<AZURE_CLIENT_ID> \
-  --from-literal=client-secret=<AZURE_CLIENT_SECRET>
-
-# Azure AD credentials (for inbound auth on the HTTP transport)
-kubectl create secret generic azure-ad-credentials \
-  --from-literal=ad-client-id=<AzureAd_ClientId>
-```
-
-Then deploy via the RHAOI catalog UI or CLI. The MCP server will be
-accessible as a Kubernetes service within the cluster.
-
-#### Start the ARO agent pointing at the MCP server
-
-```bash
-GOOGLE_API_KEY=your-key-here \
-MCP_SERVER_URL=http://localhost:5008/mcp \
+# Start the ARO agent (acquires Bearer tokens automatically)
+AI_API_KEY=your-key-here \
+MCP_SERVER_URL=http://localhost:5008/ \
+MCP_AZURE_TENANT_ID="${AZURE_TENANT_ID}" \
+MCP_AZURE_CLIENT_ID="${AZURE_CLIENT_ID}" \
+MCP_AZURE_CLIENT_SECRET="${AZURE_CLIENT_SECRET}" \
 uv run python -m aro_agent.main
 ```
 
@@ -264,17 +237,14 @@ uv run python -m aro_agent.main
 
 ## Running with the full quickstart
 
-The ARO agent integrates with the quickstart via docker-compose or
-`scripts/setup.sh`. Users with the **azure** department are routed to
-this agent automatically.
+The ARO agent integrates with the quickstart via `make setup` (Docker
+for development) or Helm (production). Users with the **azure**
+department are routed to this agent automatically.
 
 ```bash
 # From the project root
 make build
 make setup
-
-# Or with docker-compose
-docker compose up -d
 ```
 
 The agent runs on port **8004** and is registered in the agent-service
@@ -298,7 +268,7 @@ llm_model: "gemini-2.5-flash"
 
 mcp_servers:
   - name: azure
-    url: "http://azure-mcp-server:8080/mcp"
+    url: "http://azure-mcp-server:8080/"
     transport: "http"          # "http" (StreamableHTTP) or "sse"
     tool_filter:               # only expose tools containing these keywords
       - search
@@ -314,18 +284,18 @@ mcp_servers:
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `AI_API_KEY` | Yes* | — | Universal LLM API key (recommended) |
-| `AI_OPENAI_API_KEY` | No | — | Provider-specific OpenAI key (optional) |
-| `GOOGLE_API_KEY` | Yes* | — | ⚠️ Deprecated. Use `AI_API_KEY` instead. |
-| `OPENAI_API_KEY` | Yes* | `not-set` | ⚠️ Deprecated. Use `AI_API_KEY` instead. |
+| `AI_API_KEY` | Yes | — | LLM API key (works with any provider) |
 | `OPENAI_BASE_URL` | No | — | Override for Azure OpenAI, Ollama, etc. |
 | `OPENAI_MODEL` | No | — | LLM model to use |
 | `MCP_SERVER_URL` | No | from YAML config | MCP server endpoint (overrides YAML) |
 | `MCP_TRANSPORT` | No | `http` | MCP transport: `http` or `sse` |
+| `MCP_AZURE_TENANT_ID` | No | — | Azure AD tenant for MCP server auth |
+| `MCP_AZURE_CLIENT_ID` | No | — | Azure AD client ID for MCP server auth |
+| `MCP_AZURE_CLIENT_SECRET` | No | — | Azure AD client secret for MCP server auth |
 | `LOG_LEVEL` | No | `INFO` | Logging level |
 | `PORT` | No | `8080` | Server port |
 
-> **Note:** The recommended approach is to use `AI_API_KEY` which works with any provider. Legacy variables (`GOOGLE_API_KEY`, `OPENAI_API_KEY`) are still supported but deprecated. The agent uses the OpenAI SDK with an OpenAI-compatible endpoint.
+When `MCP_AZURE_*` variables are set, the agent acquires Bearer tokens via the OAuth 2.0 `client_credentials` grant and includes them in MCP requests. Tokens are cached and refreshed automatically.
 
 ### MCP tool filter
 
@@ -354,7 +324,7 @@ Remove `tool_filter` entirely to expose all 110 tools to the LLM.
 
 | Transport | Config value | URL pattern | Use case |
 |-----------|-------------|-------------|----------|
-| StreamableHTTP | `http` (default) | `/mcp` | Azure MCP server, production deployments |
+| StreamableHTTP | `http` (default) | `/` | Azure MCP server, production deployments |
 | Server-Sent Events | `sse` | `/sse` | Legacy MCP servers |
 
 ## API

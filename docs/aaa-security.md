@@ -24,7 +24,7 @@ The mock pattern has only 4 switching points (all in `shared-models/src/shared_m
 
 ## User Authentication -- Keycloak OIDC
 
-User authentication is handled by **Keycloak** (OIDC Identity Provider). A pre-configured Keycloak container starts with `docker compose up`, with the realm `partner-agent`, the 4 test users, and department roles ready to go. Only users configured in Keycloak can log in.
+User authentication is handled by **Keycloak** (OIDC Identity Provider). A pre-configured Keycloak container starts with `make setup`, with the realm `partner-agent`, the 4 test users, and department roles ready to go. Only users configured in Keycloak can log in.
 
 **Auth flow:**
 

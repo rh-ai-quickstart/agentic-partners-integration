@@ -1,7 +1,7 @@
 # Makefile for Partner Agent Integration POC
 #
-# Primary deployment: scripts/setup.sh (Docker containers)
-# Alternative: docker-compose.yaml
+# Local development: scripts/setup.sh (Docker containers)
+# Production: Helm chart (see helm/ directory)
 
 .PHONY: help
 help:
@@ -22,7 +22,6 @@ help:
 	@echo "  test-agent-service       - Run agent-service unit tests"
 	@echo "  test-k8s-partner         - Run kubernetes-partner-agent unit tests"
 	@echo "  test-aro-partner         - Run aro-partner-agent unit tests"
-	@echo "  test-azure-mcp           - Run azure-mcp-server proxy tests"
 	@echo "  test-coverage            - Run all unit tests with coverage report"
 	@echo ""
 	@echo "Development:"
@@ -96,7 +95,7 @@ test: test-unit
 	@bash scripts/test.sh
 
 .PHONY: test-unit
-test-unit: test-shared-models test-request-manager test-agent-service test-k8s-partner test-aro-partner test-azure-mcp
+test-unit: test-shared-models test-request-manager test-agent-service test-k8s-partner test-aro-partner
 	@echo "All unit tests completed."
 
 .PHONY: test-shared-models
@@ -123,11 +122,6 @@ test-k8s-partner:
 test-aro-partner:
 	@echo "Running aro-partner-agent tests..."
 	@cd aro-partner-agent && uv run python -m pytest tests/
-
-.PHONY: test-azure-mcp
-test-azure-mcp:
-	@echo "Running azure-mcp-server tests..."
-	@cd aro-partner-agent && PYTHONPATH=../azure-mcp-server:$$PYTHONPATH uv run python -m pytest ../azure-mcp-server/tests/ --override-ini="asyncio_mode=auto"
 
 .PHONY: test-coverage
 test-coverage:

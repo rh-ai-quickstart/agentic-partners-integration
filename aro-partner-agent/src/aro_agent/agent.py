@@ -106,6 +106,10 @@ class AROAgent:
             else "http"
         )
 
+        self.mcp_azure_tenant_id: str | None = os.getenv("MCP_AZURE_TENANT_ID")
+        self.mcp_azure_client_id: str | None = os.getenv("MCP_AZURE_CLIENT_ID")
+        self.mcp_azure_client_secret: str | None = os.getenv("MCP_AZURE_CLIENT_SECRET")
+
         logger.info(
             "Initialized AROAgent: model=%s mcp=%s",
             self.model,
@@ -166,6 +170,9 @@ class AROAgent:
             self.mcp_server_url,
             tool_filter=self.mcp_tool_filter,
             transport=self.mcp_transport,
+            azure_tenant_id=self.mcp_azure_tenant_id,
+            azure_client_id=self.mcp_azure_client_id,
+            azure_client_secret=self.mcp_azure_client_secret,
         ) as mcp:
             mcp_tools = await mcp.list_tools()
             openai_tools = MCPClient.to_openai_tools(mcp_tools)

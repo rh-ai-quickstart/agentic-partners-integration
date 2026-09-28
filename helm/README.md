@@ -11,6 +11,8 @@ Deploys the full Partner Agent system to Kubernetes/OpenShift.
 | Agent Service | `ghcr.io/rh-ai-quickstart/partner-agent-service` | 8080 | LLM orchestration |
 | Request Manager | `ghcr.io/rh-ai-quickstart/partner-request-manager` | 8080 | API gateway |
 | PF Chat UI | `ghcr.io/rh-ai-quickstart/partner-pf-chat-ui` | 80 | Web interface |
+| Azure MCP Server | `quay.io/rhoai-partner-mcp/ubi10-ms-azure-mcp-server` | 8080 | Azure tools via MCP (Red Hat catalog) |
+| ARO Agent | `ghcr.io/rh-ai-quickstart/partner-aro-agent` | 8080 | ARO/Azure support agent |
 
 ## Prerequisites
 
@@ -29,17 +31,19 @@ kubectl create namespace partner-agent
 ### 2. Install the chart
 
 ```bash
-# Recommended (new)
 helm install partner-agent ./helm \
   --namespace partner-agent \
   --set llm.apiKey='your-api-key-here' \
-  --set llm.provider='gemini'
-
-# Alternative (legacy, still supported)
-helm install partner-agent ./helm \
-  --namespace partner-agent \
-  --set llm.googleApiKey='your-api-key-here'  # Deprecated
+  --set llm.provider='gemini' \
+  --set azure.tenantId='your-tenant-id' \
+  --set azure.clientId='your-client-id' \
+  --set azure.clientSecret='your-client-secret' \
+  --set azure.subscriptionId='your-subscription-id'
 ```
+
+The Azure MCP server image is pulled directly from the Red Hat MCP catalog
+(`quay.io/rhoai-partner-mcp/ubi10-ms-azure-mcp-server`, pinned to v2.0.0-beta.28).
+The ARO agent acquires Bearer tokens using the same Azure credentials.
 
 ### 3. Verify
 

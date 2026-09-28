@@ -180,32 +180,36 @@ docker run -d \
     partner-kubernetes-agent:latest
 echo "  Kubernetes partner agent starting..."
 
-# Azure MCP Server (HTTP-to-stdio proxy + Azure MCP binary)
-# Uses host Azure CLI credentials (az login) mounted read-only into the container.
-# Falls back to SP env vars from azure-mcp-server/.env if present.
-AZURE_CLI_DIR="${HOME}/.azure"
+# Azure MCP Server (Red Hat MCP catalog image with Azure AD JWT auth)
+# Requires SP credentials in azure-mcp-server/.env for both incoming JWT
+# validation and outgoing Azure API calls.
 AZURE_MCP_ENV="$PROJECT_ROOT/azure-mcp-server/.env"
-if [ -d "$AZURE_CLI_DIR" ] || [ -f "$AZURE_MCP_ENV" ]; then
+if [ -f "$AZURE_MCP_ENV" ]; then
+    # shellcheck disable=SC1090
+    source "$AZURE_MCP_ENV"
     docker rm -f partner-azure-mcp-server 2>/dev/null || true
-    MCP_RUN_ARGS=(
-        -d
-        --name partner-azure-mcp-server
-        --network partner-agent-network
-        -e LOG_LEVEL=INFO
-        -p 5008:8080
-    )
-    if [ -d "$AZURE_CLI_DIR" ]; then
-        echo "  Using Azure CLI credentials from ~/.azure"
-        MCP_RUN_ARGS+=(-v "${AZURE_CLI_DIR}:/tmp/.azure:ro" --user "$(id -u)")
-    fi
-    if [ -f "$AZURE_MCP_ENV" ]; then
-        MCP_RUN_ARGS+=(--env-file "$AZURE_MCP_ENV")
-    fi
-    docker run "${MCP_RUN_ARGS[@]}" partner-azure-mcp-server:latest
+    docker run -d \
+        --name partner-azure-mcp-server \
+        --network partner-agent-network \
+        -e HOME=/tmp \
+        -e DOTNET_ROOT=/usr/lib64/dotnet \
+        -e DOTNET_BUNDLE_EXTRACT_BASE_DIR=/tmp/.net \
+        -e ASPNETCORE_URLS=http://+:8080 \
+        -e AzureAd__ClientId="${AZURE_CLIENT_ID}" \
+        -e AzureAd__TenantId="${AZURE_TENANT_ID}" \
+        -e "AzureAd__Instance=https://login.microsoftonline.com/" \
+        -e AZURE_TENANT_ID="${AZURE_TENANT_ID}" \
+        -e AZURE_CLIENT_ID="${AZURE_CLIENT_ID}" \
+        -e AZURE_CLIENT_SECRET="${AZURE_CLIENT_SECRET}" \
+        -e AZURE_SUBSCRIPTION_ID="${AZURE_SUBSCRIPTION_ID}" \
+        -p 5008:8080 \
+        --entrypoint="" \
+        partner-azure-mcp-server:latest \
+        /mcp-server/azmcp server start --transport http --read-only --outgoing-auth-strategy UseHostingEnvironmentIdentity
     echo "  Azure MCP server starting..."
     MCP_URL="http://partner-azure-mcp-server:8080/"
 else
-    echo -e "${YELLOW}  Skipping Azure MCP server (no ~/.azure dir and no azure-mcp-server/.env found)${NC}"
+    echo -e "${YELLOW}  Skipping Azure MCP server (no azure-mcp-server/.env found)${NC}"
     MCP_URL=""
 fi
 
@@ -218,6 +222,9 @@ docker run -d \
     -e OPENAI_BASE_URL="https://generativelanguage.googleapis.com/v1beta/openai/" \
     -e OPENAI_MODEL="${GEMINI_MODEL:-gemini-2.5-flash}" \
     -e MCP_SERVER_URL="${MCP_URL}" \
+    -e MCP_AZURE_TENANT_ID="${AZURE_TENANT_ID}" \
+    -e MCP_AZURE_CLIENT_ID="${AZURE_CLIENT_ID}" \
+    -e MCP_AZURE_CLIENT_SECRET="${AZURE_CLIENT_SECRET}" \
     -e LOG_LEVEL=INFO \
     -p 8004:8080 \
     partner-aro-agent:latest

@@ -1,54 +1,33 @@
 # Containerfile for azure-mcp-server
 #
-# Works around the broken --dangerously-disable-http-incoming-auth flag
-# by running the Azure MCP binary in stdio mode behind a lightweight
-# Python HTTP proxy.  The proxy exposes unauthenticated HTTP so that
-# the ARO partner agent can call Azure tools without JWT configuration.
+# Uses the official Red Hat MCP catalog image directly with Azure AD
+# JWT Bearer authentication.  No proxy is needed — the ARO agent
+# acquires tokens via client_credentials and passes them as Bearer
+# headers on every MCP request.
 #
-# The official MCR binary is musl-linked (Alpine), so we use a Python
-# Alpine image to match.
+# The Helm chart sets the image to this Red Hat catalog image and
+# overrides the entrypoint to run with --read-only and auth enabled.
+# This Containerfile only wraps the upstream image with the env vars
+# needed for OpenShift (non-root, writable tmp dirs).
 #
-# Build context: project root (same as other services)
+# Pinned to tag 1774539732-dotnet-builder (v2.0.0-beta.28) to avoid
+# breakage from upstream changes.
 
-# Stage 1 — grab the Azure MCP binary from the official Microsoft image
-FROM mcr.microsoft.com/azure-sdk/azure-mcp:latest AS mcp-binary
+FROM quay.io/rhoai-partner-mcp/ubi10-ms-azure-mcp-server:1774539732-dotnet-builder
 
-# Stage 2 — Python runtime with the HTTP proxy (Alpine to match musl binary)
-FROM python:3.12-alpine
-
-# Install runtime dependencies for the .NET binary
-RUN apk add --no-cache libstdc++ libgcc icu-libs curl
-
-WORKDIR /mcp-server
-
-# Copy the Azure MCP binary and its runtime from the official image
-COPY --from=mcp-binary /mcp-server/ /mcp-server/
-
-# Install Python dependencies for the proxy
-RUN pip install --no-cache-dir aiohttp mcp
-
-# Copy the proxy script and az CLI shim
-COPY azure-mcp-server/mcp_proxy.py /mcp-server/mcp_proxy.py
-COPY azure-mcp-server/az_shim.py /usr/local/bin/az_shim.py
-RUN chmod +x /usr/local/bin/az_shim.py && \
-    ln -s /usr/local/bin/az_shim.py /usr/local/bin/az
-
-# .NET runtime needs writable dirs
+# .NET runtime needs writable dirs under /tmp
 RUN mkdir -p /tmp/.net /tmp/.cache /tmp/.aspnet && \
     chmod -R 777 /tmp/.net /tmp/.cache /tmp/.aspnet && \
     chgrp -R 0 /mcp-server && chmod -R g=u /mcp-server
 
-# Run as non-root
-RUN adduser -D -u 1001 mcp-proxy
 USER 1001
 
 ENV HOME=/tmp
-ENV XDG_CACHE_HOME=/tmp/.cache
+ENV DOTNET_ROOT=/usr/lib64/dotnet
 ENV DOTNET_BUNDLE_EXTRACT_BASE_DIR=/tmp/.net
-ENV AZURE_CONFIG_DIR=/tmp/.azure
-ENV PYTHONUNBUFFERED=1
-ENV PORT=8080
+ENV ASPNETCORE_URLS=http://+:8080
 
 EXPOSE 8080
 
-CMD ["python3", "/mcp-server/mcp_proxy.py"]
+ENTRYPOINT ["/mcp-server/azmcp"]
+CMD ["server", "start", "--transport", "http", "--read-only", "--outgoing-auth-strategy", "UseHostingEnvironmentIdentity"]

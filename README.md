@@ -18,14 +18,9 @@ An AI quickstart that troubleshoots Azure Red Hat® OpenShift® (ARO) issues by 
   - [Hardware Requirements](#hardware-requirements)
   - [Minimum Software Requirements](#minimum-software-requirements)
 - [Deploy](#deploy)
-  - [1. Clone the repository](#1-clone-the-repository)
-  - [2. Set up your LLM backend](#2-set-up-your-llm-backend)
-  - [3. Build and start all services](#3-build-and-start-all-services)
-  - [4. Open the application](#4-open-the-application)
-  - [5. (Optional) Connect the Azure MCP server for live tools](#5-optional-connect-the-azure-mcp-server-for-live-tools)
-  - [6. Verify the deployment](#6-verify-the-deployment)
-  - [7. Deploy on OpenShift (Helm)](#7-deploy-on-openshift-helm)
-  - [8. Delete](#8-delete)
+  - [Prerequisites](#prerequisites)
+  - [Deploy on OpenShift (Helm)](#deploy-on-openshift-helm)
+  - [Deploy with Docker (Local Development)](#deploy-with-docker-local-development)
 - [Troubleshooting](#troubleshooting)
 - [Reference](#reference)
 - [Key Capabilities](#key-capabilities)
@@ -45,7 +40,7 @@ This quickstart demonstrates how to integrate live cloud infrastructure tooling 
 
 ### See It in Action
 
-**[Watch the 45-minute demo video](https://build.microsoft.com/en-US/sessions/ODSP915)** from Microsoft Build 2025 to see the ARO Support Agent troubleshooting live Azure infrastructure, or deploy locally and try it yourself with the test users below.
+**[Watch the 5-minute demo video](https://build.microsoft.com/en-US/sessions/ODSP915)** from Microsoft Build 2025 to see the ARO Support Agent troubleshooting live Azure infrastructure, or deploy locally and try it yourself with the test users below.
 
 Once deployed, sign in with one of the test users that have Azure department access:
 
@@ -109,12 +104,15 @@ For production deployments, MCP servers can be deployed directly through the Red
 | [Make](https://www.gnu.org/software/make/) | 4.0+ | Build automation (included on Linux/Mac) |
 | [Ollama](https://ollama.com/) | Latest | **Recommended:** Run local open-weight models (Llama 3.2, Mistral, etc.) |
 | **Alternative:** LLM API key | — | Any OpenAI-compatible API (OpenAI, Gemini, Anthropic - see [Configuration](docs/configuration.md)) |
-| **Optional:** [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) | 2.60+ | Required only for live Azure MCP tool access |
-| **Optional:** Azure MCP server | — | Enables live Azure infrastructure troubleshooting |
+| **Optional:** Azure AD app registration | — | Enables live Azure infrastructure troubleshooting via MCP |
 
 ## Deploy
 
-### 1. Clone the repository
+Both deployment methods are functionally equivalent — same services, same auth flow, same container images. The only difference is the deployment method and where images are pulled from.
+
+### Prerequisites
+
+**1. Clone the repository:**
 
 ```bash
 git clone https://github.com/rh-ai-quickstart/agentic-partners-integration
@@ -122,113 +120,44 @@ cd agentic-partners-integration
 git checkout aro
 ```
 
-### 2. Set up your LLM backend
-
-**Recommended: Local open-weight model with Ollama**
-
-Run Ollama locally for a fully open-source deployment:
+**2. Set up your LLM backend:**
 
 ```bash
-# Start Ollama
+# Option A: External API (Gemini, OpenAI, Anthropic)
+export AI_API_KEY=your-key-here
+export AI_PROVIDER=gemini  # or openai, anthropic
+export AI_MODEL=gemini-2.5-flash
+
+# Option B: Local open-weight model with Ollama (fully open-source)
 docker run -d -p 11434:11434 --name ollama ollama/ollama
-
-# Pull an open-weight model (e.g., Llama 3.2)
 docker exec ollama ollama pull llama3.2
-
-# Configure the quickstart
 export AI_PROVIDER=ollama
 export AI_MODEL=llama3.2
 export AI_BASE_URL=http://localhost:11434
 ```
 
-**Alternative: External API providers**
+See [Configuration](docs/configuration.md) for all supported backends and model options.
 
-If you prefer using external APIs (OpenAI, Gemini, Anthropic):
+**3. (Optional) Configure Azure credentials for live MCP tools:**
 
-```bash
-export AI_API_KEY=your-key-here
-export AI_PROVIDER=gemini  # or openai, anthropic
-export AI_MODEL=gemini-2.5-flash
-```
-
-See [Configuration](docs/configuration.md) for all supported backends, model options, and the full migration guide from legacy environment variables.
-
-### 3. Build and start all services
+The ARO agent works without Azure credentials (answers from LLM knowledge). To enable live Azure infrastructure inspection, you need an [Azure AD app registration](https://learn.microsoft.com/en-us/cli/azure/azure-cli-sp-tutorial-1) with a client secret, an application ID URI (`api://<client-id>`), and the `Mcp.Tools.ReadWrite.All` app role assigned to the service principal.
 
 ```bash
-make setup
+cp azure-mcp-server/.env.example azure-mcp-server/.env
+# Edit azure-mcp-server/.env with your credentials:
+#   AZURE_TENANT_ID=<your-tenant-id>
+#   AZURE_CLIENT_ID=<your-client-id>
+#   AZURE_CLIENT_SECRET=<your-client-secret>
+#   AZURE_SUBSCRIPTION_ID=<your-subscription-id>
 ```
 
-This builds all container images (including the ARO agent), starts infrastructure (PostgreSQL with pgvector, Keycloak, OPA), runs database migrations, starts application services, ingests the RAG knowledge base, and launches the web UI. The ARO agent starts in basic LLM mode — it can answer Azure/ARO questions using LLM knowledge without Azure credentials.
+The MCP server uses Azure AD JWT Bearer authentication. The ARO agent acquires tokens via OAuth 2.0 `client_credentials` and sends them as `Authorization: Bearer <token>` headers. Both Docker and Helm use this same auth flow.
 
-### 4. Open the application
+### Deploy on OpenShift (Helm)
 
-Navigate to [http://localhost:3000](http://localhost:3000) and sign in with one of the [test users](#see-it-in-action).
+The Helm chart deploys all services to Red Hat OpenShift. Custom images are pulled from `ghcr.io/rh-ai-quickstart` and the Azure MCP server is pulled directly from the Red Hat MCP catalog (`quay.io/rhoai-partner-mcp/ubi10-ms-azure-mcp-server`, pinned to v2.0.0-beta.28).
 
-### 5. (Optional) Connect the Azure MCP server for live tools
-
-**The ARO agent works without Azure credentials** — it answers questions using LLM knowledge. To enable **live Azure infrastructure inspection** (list clusters, check resource metrics, query logs), deploy the Azure MCP server using one of the following methods:
-
-**Choose your deployment method:**
-
-**Option A — Local development (Azure CLI already configured):**
-
-Use this if you've already run `az login` on your machine. The MCP server piggybacks on your existing Azure CLI session — no service principal needed.
-
-```bash
-az login
-npx -y @azure/mcp@latest server start --transport http
-# Starts on http://localhost:5008/mcp
-```
-
-**Option B — Containerized deployment (requires Azure service principal):**
-
-Use this for isolated deployments or when you don't have Azure CLI installed. You'll need to [create an Azure service principal](https://learn.microsoft.com/en-us/cli/azure/azure-cli-sp-tutorial-1) first to obtain these credentials:
-
-```bash
-docker run -d \
-  --name azure-mcp-server \
-  --network partner-agent-network \
-  -e AZURE_TENANT_ID=<YOUR_TENANT_ID> \
-  -e AZURE_CLIENT_ID=<YOUR_CLIENT_ID> \
-  -e AZURE_CLIENT_SECRET=<YOUR_CLIENT_SECRET> \
-  -e AZURE_SUBSCRIPTION_ID=<YOUR_SUBSCRIPTION_ID> \
-  -e ASPNETCORE_URLS=http://+:8080 \
-  -e DOTNET_BUNDLE_EXTRACT_BASE_DIR=/tmp/.net \
-  -e HOME=/tmp \
-  -e ALLOW_INSECURE_EXTERNAL_BINDING=true \
-  -p 5008:8080 \
-  quay.io/rhoai-partner-mcp/ubi10-ms-azure-mcp-server:1774539732-dotnet-builder \
-  --transport http
-```
-
-**Option C — OpenShift production deployment:**
-
-Deploy from the Red Hat AI MCP servers catalog. See [`aro-partner-agent/README.md`](aro-partner-agent/README.md) for full deployment instructions including secret creation.
-
-Then restart the ARO agent pointing at the MCP server:
-
-```bash
-MCP_SERVER_URL=http://localhost:5008/mcp make setup
-```
-
-### 6. Verify the deployment
-
-```bash
-make test
-```
-
-This runs unit tests for all services (shared-models, request-manager, agent-service, kubernetes-partner-agent, aro-partner-agent, azure-mcp-server).
-
-### 7. Deploy on OpenShift (Helm)
-
-The same system can be deployed to Red Hat OpenShift using the included Helm chart. All container images are pre-published to `ghcr.io/rh-ai-quickstart` — no local builds required.
-
-**Prerequisites:**
-
-- OpenShift 4.12+ cluster with `oc` CLI authenticated
-- Helm 3.8+
-- An LLM API key (same as the Docker deployment)
+**Requirements:** OpenShift 4.12+ with `oc` CLI authenticated, Helm 3.8+
 
 **1. Create a project and install the chart:**
 
@@ -237,6 +166,7 @@ oc new-project partner-agent
 
 helm install partner-agent ./helm \
   --namespace partner-agent \
+  --set image.tag=aro \
   --set llm.apiKey='your-api-key' \
   --set llm.provider=gemini \
   --set llm.model=gemini-2.5-flash \
@@ -247,69 +177,42 @@ helm install partner-agent ./helm \
   --set networkPolicies.platform=openshift
 ```
 
-This deploys all services (PostgreSQL with pgvector, Keycloak, OPA, RAG API, Agent Service, Request Manager, Kubernetes Partner Agent, and the PatternFly Chat UI), runs database migrations, and configures network policies for OpenShift.
+This deploys PostgreSQL with pgvector, Keycloak, OPA, RAG API, Agent Service, Request Manager, Azure MCP Server, ARO Agent, Kubernetes Partner Agent, and the PatternFly Chat UI. Database migrations run automatically.
 
-**2. Wait for all pods to become ready:**
+**2. Wait for pods and create routes:**
 
 ```bash
+# Wait for all pods to be ready (2-3 minutes)
 oc get pods -n partner-agent -w
-```
 
-All pods should show `1/1 Running` within 2-3 minutes. The `db-migration` job will show `Completed`.
-
-**3. Create OpenShift Routes for external access:**
-
-```bash
-# Chat UI (main application entry point)
+# Create routes for external access
 oc create route edge partner-agent-ui \
   --service=partner-agent-pf-chat-ui \
-  --port=http \
-  --namespace=partner-agent
+  --port=http --namespace=partner-agent
 
-# Keycloak admin console (optional, for user management)
 oc create route edge partner-agent-keycloak \
   --service=partner-agent-keycloak \
-  --port=http \
-  --namespace=partner-agent
+  --port=http --namespace=partner-agent
 ```
 
-**4. Get the route URLs:**
+**3. Access the application:**
 
 ```bash
-# Chat UI URL
+# Get the Chat UI URL
 oc get route partner-agent-ui -n partner-agent \
   -o jsonpath='https://{.spec.host}{"\n"}'
-
-# Keycloak admin URL (optional)
-oc get route partner-agent-keycloak -n partner-agent \
-  -o jsonpath='https://{.spec.host}{"\n"}'
 ```
 
-**5. Verify the deployment:**
+Open the URL and sign in with any of the [test users](#see-it-in-action).
+
+Alternatively, use port-forwarding: `oc port-forward -n partner-agent svc/partner-agent-pf-chat-ui 3000:3000`
+
+**4. Verify:**
 
 ```bash
-# Check all pods are running
 oc get pods -n partner-agent
-
-# Check services are reachable internally
 oc exec deploy/partner-agent-request-manager -n partner-agent \
   -- curl -sf http://localhost:8080/health
-
-# Check RAG knowledge base was ingested
-oc exec deploy/partner-agent-rag-api -n partner-agent \
-  -- curl -sf http://localhost:8080/stats
-
-# List all routes
-oc get routes -n partner-agent
-```
-
-Open the Chat UI route URL in your browser and sign in with any of the [test users](#see-it-in-action). Users are auto-created in the database on first login via Keycloak.
-
-**Alternatively**, if you don't want to create routes, use port-forwarding:
-
-```bash
-oc port-forward -n partner-agent svc/partner-agent-pf-chat-ui 3000:3000
-# Open http://localhost:3000
 ```
 
 **Upgrading:**
@@ -317,12 +220,15 @@ oc port-forward -n partner-agent svc/partner-agent-pf-chat-ui 3000:3000
 ```bash
 helm upgrade partner-agent ./helm \
   --namespace partner-agent \
+  --set image.tag=aro \
   --set llm.apiKey='your-api-key' \
-  --set azure.subscriptionId='your-azure-subscription-id' \
-  --set image.tag=v1.2.3
+  --set azure.tenantId='...' \
+  --set azure.clientId='...' \
+  --set azure.clientSecret='...' \
+  --set azure.subscriptionId='...'
 ```
 
-**Uninstalling:**
+**Delete:**
 
 ```bash
 helm uninstall partner-agent --namespace partner-agent
@@ -331,15 +237,35 @@ oc delete project partner-agent
 
 For full Helm configuration options (scaling, autoscaling, Ollama, custom values files), see the [Helm chart README](helm/README.md).
 
-### 8. Delete
+### Deploy with Docker (Local Development)
 
-To stop and remove all Docker containers, volumes, and networks:
+Builds all images locally and runs containers with `make`. The Azure MCP server uses the same Red Hat MCP catalog image.
+
+**Requirements:** Docker 24.0+, Make 4.0+
+
+**1. Build and start all services:**
+
+```bash
+make setup
+```
+
+If `azure-mcp-server/.env` exists, the Azure MCP server and ARO agent are started with Azure AD auth.
+
+**2. Open the application:**
+
+Navigate to [http://localhost:3000](http://localhost:3000) and sign in with one of the [test users](#see-it-in-action).
+
+**3. Verify:**
+
+```bash
+make test
+```
+
+**Delete:**
 
 ```bash
 make clean
 ```
-
-This stops all running containers, removes them, deletes the Docker network and volumes, and cleans up any generated files. Your source code and `.env` file are not affected.
 
 ## Troubleshooting
 
@@ -349,14 +275,20 @@ This stops all running containers, removes them, deletes the Docker network and 
 
 **Diagnosis:**
 ```bash
-curl http://localhost:5008/mcp
-# Should return MCP server metadata
+# Check the MCP server is running (returns 401 — expected, requires Bearer auth)
+curl -s -o /dev/null -w '%{http_code}' http://localhost:5008/
+
+# Check credentials are set
+docker exec partner-azure-mcp-server env | grep AZURE_
+
+# Check ARO agent logs for MCP connection attempts
+docker logs partner-aro-agent-full 2>&1 | tail -20
 ```
 
 **Solutions:**
-- **Option A (npm):** Ensure `az login` completed successfully and you have an active Azure session
-- **Option B (container):** Verify all 4 Azure environment variables (`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_SUBSCRIPTION_ID`) are set correctly
-- **Network:** Check the ARO agent can reach the MCP server: `docker logs aro-partner-agent` should show MCP connection attempts
+- Verify all 4 Azure environment variables (`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_SUBSCRIPTION_ID`) are set in `azure-mcp-server/.env`
+- Ensure the Azure AD app registration has an application ID URI (`api://<client-id>`) and the `Mcp.Tools.ReadWrite.All` app role assigned
+- Check the ARO agent can reach the MCP server: `docker logs partner-aro-agent-full` should show MCP connection attempts
 
 ### Ollama model not found
 
@@ -440,9 +372,9 @@ Unlike RAG-based agents that search static knowledge bases, the ARO agent connec
 
 The Azure MCP server exposes 110+ tools across 40+ Azure services. A configurable tool filter limits which tools the LLM sees (e.g., only `search`, `storage`, `container`, `cosmos`, `monitor`) to keep context windows manageable and responses focused.
 
-### Multiple MCP Deployment Options
+### Red Hat MCP Catalog
 
-The Azure MCP server can run via npm locally, as a container, or deployed from the Red Hat AI MCP catalog. Each option supports the same MCP protocol — the agent doesn't need to know how the server is deployed.
+The Azure MCP server runs from the Red Hat MCP catalog image (`quay.io/rhoai-partner-mcp/ubi10-ms-azure-mcp-server`), pinned to a specific version for stability. Both Docker and Helm deployments use the same image with Azure AD JWT Bearer authentication — no proxy or wrapper needed.
 
 ### Ecosystem Extensibility
 

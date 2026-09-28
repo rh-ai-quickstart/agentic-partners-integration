@@ -2,7 +2,7 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from aro_agent.mcp_client import MCPClient, MCPToolResult
+from aro_agent.mcp_client import AzureADTokenProvider, MCPClient, MCPToolResult
 
 
 class TestMCPToolResult:
@@ -232,6 +232,90 @@ class TestMCPClientFilterEdgeCases:
             "get_azure_storage_details",
             "get_azure_cosmos_details",
         }
+
+
+class TestMCPClientAuth:
+    def test_no_auth_by_default(self):
+        client = MCPClient("http://localhost:8080/mcp")
+        assert client._token_provider is None
+
+    def test_auth_configured_with_all_params(self):
+        client = MCPClient(
+            "http://localhost:8080/mcp",
+            azure_tenant_id="tid",
+            azure_client_id="cid",
+            azure_client_secret="secret",
+        )
+        assert client._token_provider is not None
+
+    def test_auth_not_configured_with_partial_params(self):
+        client = MCPClient(
+            "http://localhost:8080/mcp",
+            azure_tenant_id="tid",
+            azure_client_id="cid",
+        )
+        assert client._token_provider is None
+
+    async def test_get_auth_headers_none_without_provider(self):
+        client = MCPClient("http://localhost:8080/mcp")
+        headers = await client._get_auth_headers()
+        assert headers is None
+
+    async def test_get_auth_headers_with_provider(self):
+        client = MCPClient(
+            "http://localhost:8080/mcp",
+            azure_tenant_id="tid",
+            azure_client_id="cid",
+            azure_client_secret="secret",
+        )
+        client._token_provider = AsyncMock(spec=AzureADTokenProvider)
+        client._token_provider.get_token = AsyncMock(return_value="fake-token")
+        headers = await client._get_auth_headers()
+        assert headers == {"Authorization": "Bearer fake-token"}
+
+
+class TestAzureADTokenProvider:
+    async def test_token_acquisition(self):
+        provider = AzureADTokenProvider("tid", "cid", "secret")
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "access_token": "test-token-123",
+            "expires_in": 3600,
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("aro_agent.mcp_client.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+
+            token = await provider.get_token()
+            assert token == "test-token-123"
+
+    async def test_token_caching(self):
+        provider = AzureADTokenProvider("tid", "cid", "secret")
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "access_token": "cached-token",
+            "expires_in": 3600,
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("aro_agent.mcp_client.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+
+            token1 = await provider.get_token()
+            token2 = await provider.get_token()
+            assert token1 == token2
+            assert mock_client.post.await_count == 1
 
 
 class TestMCPClientContextManager:

@@ -12,7 +12,6 @@ image:
   pfChatUi: partner-pf-chat-ui
   kubernetesAgent: partner-kubernetes-agent
   aroAgent: partner-aro-agent
-  azureMcpServer: partner-azure-mcp-server
   pullPolicy: Always
   tag: "latest"
 
@@ -190,8 +189,13 @@ kubernetesAgent:
       cpu: "500m"
 
 # Azure MCP Server (ARO-specific - disable for main branch)
+# Uses the official Red Hat MCP catalog image directly with Azure AD
+# JWT Bearer auth — no proxy needed.
 azureMcpServer:
   enabled: true
+  image:
+    repository: "quay.io/rhoai-partner-mcp/ubi10-ms-azure-mcp-server"
+    tag: "1774539732-dotnet-builder"  # Pinned — v2.0.0-beta.28
   resources:
     requests:
       memory: "256Mi"
@@ -213,7 +217,7 @@ aroAgent:
       memory: "512Mi"
       cpu: "500m"
 
-# Azure credentials (for Azure MCP server)
+# Azure credentials (for Azure MCP server outgoing auth and incoming JWT validation)
 azure:
   tenantId: ""
   clientId: ""

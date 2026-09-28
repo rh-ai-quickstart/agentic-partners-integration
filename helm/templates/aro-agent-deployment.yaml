@@ -40,6 +40,24 @@ spec:
         {{- include "partner-agent.llmEnvVars" . | nindent 8 }}
         - name: MCP_SERVER_URL
           value: {{ .Values.aroAgent.mcpServerUrl | default (printf "http://%s-azure-mcp-server/" $fullName) | quote }}
+        - name: MCP_AZURE_TENANT_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-azure-credentials
+              key: tenant-id
+              optional: true
+        - name: MCP_AZURE_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-azure-credentials
+              key: client-id
+              optional: true
+        - name: MCP_AZURE_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-azure-credentials
+              key: client-secret
+              optional: true
         - name: LOG_LEVEL
           value: {{ .Values.logLevel | default "INFO" | quote }}
         {{- if .Values.aroAgent.resources }}

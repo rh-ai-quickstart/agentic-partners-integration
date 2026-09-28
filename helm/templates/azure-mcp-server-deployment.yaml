@@ -30,15 +30,46 @@ spec:
           type: RuntimeDefault
       containers:
       - name: azure-mcp-server
-        image: "{{ .Values.image.registry }}/{{ .Values.image.azureMcpServer }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        image: "{{ .Values.azureMcpServer.image.repository }}:{{ .Values.azureMcpServer.image.tag }}"
         imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command: ["/mcp-server/azmcp"]
+        args:
+          - "server"
+          - "start"
+          - "--transport"
+          - "http"
+          - "--read-only"
+          - "--outgoing-auth-strategy"
+          - "UseHostingEnvironmentIdentity"
         ports:
         - containerPort: 8080
           protocol: TCP
           name: http
         env:
-        - name: LOG_LEVEL
-          value: {{ .Values.logLevel | default "INFO" | quote }}
+        - name: HOME
+          value: /tmp
+        - name: DOTNET_ROOT
+          value: /usr/lib64/dotnet
+        - name: DOTNET_BUNDLE_EXTRACT_BASE_DIR
+          value: /tmp/.net
+        - name: ASPNETCORE_URLS
+          value: "http://+:8080"
+        # Azure AD incoming auth (JWT Bearer validation)
+        - name: AzureAd__ClientId
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-azure-credentials
+              key: client-id
+              optional: true
+        - name: AzureAd__TenantId
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-azure-credentials
+              key: tenant-id
+              optional: true
+        - name: AzureAd__Instance
+          value: "https://login.microsoftonline.com/"
+        # Azure outgoing auth (service principal for Azure API calls)
         - name: AZURE_TENANT_ID
           valueFrom:
             secretKeyRef:
