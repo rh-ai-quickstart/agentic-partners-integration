@@ -72,7 +72,10 @@ llm:
   backend: "gemini"  # Deprecated: use 'provider' instead
   googleApiKey: ""  # Deprecated: use 'apiKey' or 'geminiApiKey'
   geminiModel: "gemini-2.5-flash"  # Deprecated: use 'model'
-  openaiModel: "gpt-4"  # Deprecated: use 'model'
+  openaiModel: "gemini-2.5-flash"  # Used by kubernetes-agent via OpenAI SDK
+
+  # OpenAI-compatible base URL (used by kubernetes-agent for Gemini compatibility)
+  openaiBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/"
 
   # Ollama
   ollamaBaseUrl: "http://ollama:11434"

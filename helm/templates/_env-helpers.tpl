@@ -105,6 +105,12 @@ LLM environment variables
       name: {{ include "partner-agent.fullname" . }}-llm-credentials
       key: openai-api-key
       optional: true
+- name: OPENAI_BASE_URL
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "partner-agent.fullname" . }}-llm-credentials
+      key: openai-base-url
+      optional: true
 - name: OPENAI_MODEL
   valueFrom:
     secretKeyRef:

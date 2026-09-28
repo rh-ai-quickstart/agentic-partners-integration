@@ -682,6 +682,39 @@ check_chat_denied() {
     fi
 }
 
+check_rag_ticket_type() {
+    local label="$1"
+    local token="$2"
+    local message="$3"
+    local expected_agent="$4"
+    local expected_prefix="$5"
+
+    local resp agent rag_sources
+
+    resp=$(send_chat "$token" "$message")
+    agent=$(echo "$resp" | jq -r '.agent // empty') || agent=""
+    rag_sources=$(echo "$resp" | jq -r '.metadata.rag_sources // [] | .[]' 2>/dev/null) || rag_sources=""
+
+    if [ -z "$rag_sources" ]; then
+        record_fail "$label" "No RAG sources in response (agent=$agent)"
+        return
+    fi
+
+    local all_match=true wrong_ids=""
+    for src_id in $rag_sources; do
+        if ! echo "$src_id" | grep -q "^${expected_prefix}"; then
+            all_match=false
+            wrong_ids="$wrong_ids $src_id"
+        fi
+    done
+
+    if $all_match; then
+        record_pass "$label (agent=$agent, sources=$rag_sources)"
+    else
+        record_fail "$label" "Expected ${expected_prefix}* tickets, got wrong:${wrong_ids} (agent=$agent)"
+    fi
+}
+
 phase_5_chat_tests() {
     section_header "PHASE 5: Chat & Authorization Tests"
 
@@ -737,6 +770,40 @@ phase_5_chat_tests() {
             "ospf,neighbor,adjacency,routing,network"
     else
         record_skip "Chat: sharon test (no token)"
+    fi
+
+    # 5.6: RAG ticket type isolation — each agent returns its own ticket prefix
+    echo ""
+    echo "  ── RAG ticket type isolation tests ──"
+
+    # Use sharon (has all departments) for all ticket type tests
+    local ticket_token="${USER_TOKENS[sharon]:-${USER_TOKENS[carlos]:-}}"
+    if [ -n "$ticket_token" ]; then
+        echo "  Testing kubernetes-support returns K8S-TICKET-* sources..."
+        check_rag_ticket_type \
+            "RAG: kubernetes-support → K8S-TICKET" \
+            "$ticket_token" \
+            "My pods keep restarting with CrashLoopBackOff errors" \
+            "kubernetes-support" \
+            "K8S-TICKET"
+
+        echo "  Testing software-support returns SW-TICKET-* sources..."
+        check_rag_ticket_type \
+            "RAG: software-support → SW-TICKET" \
+            "$ticket_token" \
+            "My application crashes with an unhandled exception error 500" \
+            "software-support" \
+            "SW-TICKET"
+
+        echo "  Testing network-support returns NET-TICKET-* sources..."
+        check_rag_ticket_type \
+            "RAG: network-support → NET-TICKET" \
+            "$ticket_token" \
+            "Our OSPF neighbor adjacency keeps flapping on the core router" \
+            "network-support" \
+            "NET-TICKET"
+    else
+        record_skip "RAG ticket type tests (no token available)"
     fi
 }
 

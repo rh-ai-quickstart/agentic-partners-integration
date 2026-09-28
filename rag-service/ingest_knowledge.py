@@ -121,12 +121,25 @@ def load_from_json_files(data_dir: str = "data") -> Dict[str, List[Dict[str, Any
             collections["network_support"] = network_tickets
             logger.info("Loaded network support documents", count=len(network_tickets))
 
+    # Load kubernetes support tickets
+    kubernetes_file = data_path / "kubernetes_support_tickets.json"
+    if kubernetes_file.exists():
+        logger.info("Loading kubernetes support tickets", path=str(kubernetes_file))
+        with open(kubernetes_file, "r") as f:
+            kubernetes_tickets = json.load(f)
+            collections["kubernetes_support"] = kubernetes_tickets
+            logger.info(
+                "Loaded kubernetes support documents", count=len(kubernetes_tickets)
+            )
+
     # Also create combined collection for general search
     all_tickets = []
     if "software_support" in collections:
         all_tickets.extend(collections["software_support"])
     if "network_support" in collections:
         all_tickets.extend(collections["network_support"])
+    if "kubernetes_support" in collections:
+        all_tickets.extend(collections["kubernetes_support"])
 
     if all_tickets:
         collections["support_tickets"] = all_tickets

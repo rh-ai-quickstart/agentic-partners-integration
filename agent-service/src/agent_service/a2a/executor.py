@@ -185,6 +185,13 @@ The following information was retrieved from the support knowledge base for the 
 
         logger.info("Querying RAG API: endpoint=%s query=%s", rag_endpoint, query[:100])
 
+        collection_map = {
+            "software-support": "software_support",
+            "network-support": "network_support",
+            "kubernetes-support": "kubernetes_support",
+        }
+        rag_collection = collection_map.get(self._agent_name, "support_tickets")
+
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.post(
@@ -193,6 +200,7 @@ The following information was retrieved from the support knowledge base for the 
                         "user_query": query,
                         "num_sources": 3,
                         "only_high_similarity_nodes": False,
+                        "collection": rag_collection,
                     },
                 )
 

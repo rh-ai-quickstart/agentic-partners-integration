@@ -567,6 +567,13 @@ FOLLOW-UP CRITICAL: When the user sends a short reply like "Yes", "Sure", "Do it
                 query=request.message[:100],
             )
 
+            collection_map = {
+                "software-support": "software_support",
+                "network-support": "network_support",
+                "kubernetes-support": "kubernetes_support",
+            }
+            rag_collection = collection_map.get(agent_name, "support_tickets")
+
             try:
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     rag_response = await client.post(
@@ -575,6 +582,7 @@ FOLLOW-UP CRITICAL: When the user sends a short reply like "Yes", "Sure", "Do it
                             "user_query": request.message,
                             "num_sources": 3,
                             "only_high_similarity_nodes": False,
+                            "collection": rag_collection,
                         },
                     )
 

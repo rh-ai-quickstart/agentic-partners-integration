@@ -86,6 +86,7 @@ async def invoke_agent(request: AgentInvokeRequest) -> AgentInvokeResponse:
                         "user_query": request.message,
                         "num_sources": 3,
                         "only_high_similarity_nodes": False,
+                        "collection": "kubernetes_support",
                     },
                 )
                 if rag_response.status_code == 200:
