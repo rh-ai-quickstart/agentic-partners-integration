@@ -8,10 +8,14 @@ requests without out-of-band documentation.
 import os
 
 import pytest
-from a2a.types import AgentCard, OAuth2SecurityScheme, MutualTLSSecurityScheme, SecurityScheme
+from a2a.types import (
+    AgentCard,
+    MutualTLSSecurityScheme,
+    OAuth2SecurityScheme,
+    SecurityScheme,
+)
 
 from agent_service.a2a.agent_cards import create_agent_card
-
 
 MINIMAL_CONFIG = {
     "name": "kubernetes-support",
@@ -162,6 +166,7 @@ class TestEnvironmentOverrides:
         )
         # Re-import to pick up the monkeypatched env var
         import importlib
+
         import agent_service.a2a.agent_cards as cards_module
         importlib.reload(cards_module)
 
@@ -177,6 +182,7 @@ class TestEnvironmentOverrides:
     def test_custom_spiffe_trust_domain_via_env(self, monkeypatch):
         monkeypatch.setenv("SPIFFE_TRUST_DOMAIN", "acme.corp")
         import importlib
+
         import agent_service.a2a.agent_cards as cards_module
         importlib.reload(cards_module)
 

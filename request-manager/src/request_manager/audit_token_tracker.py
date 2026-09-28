@@ -17,7 +17,6 @@ from typing import Dict, List, Optional
 
 import jwt
 import structlog
-
 from shared_models.audit import AuditService
 
 logger = structlog.get_logger()

@@ -118,8 +118,8 @@ from shared_models.identity_middleware import IdentityMiddleware
 app.add_middleware(IdentityMiddleware)
 
 # JWT validation — per-hop defense-in-depth
+from .jwt_auth import JWT_VALIDATION_ENABLED as _JWT_VALIDATION_ENABLED
 from .jwt_auth import (
-    JWT_VALIDATION_ENABLED as _JWT_VALIDATION_ENABLED,
     JWTAuthError,
     validate_bearer_token,
 )

@@ -9,15 +9,16 @@ the system correctly, catching issues with:
 - Token exchange with delegation
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from shared_models.policy_client import Delegation
+
+import pytest
 from shared_models.delegation_chain import (
     build_act_claim,
+    extract_original_user,
     parse_act_claim,
     validate_delegation_chain,
-    extract_original_user,
 )
+from shared_models.policy_client import Delegation
 
 
 class TestDelegationDataclass:

@@ -1,7 +1,9 @@
 """Tests for token_exchange.py audit event emission."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
 from request_manager.token_exchange import TokenExchangeClient, TokenExchangeError
 
 

@@ -15,8 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from shared_models.spire_client import SVIDInfo, SPIREClient, get_spire_client
-
+from shared_models.spire_client import SPIREClient, SVIDInfo, get_spire_client
 
 # ── SVIDInfo ────────────────────────────────────────────────────────────────
 

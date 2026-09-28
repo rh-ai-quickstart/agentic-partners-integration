@@ -1,8 +1,9 @@
 """Tests for audit_token_tracker.py token masking and audit logging."""
 
 import hashlib
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from request_manager.audit_token_tracker import TokenAuditTracker
 

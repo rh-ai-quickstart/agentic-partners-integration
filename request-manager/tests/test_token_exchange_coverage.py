@@ -1,9 +1,10 @@
 """Tests for token_exchange.py — covering remaining uncovered lines."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import httpx
 import jwt
+import pytest
 
 from request_manager.token_exchange import (
     TokenExchangeClient,

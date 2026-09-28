@@ -563,7 +563,7 @@ class TestLifespan:
 
     def test_lifespan_returns_callable(self):
         """lifespan() returns a callable context manager (line 131)."""
-        from request_manager.main import lifespan, app
+        from request_manager.main import app, lifespan
 
         result = lifespan(app)
         # lifespan returns an async context manager from create_shared_lifespan

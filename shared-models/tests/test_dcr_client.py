@@ -9,11 +9,10 @@ Tests cover:
 """
 
 import os
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
-
+import pytest
 
 # ── Feature-flag disabled (default) ─────────────────────────────────────────
 
@@ -24,6 +23,7 @@ class TestDCRDisabledByDefault:
         monkeypatch.delenv("DCR_ENABLED", raising=False)
 
         import importlib
+
         import shared_models.dcr_client as dcr_module
         importlib.reload(dcr_module)
 
@@ -40,6 +40,7 @@ class TestDCRDisabledByDefault:
     async def test_ensure_registered_noop_when_explicitly_false(self, monkeypatch):
         monkeypatch.setenv("DCR_ENABLED", "false")
         import importlib
+
         import shared_models.dcr_client as dcr_module
         importlib.reload(dcr_module)
 
@@ -65,6 +66,7 @@ class TestDCRRegistrationFlow:
         monkeypatch.setenv("KEYCLOAK_DCR_INITIAL_ACCESS_TOKEN", "test-iat-token")
 
         import importlib
+
         import shared_models.dcr_client as dcr_module
         importlib.reload(dcr_module)
 
@@ -111,6 +113,7 @@ class TestDCRRegistrationFlow:
         monkeypatch.setenv("KEYCLOAK_DCR_INITIAL_ACCESS_TOKEN", "test-iat-token")
 
         import importlib
+
         import shared_models.dcr_client as dcr_module
         importlib.reload(dcr_module)
 
@@ -151,6 +154,7 @@ class TestDCRReRegistration:
         monkeypatch.setenv("DCR_ENABLED", "true")
 
         import importlib
+
         import shared_models.dcr_client as dcr_module
         importlib.reload(dcr_module)
 
@@ -174,6 +178,7 @@ class TestDCRReRegistration:
         monkeypatch.setenv("DCR_ENABLED", "true")
 
         import importlib
+
         import shared_models.dcr_client as dcr_module
         importlib.reload(dcr_module)
 
@@ -202,6 +207,7 @@ class TestDCRErrorHandling:
         monkeypatch.delenv("KEYCLOAK_DCR_INITIAL_ACCESS_TOKEN", raising=False)
 
         import importlib
+
         import shared_models.dcr_client as dcr_module
         importlib.reload(dcr_module)
 
@@ -222,6 +228,7 @@ class TestDCRErrorHandling:
         monkeypatch.setenv("KEYCLOAK_DCR_INITIAL_ACCESS_TOKEN", "test-iat-token")
 
         import importlib
+
         import shared_models.dcr_client as dcr_module
         importlib.reload(dcr_module)
 
@@ -258,6 +265,7 @@ class TestDCRRetryLoop:
         monkeypatch.setenv("DCR_RETRY_DELAY_SECONDS", "0")
 
         import importlib
+
         import shared_models.dcr_client as dcr_module
         importlib.reload(dcr_module)
 
@@ -283,6 +291,7 @@ class TestDCRRetryLoop:
         monkeypatch.setenv("DCR_ENABLED", "true")
 
         import importlib
+
         import shared_models.dcr_client as dcr_module
         importlib.reload(dcr_module)
 
@@ -413,6 +422,7 @@ class TestDCRRegisterBranches:
         monkeypatch.setenv("KEYCLOAK_DCR_INITIAL_ACCESS_TOKEN", "test-iat")
 
         import importlib
+
         import shared_models.dcr_client as dcr_module
         importlib.reload(dcr_module)
 
@@ -443,6 +453,7 @@ class TestDCRRegisterBranches:
         monkeypatch.setenv("KEYCLOAK_DCR_INITIAL_ACCESS_TOKEN", "test-iat")
 
         import importlib
+
         import shared_models.dcr_client as dcr_module
         importlib.reload(dcr_module)
 
@@ -554,6 +565,7 @@ class TestGetJwtSvidAssertion:
         monkeypatch.setenv("KEYCLOAK_REALM", "partner-agent")
 
         import importlib
+
         import shared_models.dcr_client as dcr_module
         importlib.reload(dcr_module)
 
@@ -581,6 +593,7 @@ class TestGetJwtSvidAssertion:
         monkeypatch.setenv("KEYCLOAK_REALM", "partner-agent")
 
         import importlib
+
         import shared_models.dcr_client as dcr_module
         importlib.reload(dcr_module)
 
@@ -611,6 +624,7 @@ class TestDCRRegisterSpiffeAuthMode:
         monkeypatch.setenv("KEYCLOAK_DCR_INITIAL_ACCESS_TOKEN", "test-iat")
 
         import importlib
+
         import shared_models.dcr_client as dcr_module
         importlib.reload(dcr_module)
 
@@ -660,6 +674,7 @@ class TestDCRRegisterSpiffeAuthMode:
         monkeypatch.setenv("KEYCLOAK_DCR_INITIAL_ACCESS_TOKEN", "fallback-iat")
 
         import importlib
+
         import shared_models.dcr_client as dcr_module
         importlib.reload(dcr_module)
 
@@ -704,6 +719,7 @@ class TestDCRRegisterSpiffeAuthMode:
         monkeypatch.delenv("KEYCLOAK_DCR_INITIAL_ACCESS_TOKEN", raising=False)
 
         import importlib
+
         import shared_models.dcr_client as dcr_module
         importlib.reload(dcr_module)
 
@@ -725,6 +741,7 @@ class TestDCRRegisterSpiffeAuthMode:
         monkeypatch.setenv("KEYCLOAK_DCR_INITIAL_ACCESS_TOKEN", "test-iat-token")
 
         import importlib
+
         import shared_models.dcr_client as dcr_module
         importlib.reload(dcr_module)
 

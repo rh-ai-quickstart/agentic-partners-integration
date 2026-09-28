@@ -8,11 +8,11 @@ Covers:
 - Graceful cascade (Tier 2 failures do not break Tier 3 results)
 """
 
-import pytest
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import pytest
 
 # Reset module-level cache between tests
 import request_manager.communication_strategy as cs_module

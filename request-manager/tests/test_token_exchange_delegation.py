@@ -9,14 +9,15 @@ This module tests RFC 8693 token exchange delegation scenarios:
 """
 
 import json
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import jwt
+import pytest
 
 from request_manager.token_exchange import (
+    TOKEN_TYPE_ACCESS_TOKEN,
     TokenExchangeClient,
     TokenExchangeError,
-    TOKEN_TYPE_ACCESS_TOKEN,
 )
 
 

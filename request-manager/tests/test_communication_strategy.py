@@ -1,10 +1,9 @@
 """Tests for request_manager.communication_strategy."""
 
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-from datetime import datetime, timezone
 
 from request_manager.communication_strategy import (
     DirectHTTPStrategy,

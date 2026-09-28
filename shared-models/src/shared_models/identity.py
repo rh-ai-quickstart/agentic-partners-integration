@@ -7,10 +7,10 @@ Uses official spiffe library from https://pypi.org/project/spiffe/
 Identity is fetched from SPIRE Agent via the Workload API (X.509-SVIDs).
 """
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import Optional
-import logging
 
 from fastapi import Request
 
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 TRUST_DOMAIN: str = os.getenv("SPIFFE_TRUST_DOMAIN", "partner.example.com")
 
 # Import SPIRE client (production)
-from .spire_client import get_spire_client, SPIFFE_AVAILABLE
+from .spire_client import SPIFFE_AVAILABLE, get_spire_client
 
 
 @dataclass

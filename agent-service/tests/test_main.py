@@ -877,7 +877,7 @@ class TestLifespan:
         self, mock_create_lifespan, patched_app
     ):
         """Line 27: lifespan function calls create_shared_lifespan."""
-        from agent_service.main import lifespan, _agent_service_startup
+        from agent_service.main import _agent_service_startup, lifespan
 
         mock_create_lifespan.return_value = MagicMock()
 

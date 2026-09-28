@@ -1,12 +1,14 @@
 """Tests for shared_models.policy_client module."""
 
-from unittest.mock import mock_open, patch, MagicMock
+from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
 from shared_models.policy_client import (
     Delegation,
     PolicyDecision,
+    _get_service_names,
+    _get_trust_domain,
     _load_capabilities,
     _resolve_user_departments,
     check_agent_authorization,
@@ -16,8 +18,6 @@ from shared_models.policy_client import (
     parse_spiffe_type,
     register_dynamic_agent,
     reload_capabilities,
-    _get_trust_domain,
-    _get_service_names,
 )
 
 

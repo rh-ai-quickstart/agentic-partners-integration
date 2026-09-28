@@ -441,12 +441,14 @@ class TestJWTValidationInMainInvoke:
             patch("agent_service.a2a.server.get_a2a_app", return_value=MagicMock()),
         ):
             import importlib
+
             import agent_service.main
             importlib.reload(agent_service.main)
             app = agent_service.main.app
 
-        from agent_service.jwt_auth import JWTAuthError
         from fastapi.testclient import TestClient
+
+        from agent_service.jwt_auth import JWTAuthError
 
         with patch("agent_service.main._JWT_VALIDATION_ENABLED", True), \
              patch("agent_service.main.validate_bearer_token", side_effect=JWTAuthError("Authentication failed")):
@@ -484,6 +486,7 @@ class TestJWTValidationInMainInvoke:
 
         with patch("agent_service.a2a.server.get_a2a_app", return_value=MagicMock()):
             import importlib
+
             import agent_service.main
             importlib.reload(agent_service.main)
             app = agent_service.main.app
@@ -526,6 +529,7 @@ class TestJWTValidationInMainInvoke:
 
         with patch("agent_service.a2a.server.get_a2a_app", return_value=MagicMock()):
             import importlib
+
             import agent_service.main
             importlib.reload(agent_service.main)
             app = agent_service.main.app

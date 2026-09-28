@@ -4,8 +4,9 @@ Verifies that the agent-service gateway card directory is served at the
 expected URL so external callers can discover all specialist agents.
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 from fastapi.testclient import TestClient
 
 

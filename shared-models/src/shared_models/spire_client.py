@@ -5,12 +5,12 @@ Uses SPIRE Agent CLI for reliable SVID fetching.
 This approach is production-ready and avoids Python library issues.
 """
 
-import os
 import json
-import subprocess
 import logging
-from typing import Optional
+import os
+import subprocess
 from dataclasses import dataclass
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
