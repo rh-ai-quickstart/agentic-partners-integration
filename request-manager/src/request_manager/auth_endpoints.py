@@ -72,13 +72,13 @@ def _decode_keycloak_jwt(token: str) -> dict:
     """Decode a Keycloak-issued JWT using JWKS. Raises on failure."""
     client = _get_jwks_client()
     signing_key = client.get_signing_key_from_jwt(token)
-    # Don't verify audience - tokens may have agent-specific audiences
-    # Signature verification is sufficient for authentication
+    expected_issuer = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}"
     return jwt.decode(
         token,
         signing_key.key,
         algorithms=["RS256"],
-        options={"verify_aud": False},  # Accept any audience
+        issuer=expected_issuer,
+        options={"verify_aud": False, "verify_iss": True},
     )
 
 
@@ -281,7 +281,7 @@ async def me(
         payload = _decode_keycloak_jwt(token)
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Authentication failed")
-    except jwt.PyJWTError as e:
+    except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Authentication failed")
 
     email = payload.get("email", payload.get("preferred_username", ""))

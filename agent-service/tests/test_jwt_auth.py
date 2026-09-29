@@ -316,7 +316,7 @@ class TestValidateBearerToken:
             patch("agent_service.jwt_auth._get_jwks_client", return_value=mock_jwks_client),
             patch("agent_service.jwt_auth.jwt.decode", return_value=payload) as mock_decode,
         ):
-            result = validate_bearer_token("Bearer valid-token", expected_audience="custom-audience")
+            validate_bearer_token("Bearer valid-token", expected_audience="custom-audience")
 
         # Verify jwt.decode was called with the custom audience
         mock_decode.assert_called_once()
@@ -554,3 +554,111 @@ class TestJWTValidationInMainInvoke:
 
         assert response.status_code == 200
         mock_validate.assert_not_called()
+
+
+class TestIssuerValidation:
+    """Tests for JWT issuer validation (issuer= param and InvalidIssuerError handler)."""
+
+    def test_wrong_issuer_raises_jwt_auth_error(self):
+        """A token with an issuer from a different realm should raise JWTAuthError."""
+        from agent_service.jwt_auth import JWTAuthError, validate_bearer_token
+
+        mock_jwks_client = MagicMock()
+        mock_signing_key = MagicMock()
+        mock_jwks_client.get_signing_key_from_jwt.return_value = mock_signing_key
+
+        with (
+            patch("agent_service.jwt_auth.JWT_VALIDATION_ENABLED", True),
+            patch("agent_service.jwt_auth._get_jwks_client", return_value=mock_jwks_client),
+            patch(
+                "agent_service.jwt_auth.jwt.decode",
+                side_effect=pyjwt.InvalidIssuerError("Invalid issuer"),
+            ),
+        ):
+            with pytest.raises(JWTAuthError, match="Authentication failed"):
+                validate_bearer_token("Bearer token-with-wrong-issuer")
+
+    def test_correct_issuer_passes(self):
+        """A token whose issuer matches KEYCLOAK_URL/realms/KEYCLOAK_REALM should pass."""
+        from agent_service.jwt_auth import validate_bearer_token
+
+        mock_jwks_client = MagicMock()
+        mock_signing_key = MagicMock()
+        mock_jwks_client.get_signing_key_from_jwt.return_value = mock_signing_key
+
+        payload = {
+            "sub": "user-issuer-ok",
+            "iss": "http://keycloak:8080/realms/partner-agent",
+            "aud": "agent-service",
+        }
+
+        with (
+            patch("agent_service.jwt_auth.JWT_VALIDATION_ENABLED", True),
+            patch("agent_service.jwt_auth.KEYCLOAK_URL", "http://keycloak:8080"),
+            patch("agent_service.jwt_auth.KEYCLOAK_REALM", "partner-agent"),
+            patch("agent_service.jwt_auth._get_jwks_client", return_value=mock_jwks_client),
+            patch("agent_service.jwt_auth.jwt.decode", return_value=payload),
+        ):
+            result = validate_bearer_token("Bearer valid-issuer-token")
+
+        assert result.subject == "user-issuer-ok"
+        assert result.issuer == "http://keycloak:8080/realms/partner-agent"
+
+    def test_expected_issuer_format(self):
+        """The expected issuer string must equal '{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}'."""
+        from agent_service.jwt_auth import validate_bearer_token
+
+        mock_jwks_client = MagicMock()
+        mock_signing_key = MagicMock()
+        mock_jwks_client.get_signing_key_from_jwt.return_value = mock_signing_key
+
+        custom_url = "https://sso.example.com"
+        custom_realm = "my-realm"
+
+        payload = {
+            "sub": "user-1",
+            "iss": f"{custom_url}/realms/{custom_realm}",
+            "aud": "agent-service",
+        }
+
+        with (
+            patch("agent_service.jwt_auth.JWT_VALIDATION_ENABLED", True),
+            patch("agent_service.jwt_auth.KEYCLOAK_URL", custom_url),
+            patch("agent_service.jwt_auth.KEYCLOAK_REALM", custom_realm),
+            patch("agent_service.jwt_auth._get_jwks_client", return_value=mock_jwks_client),
+            patch("agent_service.jwt_auth.jwt.decode", return_value=payload) as mock_decode,
+        ):
+            validate_bearer_token("Bearer some-token")
+
+        # Verify that jwt.decode was called with issuer= matching the expected format
+        mock_decode.assert_called_once()
+        call_kwargs = mock_decode.call_args
+        expected_issuer = f"{custom_url}/realms/{custom_realm}"
+        assert call_kwargs.kwargs.get("issuer") == expected_issuer or \
+            (len(call_kwargs) > 1 and call_kwargs[1].get("issuer") == expected_issuer)
+
+    def test_verify_iss_option_enabled(self):
+        """The options dict passed to jwt.decode must include verify_iss: True."""
+        from agent_service.jwt_auth import validate_bearer_token
+
+        mock_jwks_client = MagicMock()
+        mock_signing_key = MagicMock()
+        mock_jwks_client.get_signing_key_from_jwt.return_value = mock_signing_key
+
+        payload = {
+            "sub": "user-1",
+            "iss": "http://keycloak:8080/realms/partner-agent",
+            "aud": "agent-service",
+        }
+
+        with (
+            patch("agent_service.jwt_auth.JWT_VALIDATION_ENABLED", True),
+            patch("agent_service.jwt_auth._get_jwks_client", return_value=mock_jwks_client),
+            patch("agent_service.jwt_auth.jwt.decode", return_value=payload) as mock_decode,
+        ):
+            validate_bearer_token("Bearer some-token")
+
+        mock_decode.assert_called_once()
+        call_kwargs = mock_decode.call_args
+        options = call_kwargs.kwargs.get("options") or call_kwargs[1].get("options", {})
+        assert options.get("verify_iss") is True

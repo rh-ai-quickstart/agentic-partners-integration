@@ -14,24 +14,54 @@ spec:
   policyTypes:
   - Ingress
 ---
-# Allow all pods within the namespace to communicate with each other
+# request-manager: accept from pf-chat-ui (browser proxy)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ $fullName }}-allow-same-namespace
+  name: {{ $fullName }}-request-manager-ingress
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "partner-agent.labels" . | nindent 4 }}
 spec:
-  podSelector: {}
+  podSelector:
+    matchLabels:
+      app: {{ $fullName }}-request-manager
   policyTypes:
   - Ingress
   ingress:
   - from:
-    - podSelector: {}
+    - podSelector:
+        matchLabels:
+          app: {{ $fullName }}-pf-chat-ui
+    ports:
+    - protocol: TCP
+      port: 8080
 {{- if .Values.praxis.enabled }}
 ---
-# Restrict agent-service ingress to Praxis gateway only (defense-in-depth)
+# Praxis gateway: accept from request-manager only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullName }}-praxis-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ $fullName }}-praxis
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: {{ $fullName }}-request-manager
+    ports:
+    - protocol: TCP
+      port: 8080
+---
+# agent-service: accept from Praxis gateway only (defense-in-depth)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -53,7 +83,158 @@ spec:
     ports:
     - protocol: TCP
       port: 80
+{{- else }}
+---
+# agent-service (no Praxis): accept from request-manager directly
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullName }}-agent-service-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ $fullName }}-agent-service
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: {{ $fullName }}-request-manager
+    ports:
+    - protocol: TCP
+      port: 80
 {{- end }}
+---
+# PostgreSQL: accept from request-manager and agent-service
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullName }}-postgresql-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ $fullName }}-postgresql
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: {{ $fullName }}-request-manager
+    - podSelector:
+        matchLabels:
+          app: {{ $fullName }}-agent-service
+    ports:
+    - protocol: TCP
+      port: 5432
+---
+# Keycloak: accept from request-manager, agent-service, kubernetes-agent
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullName }}-keycloak-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ $fullName }}-keycloak
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: {{ $fullName }}-request-manager
+    - podSelector:
+        matchLabels:
+          app: {{ $fullName }}-agent-service
+    - podSelector:
+        matchLabels:
+          app: {{ $fullName }}-kubernetes-agent
+    ports:
+    - protocol: TCP
+      port: 8080
+---
+# RAG API: accept from agent-service and kubernetes-agent
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullName }}-rag-api-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ $fullName }}-rag-api
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: {{ $fullName }}-agent-service
+    - podSelector:
+        matchLabels:
+          app: {{ $fullName }}-kubernetes-agent
+    ports:
+    - protocol: TCP
+      port: 80
+---
+# kubernetes-agent: accept from agent-service
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullName }}-kubernetes-agent-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ $fullName }}-kubernetes-agent
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: {{ $fullName }}-agent-service
+    ports:
+    - protocol: TCP
+      port: 80
+---
+# pf-chat-ui: accept from within namespace only (serves static files)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullName }}-pf-chat-ui-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "partner-agent.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ $fullName }}-pf-chat-ui
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .Release.Namespace }}
+    ports:
+    - protocol: TCP
+      port: 8080
 {{- if ne .Values.networkPolicies.platform "none" }}
 ---
 # Allow ingress from ingress controller for external routes

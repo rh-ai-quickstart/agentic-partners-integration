@@ -20,17 +20,22 @@ class OpenAIClient(BaseLLMClient):
         self,
         api_key: str,
         model: str = "gpt-4",
+        base_url: str | None = None,
     ):
         """Initialize OpenAI client.
 
         Args:
             api_key: OpenAI API key
             model: Model to use for completions
+            base_url: Override API base URL (e.g. for LiteLLM proxy)
         """
-        self.client = AsyncOpenAI(api_key=api_key)
+        kwargs: dict = {"api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        self.client = AsyncOpenAI(**kwargs)
         self.model = model
 
-        logger.info("Initialized OpenAI client", model=model)
+        logger.info("Initialized OpenAI client", model=model, base_url=base_url or "default")
 
     async def create_completion(
         self,

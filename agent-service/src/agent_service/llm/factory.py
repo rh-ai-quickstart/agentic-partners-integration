@@ -116,13 +116,6 @@ class LLMClientFactory:
         # Support new AI_PROVIDER with fallback to LLM_BACKEND
         backend = backend or os.getenv("AI_PROVIDER") or os.getenv("LLM_BACKEND", "openai")
 
-        # Log deprecation warning if using LLM_BACKEND
-        if not backend and os.getenv("LLM_BACKEND"):
-            logger.warning(
-                "LLM_BACKEND is deprecated. Use AI_PROVIDER instead.",
-                backend=os.getenv("LLM_BACKEND"),
-            )
-
         backend = backend.lower()
 
         logger.info("Creating LLM client", backend=backend, model=model)
@@ -166,8 +159,9 @@ class LLMClientFactory:
         api_key = _get_api_key_with_fallback("openai")
 
         model = model or os.getenv("OPENAI_MODEL", "gpt-4")
+        base_url = os.getenv("OPENAI_BASE_URL") or None
 
-        return OpenAIClient(api_key=api_key, model=model)
+        return OpenAIClient(api_key=api_key, model=model, base_url=base_url)
 
     @staticmethod
     def _create_gemini_client(model: Optional[str] = None, **kwargs) -> GeminiClient:

@@ -55,16 +55,12 @@ def make_spiffe_id(entity_type: str, name: str) -> str:
 def extract_identity(request: Request) -> Optional[WorkloadIdentity]:
     """Extract workload identity from an incoming request.
 
-    Reads the X-SPIFFE-ID header (caller's SVID identity).
-    In production, this would be validated against mTLS certificate.
+    In mock mode (MOCK_SPIFFE=true): trusts the X-SPIFFE-ID header.
+    In production mode (MOCK_SPIFFE=false): only trusts mTLS peer certificate.
+    The header is ignored in production to prevent spoofing — any caller
+    could set X-SPIFFE-ID to an arbitrary SPIFFE URI without this guard.
     """
-    # Read caller's SPIFFE ID from header
-    # (In full mTLS setup, this would be extracted from peer certificate)
-    spiffe_id = request.headers.get("X-SPIFFE-ID")
-    if spiffe_id:
-        return WorkloadIdentity(spiffe_id=spiffe_id)
-
-    # Fallback: try to extract from mTLS peer certificate
+    # Production: only trust cryptographically-verified mTLS peer cert
     scope = request.scope
     transport = scope.get("transport")
     if transport is not None:
@@ -74,6 +70,12 @@ def extract_identity(request: Request) -> Optional[WorkloadIdentity]:
             for san_type, san_value in san:
                 if san_type == "URI" and san_value.startswith("spiffe://"):
                     return WorkloadIdentity(spiffe_id=san_value)
+
+    # Mock mode only: trust X-SPIFFE-ID header for local development
+    if MOCK_SPIFFE:
+        spiffe_id = request.headers.get("X-SPIFFE-ID")
+        if spiffe_id:
+            return WorkloadIdentity(spiffe_id=spiffe_id)
 
     return None
 

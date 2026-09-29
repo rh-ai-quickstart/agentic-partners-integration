@@ -1,6 +1,6 @@
 """Tests for agent_service.llm.factory."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -14,7 +14,7 @@ class TestCreateClient:
     @patch("agent_service.llm.factory.GeminiClient")
     def test_gemini_backend(self, mock_gemini_cls, monkeypatch):
         monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
-        client = LLMClientFactory.create_client(
+        LLMClientFactory.create_client(
             backend="gemini", model="gemini-1.5-pro"
         )
         mock_gemini_cls.assert_called_once_with(
@@ -24,13 +24,12 @@ class TestCreateClient:
     @patch("agent_service.llm.factory.OpenAIClient")
     def test_openai_backend(self, mock_openai_cls, monkeypatch):
         monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
-        client = LLMClientFactory.create_client(backend="openai", model="gpt-4")
-        mock_openai_cls.assert_called_once_with(api_key="fake-key", model="gpt-4")
+        LLMClientFactory.create_client(backend="openai", model="gpt-4")
+        mock_openai_cls.assert_called_once_with(api_key="fake-key", model="gpt-4", base_url=None)
 
     @patch("agent_service.llm.factory.OllamaClient")
     def test_ollama_backend(self, mock_ollama_cls, monkeypatch):
-        # Ollama doesn't require an API key
-        client = LLMClientFactory.create_client(backend="ollama", model="llama3.1")
+        LLMClientFactory.create_client(backend="ollama", model="llama3.1")
         mock_ollama_cls.assert_called_once()
 
     def test_unknown_backend_raises(self):
@@ -88,35 +87,3 @@ class TestGetApiKeyWithFallback:
         assert _get_api_key_with_fallback("openai") == "provider-specific-key"
 
 
-class TestLLMBackendDeprecationWarning:
-    """Test for the LLM_BACKEND deprecation warning in create_client (line 121)."""
-
-    def test_llm_backend_deprecation_warning_logged(self):
-        """Line 121: LLM_BACKEND deprecation warning is logged.
-
-        This branch is guarded by ``not backend and os.getenv("LLM_BACKEND")``.
-        Reaching it requires os.getenv to return a falsy value for the or-chain
-        call (with default) but a truthy value for the if-check call (no default).
-        We mock os.getenv to produce this state.
-        """
-        import os as _os
-
-        original_getenv = _os.getenv
-
-        def fake_getenv(key, *args):
-            if key == "AI_PROVIDER":
-                return None
-            if key == "LLM_BACKEND":
-                # or-chain call includes a default arg; if-check call does not
-                if args:
-                    return ""  # falsy — makes backend = "" after the or-chain
-                return "openai"  # truthy — satisfies the if-check
-            if key == "LLM_INSTRUMENTATION":
-                return ""
-            return original_getenv(key, *args)
-
-        with patch("agent_service.llm.factory.os.getenv", side_effect=fake_getenv):
-            # backend="" after the or-chain, warning fires, then
-            # backend.lower() = "" does not match any known provider
-            with pytest.raises(ValueError, match="Unknown LLM backend"):
-                LLMClientFactory.create_client()

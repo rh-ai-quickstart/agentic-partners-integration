@@ -9,7 +9,6 @@ Each test reproduces a specific gap that existed before the fix, then
 validates the corrected configuration.
 """
 
-import re
 from pathlib import Path
 
 import pytest

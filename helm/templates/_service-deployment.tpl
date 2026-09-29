@@ -139,6 +139,11 @@ spec:
           subPath: kubernetes-support-agent.yaml
           readOnly: true
         {{- end }}
+        {{- if $context.Values.spire.enabled }}
+        - name: spire-agent-socket
+          mountPath: /run/spire/sockets
+          readOnly: true
+        {{- end }}
         {{- if $serviceConfig.resources }}
         resources:
           {{- toYaml $serviceConfig.resources | nindent 10 }}
@@ -185,6 +190,12 @@ spec:
       - name: agent-config
         configMap:
           name: {{ $fullName }}-agent-config
+      {{- end }}
+      {{- if $context.Values.spire.enabled }}
+      - name: spire-agent-socket
+        hostPath:
+          path: /run/spire/sockets
+          type: DirectoryOrCreate
       {{- end }}
       restartPolicy: Always
       terminationGracePeriodSeconds: 30

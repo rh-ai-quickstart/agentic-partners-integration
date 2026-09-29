@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException, status
 from . import __version__
 from .a2a.server import get_a2a_app
 from .agent import KubernetesAgent, load_agent_config
+from .auth_middleware import JWTAuthMiddleware
 from .schemas import AgentInvokeRequest, AgentInvokeResponse
 
 logging.basicConfig(
@@ -34,6 +35,7 @@ app = FastAPI(
     description="Standalone Kubernetes support agent — remote partner agent",
     version=__version__,
 )
+app.add_middleware(JWTAuthMiddleware)
 
 # Mount A2A protocol endpoint
 _config = load_agent_config()

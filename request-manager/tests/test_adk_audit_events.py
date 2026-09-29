@@ -209,8 +209,13 @@ class TestAdkAgents:
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_httpx.return_value = mock_client
 
-        result = await adk_agents()
+        mock_request = MagicMock()
+        mock_request.headers = {"authorization": "Bearer test-token"}
+        result = await adk_agents(mock_request)
         assert "agents" in result
+        mock_client.get.assert_called_once()
+        call_kwargs = mock_client.get.call_args
+        assert "Authorization" in call_kwargs.kwargs.get("headers", call_kwargs[1].get("headers", {}))
 
     @patch("request_manager.adk_endpoints.httpx.AsyncClient")
     async def test_agents_registry_unavailable(self, mock_httpx):
@@ -227,6 +232,8 @@ class TestAdkAgents:
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_httpx.return_value = mock_client
 
+        mock_request = MagicMock()
+        mock_request.headers = {}
         with pytest.raises(HTTPException) as exc_info:
-            await adk_agents()
+            await adk_agents(mock_request)
         assert exc_info.value.status_code == 502

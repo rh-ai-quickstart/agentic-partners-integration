@@ -92,6 +92,8 @@ def validate_bearer_token(
     token = authorization[7:]
     aud = expected_audience or JWT_EXPECTED_AUDIENCE
 
+    expected_issuer = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}"
+
     try:
         client = _get_jwks_client()
         signing_key = client.get_signing_key_from_jwt(token)
@@ -100,11 +102,14 @@ def validate_bearer_token(
             signing_key.key,
             algorithms=["RS256"],
             audience=aud,
-            options={"verify_exp": True, "verify_aud": True},
+            issuer=expected_issuer,
+            options={"verify_exp": True, "verify_aud": True, "verify_iss": True},
         )
     except jwt.ExpiredSignatureError:
         raise JWTAuthError("Authentication failed")
     except jwt.InvalidAudienceError:
+        raise JWTAuthError("Authentication failed")
+    except jwt.InvalidIssuerError:
         raise JWTAuthError("Authentication failed")
     except jwt.PyJWTError:
         raise JWTAuthError("Authentication failed")

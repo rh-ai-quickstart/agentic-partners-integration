@@ -73,24 +73,29 @@ class TestMakeSpiffeId:
 class TestExtractIdentity:
     """Tests for extract_identity()."""
 
-    def test_extracts_from_header(self):
+    @patch("shared_models.identity.MOCK_SPIFFE", True)
+    def test_extracts_from_header_in_mock_mode(self):
+        """X-SPIFFE-ID header is trusted in mock mode (MOCK_SPIFFE=true)."""
         request = MagicMock()
         request.headers = {"X-SPIFFE-ID": "spiffe://example.com/user/alice"}
+        request.scope = {}
 
         identity = extract_identity(request)
         assert identity is not None
         assert identity.spiffe_id == "spiffe://example.com/user/alice"
         assert identity.name == "alice"
 
-    def test_returns_none_when_no_header_no_transport(self):
+    @patch("shared_models.identity.MOCK_SPIFFE", False)
+    def test_ignores_header_in_production_mode(self):
+        """X-SPIFFE-ID header is ignored in production (MOCK_SPIFFE=false)."""
         request = MagicMock()
-        request.headers = {}
+        request.headers = {"X-SPIFFE-ID": "spiffe://example.com/user/alice"}
         request.scope = {}
 
         identity = extract_identity(request)
         assert identity is None
 
-    def test_no_transport_returns_none(self):
+    def test_returns_none_when_no_header_no_transport(self):
         request = MagicMock()
         request.headers = {}
         request.scope = {}
@@ -169,8 +174,8 @@ class TestExtractIdentity:
         identity = extract_identity(request)
         assert identity is None
 
-    def test_header_takes_precedence_over_cert(self):
-        """X-SPIFFE-ID header should take precedence over mTLS cert."""
+    def test_mtls_cert_takes_precedence_over_header(self):
+        """mTLS peer cert takes precedence over X-SPIFFE-ID header."""
         request = MagicMock()
         request.headers = {"X-SPIFFE-ID": "spiffe://example.com/user/alice"}
         transport = MagicMock()
@@ -184,7 +189,7 @@ class TestExtractIdentity:
 
         identity = extract_identity(request)
         assert identity is not None
-        assert identity.spiffe_id == "spiffe://example.com/user/alice"
+        assert identity.spiffe_id == "spiffe://trust.domain/service/my-svc"
 
 
 class TestOutboundIdentityHeaders:
@@ -321,3 +326,108 @@ class TestOutboundIdentityHeaders:
         assert headers["X-Delegation-User"] == "spiffe://partner.example.com/user/alice"
         assert headers["X-Delegation-Agent"] == "spiffe://partner.example.com/agent/k8s"
         assert headers["X-Request-ID"] == "req-123"
+
+
+class TestIdentityTrustModel:
+    """Tests for the X-SPIFFE-ID header trust model in extract_identity().
+
+    Validates that:
+    - Production mode (MOCK_SPIFFE=false) ignores the X-SPIFFE-ID header
+      to prevent spoofing and only trusts mTLS peer certificates.
+    - Mock/dev mode (MOCK_SPIFFE=true) trusts the X-SPIFFE-ID header as
+      a convenience for local development without mTLS infrastructure.
+    - mTLS peer certificate always takes precedence regardless of mode.
+    """
+
+    def _make_request(self, *, header_spiffe_id=None, peercert=None):
+        """Build a mock Request with optional X-SPIFFE-ID header and mTLS cert."""
+        request = MagicMock(spec=["headers", "scope"])
+        request.headers = {}
+        if header_spiffe_id:
+            request.headers["X-SPIFFE-ID"] = header_spiffe_id
+
+        if peercert is not None:
+            transport = MagicMock()
+            transport.get_extra_info.return_value = peercert
+            request.scope = {"transport": transport}
+        else:
+            request.scope = {}
+
+        return request
+
+    def _make_peercert(self, spiffe_id):
+        """Build a peercert dict with a SPIFFE URI SAN entry."""
+        return {
+            "subjectAltName": [
+                ("URI", spiffe_id),
+            ]
+        }
+
+    @patch("shared_models.identity.MOCK_SPIFFE", False)
+    def test_production_mode_ignores_header(self):
+        """With MOCK_SPIFFE=false and no mTLS cert, X-SPIFFE-ID header is ignored."""
+        request = self._make_request(
+            header_spiffe_id="spiffe://example.com/user/attacker",
+        )
+        identity = extract_identity(request)
+        assert identity is None
+
+    @patch("shared_models.identity.MOCK_SPIFFE", False)
+    def test_production_mode_uses_mtls_cert(self):
+        """With MOCK_SPIFFE=false and mTLS cert, identity comes from the cert."""
+        cert_spiffe = "spiffe://trust.domain/service/legit-svc"
+        request = self._make_request(
+            peercert=self._make_peercert(cert_spiffe),
+        )
+        identity = extract_identity(request)
+        assert identity is not None
+        assert identity.spiffe_id == cert_spiffe
+        assert identity.name == "legit-svc"
+        assert identity.entity_type == "service"
+
+    @patch("shared_models.identity.MOCK_SPIFFE", False)
+    def test_production_mode_mtls_takes_precedence(self):
+        """With MOCK_SPIFFE=false and both header and cert, cert wins."""
+        cert_spiffe = "spiffe://trust.domain/service/real-svc"
+        header_spiffe = "spiffe://evil.domain/user/attacker"
+        request = self._make_request(
+            header_spiffe_id=header_spiffe,
+            peercert=self._make_peercert(cert_spiffe),
+        )
+        identity = extract_identity(request)
+        assert identity is not None
+        assert identity.spiffe_id == cert_spiffe
+        assert identity.spiffe_id != header_spiffe
+
+    @patch("shared_models.identity.MOCK_SPIFFE", True)
+    def test_mock_mode_trusts_header(self):
+        """With MOCK_SPIFFE=true and X-SPIFFE-ID header, returns identity from header."""
+        header_spiffe = "spiffe://dev.local/user/developer"
+        request = self._make_request(
+            header_spiffe_id=header_spiffe,
+        )
+        identity = extract_identity(request)
+        assert identity is not None
+        assert identity.spiffe_id == header_spiffe
+        assert identity.name == "developer"
+
+    @patch("shared_models.identity.MOCK_SPIFFE", True)
+    def test_mock_mode_mtls_takes_precedence(self):
+        """With MOCK_SPIFFE=true and both header and cert, cert still wins."""
+        cert_spiffe = "spiffe://trust.domain/service/real-svc"
+        header_spiffe = "spiffe://dev.local/user/developer"
+        request = self._make_request(
+            header_spiffe_id=header_spiffe,
+            peercert=self._make_peercert(cert_spiffe),
+        )
+        identity = extract_identity(request)
+        assert identity is not None
+        assert identity.spiffe_id == cert_spiffe
+        assert identity.spiffe_id != header_spiffe
+
+    @patch("shared_models.identity.MOCK_SPIFFE", False)
+    def test_no_identity_when_nothing_provided(self):
+        """With MOCK_SPIFFE=false and no header or cert, returns None."""
+        request = self._make_request()
+        identity = extract_identity(request)
+        assert identity is None
