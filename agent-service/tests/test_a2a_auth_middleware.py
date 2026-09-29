@@ -22,9 +22,8 @@ from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
-from agent_service.a2a.auth_middleware import A2AAuthMiddleware, A2A_PUBLIC_PATHS
+from agent_service.a2a.auth_middleware import A2A_PUBLIC_PATHS, A2AAuthMiddleware
 from agent_service.jwt_auth import JWTAuthError, TokenClaims
-
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 

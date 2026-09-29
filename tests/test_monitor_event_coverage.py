@@ -321,6 +321,8 @@ class TestMonitorLiveEventParsing:
                 ["docker", "logs", "partner-request-manager-full"],
                 capture_output=True, text=True, timeout=10,
             )
+            if result.returncode != 0:
+                pytest.skip("Container not running")
             return result.stdout + result.stderr
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pytest.skip("Docker not available or container not running")
@@ -353,6 +355,8 @@ class TestMonitorLiveEventParsing:
                 ],
                 capture_output=True, text=True, timeout=10,
             )
+            if result.returncode != 0:
+                pytest.skip("Postgres container not running")
             return {line.strip() for line in result.stdout.splitlines() if line.strip()}
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pytest.skip("Docker/postgres not available")

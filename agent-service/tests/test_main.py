@@ -45,8 +45,9 @@ def _make_mock_manager(**overrides: object) -> MagicMock:
 
 
 @pytest.fixture
-def patched_app():
+def patched_app(monkeypatch):
     """Import the FastAPI app with A2A mounting and AgentManager mocked out."""
+    monkeypatch.setattr("shared_models.identity.MOCK_SPIFFE", True)
     mock_a2a_manager = _make_mock_manager()
     with (
         patch(
