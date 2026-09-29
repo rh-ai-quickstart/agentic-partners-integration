@@ -13,12 +13,16 @@ Endpoints:
 """
 
 import hashlib
+import logging
 import math
 import re
 from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, Request
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("mock-llm")
 
 app = FastAPI(title="Mock LLM Server")
 
@@ -214,9 +218,22 @@ def _extract_text_from_contents(contents: Any) -> str:
 
 
 def _extract_system_instruction(body: dict) -> str:
-    """Extract system instruction from Gemini generateContent request."""
-    gen_config = body.get("generationConfig", {})
-    sys_inst = gen_config.get("systemInstruction", body.get("systemInstruction", ""))
+    """Extract system instruction from Gemini generateContent request.
+
+    The Google GenAI SDK may serialize system_instruction as any of:
+    - top-level "systemInstruction" (camelCase, Gemini REST API convention)
+    - top-level "system_instruction" (snake_case, SDK convention)
+    - inside "generationConfig"/"generation_config"
+    """
+    sys_inst = (
+        body.get("systemInstruction")
+        or body.get("system_instruction")
+        or body.get("generationConfig", {}).get("systemInstruction")
+        or body.get("generationConfig", {}).get("system_instruction")
+        or body.get("generation_config", {}).get("systemInstruction")
+        or body.get("generation_config", {}).get("system_instruction")
+        or ""
+    )
     if isinstance(sys_inst, dict):
         parts = sys_inst.get("parts", [])
         return " ".join(
@@ -242,12 +259,23 @@ async def generate_content(model: str, request: Request):
     """Gemini generation API mock."""
     body = await request.json()
 
+    logger.info("generateContent keys: %s", list(body.keys()))
+
     contents = body.get("contents", "")
     query = _extract_text_from_contents(contents)
 
     system_prompt = _extract_system_instruction(body)
     user_msg = _extract_last_user_message(contents)
+
+    logger.info(
+        "routing check: system_prompt=%r user_msg=%r",
+        system_prompt[:200] if system_prompt else "",
+        user_msg[:100] if user_msg else "",
+    )
+
     routing = detect_routing(user_msg, system_prompt)
+    if routing:
+        logger.info("routing decision: %s", routing.split("\n")[0])
     response_text = routing if routing else build_mock_response(query)
 
     return {

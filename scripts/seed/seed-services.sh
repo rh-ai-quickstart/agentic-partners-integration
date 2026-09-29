@@ -62,7 +62,7 @@ MOCK_LLM=false
 GEMINI_API_ENDPOINT=""
 OPENAI_BASE_URL=""
 
-if [ -z "$GOOGLE_API_KEY" ]; then
+if [ -z "$GOOGLE_API_KEY" ] || [ "$GOOGLE_API_KEY" = "mock-api-key" ]; then
     echo "[1b/7] No API key set — starting mock LLM server..."
     MOCK_LLM=true
     GOOGLE_API_KEY="mock-api-key"

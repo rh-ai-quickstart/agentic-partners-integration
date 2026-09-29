@@ -170,7 +170,7 @@ jobs:
         timeout-minutes: 15
 
       - name: Run E2E tests
-        run: bash scripts/test-e2e.sh --skip-build
+        run: bash scripts/test-e2e.sh --skip-deploy
         timeout-minutes: 5
 
       - name: Dump logs on failure
