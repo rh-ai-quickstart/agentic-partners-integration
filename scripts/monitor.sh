@@ -233,6 +233,30 @@ audit_tail() {
                 printf "${R}└─ reason: ${db_reason:-unknown}${N}\n"
                 ;;
 
+            # ── TOKEN VALIDATION FAILURES ──────────────────────────────────
+            auth.token.expired)
+                printf "\n${R}┌─ ⏰ TOKEN EXPIRED  [${ts}]${N}\n"
+                printf "${R}│${N}  ${D}VERIFIER : request-manager JWT validator${N}\n"
+                printf "${R}│${N}  📖 ${D}WHY: The user's JWT (Token₀) has passed its expiration time. The${N}\n"
+                printf "${R}│${N}  ${D}     browser must re-authenticate via Keycloak to get a fresh token.${N}\n"
+                printf "${R}│${N}  ────────────────────────────────────────────────\n"
+                printf "${R}│${N}  user   : ${actor}\n"
+                printf "${R}│${N}  reason : ${db_reason:-token expired}${N}\n"
+                printf "${R}└─ ✗ request rejected — re-login required${N}\n"
+                ;;
+
+            auth.token.invalid)
+                printf "\n${R}┌─ 🚫 INVALID TOKEN  [${ts}]${N}\n"
+                printf "${R}│${N}  ${D}VERIFIER : request-manager JWT validator (Keycloak JWKS)${N}\n"
+                printf "${R}│${N}  📖 ${D}WHY: The JWT failed signature verification, had invalid claims, or${N}\n"
+                printf "${R}│${N}  ${D}     was malformed. This could indicate a tampered token, a token from${N}\n"
+                printf "${R}│${N}  ${D}     a different issuer, or a misconfigured client.${N}\n"
+                printf "${R}│${N}  ────────────────────────────────────────────────\n"
+                printf "${R}│${N}  user   : ${actor}\n"
+                printf "${R}│${N}  reason : ${db_reason:-invalid token}${N}\n"
+                printf "${R}└─ ✗ request rejected — token validation failed${N}\n"
+                ;;
+
             # ── USER MESSAGE ───────────────────────────────────────────────
             data.chat.request)
                 msg_len=$(echo "$meta" | grep -oP '"message_length":\s*\K[0-9]+' || echo "?")
@@ -251,7 +275,7 @@ audit_tail() {
                 ;;
 
             # ── TOKEN EXCHANGE ─────────────────────────────────────────────
-            token.exchange)
+            token.exchange|token.exchange.audit)
                 orig=$(echo      "$meta" | grep -oP '"original_aud":\s*"\K[^"]*'      || echo "Token₀")
                 newaud=$(echo    "$meta" | grep -oP '"new_aud":\s*"\K[^"]*'            || echo "?")
                 act_svc=$(echo   "$meta" | grep -oP '"actor_service":\s*"\K[^"]*'      || echo "request-manager")
@@ -266,6 +290,25 @@ audit_tail() {
                 else
                     tok_label="Token₂"
                 fi
+
+                # ── FAILED token exchange — short error card ──────────────
+                if [ "$outcome" = "failure" ]; then
+                    err_detail=$(echo "$meta" | grep -oP '"error_detail":\s*"\K[^"]*' || echo "")
+                    status_code=$(echo "$meta" | grep -oP '"status_code":\s*\K[0-9]+' || echo "?")
+                    printf "\n${R}┌─ ✗ TOKEN EXCHANGE FAILED  [${ts}]  RFC 8693${N}\n"
+                    printf "${R}│${N}  ${D}CALLER   : ${act_svc}${N}\n"
+                    printf "${R}│${N}  ${D}TARGET   : ${target_short}${N}\n"
+                    printf "${R}│${N}  📖 ${D}WHY: Keycloak refused to mint a scoped token. The agent will NOT${N}\n"
+                    printf "${R}│${N}  ${D}     be called — no fallback to unscoped tokens is allowed.${N}\n"
+                    printf "${R}│${N}  ────────────────────────────────────────────────\n"
+                    printf "${R}│${N}  original aud : ${orig}\n"
+                    printf "${R}│${N}  target aud   : ${newaud}\n"
+                    printf "${R}│${N}  HTTP status  : ${status_code}\n"
+                    printf "${R}│${N}  reason       : ${db_reason:-${err_detail:-unknown}}\n"
+                    printf "${R}└─ ✗ no token issued — request will fail${N}\n"
+                else
+
+                # ── SUCCESS path ──────────────────────────────────────────
 
                 # Auth method label and icon
                 if [ "$auth_m" = "dcr-actor" ]; then
@@ -310,6 +353,7 @@ audit_tail() {
                 printf "${M}│  old token: ${D}$(trunc "$orig" 55)${N}\n"
                 printf "${M}│  new token: ${C}$(trunc "$newaud" 55)${N}\n"
                 printf "${M}└─ ✓ ${tok_label} issued — scoped to ${target_short}  🔑 via ${auth_m}${N}\n"
+                fi
                 ;;
 
             # ── POLICY AUTHORIZATION ───────────────────────────────────────
@@ -386,6 +430,14 @@ audit_tail() {
                 printf "${R}└─ ✗ request blocked — no specialist call made${N}\n"
                 ;;
 
+            # ── AUDIT LOG ACCESS ───────────────────────────────────────
+            data.audit.access)
+                a_role=$(echo "$meta" | grep -oP '"role":\s*"\K[^"]*' || echo "user")
+                printf "\n${D}┌─ 📋 AUDIT LOG VIEWED  [${ts}]${N}\n"
+                printf "${D}│${N}  user : ${actor}  role=${a_role}\n"
+                printf "${D}└─ audit log access recorded${N}\n"
+                ;;
+
             authz.routing_direct)
                 printf "\n${D}┌─ ↩  HANDLED BY ROUTING-AGENT  [${ts}]${N}\n"
                 printf "${D}│${N}  routing-agent answered directly (greetings / out-of-scope)\n"
@@ -420,10 +472,11 @@ parse_logs() {
             if echo "$line" | grep -q "DCR registration successful"; then
                 spiffe=$(echo "$line" | grep -oP "spiffe_id=\K[^ ']+" || echo "unknown")
                 kc_client=$(echo "$line" | grep -oP "keycloak_client=\K[^ ]+" || echo "unknown")
+                dcr_svc=$(echo "$spiffe" | grep -oP '[^/]+$' || echo "unknown")
                 ts=$(date +%H:%M:%S)
                 printf "\n${G}╔══ 🔑 DCR SELF-REGISTRATION  [${ts}]${N}\n"
                 printf "${G}║${N}  ${D}CREATOR  : Keycloak DCR endpoint (RFC 7591)${N}\n"
-                printf "${G}║${N}  ${D}CALLER   : ${svc} (using Initial Access Token from seed-keycloak.sh)${N}\n"
+                printf "${G}║${N}  ${D}CALLER   : ${dcr_svc} (using Initial Access Token from seed-keycloak.sh)${N}\n"
                 printf "${G}║${N}  ${D}RESULT   : new Keycloak client minted on the fly, no pre-seeding${N}\n"
                 printf "${G}║${N}  📖 ${D}WHY: Instead of pre-registering every agent in Keycloak via seed${N}\n"
                 printf "${G}║${N}  ${D}     scripts, each service registers itself on startup.  This is${N}\n"
@@ -433,10 +486,25 @@ parse_logs() {
                 printf "${G}║${N}  ${D}     UUID client_id and Registration Access Token (RAT) for future${N}\n"
                 printf "${G}║${N}  ${D}     management.  No secrets are stored in the codebase.${N}\n"
                 printf "${G}║${N}  ────────────────────────────────────────────────\n"
-                printf "${G}║${N}  service     : ${W}${svc}${N}\n"
+                printf "${G}║${N}  service     : ${W}${dcr_svc}${N}\n"
                 printf "${G}║${N}  SPIFFE ID   : ${W}${spiffe}${N}\n"
                 printf "${G}║${N}  Keycloak ID : ${D}${kc_client}${N}  ${D}(UUID generated by Keycloak)${N}\n"
                 printf "${G}╚══ agent is now a first-class Keycloak client${N}\n"
+                continue
+            fi
+            if echo "$line" | grep -q "A2A request rejected"; then
+                a2a_reason=$(echo "$line" | grep -oP 'A2A request rejected: \K.*' || echo "unknown")
+                a2a_path=$(echo "$line" | grep -oP "path=\K[^ ']+" || echo "?")
+                ts=$(date +%H:%M:%S)
+                printf "\n${R}┌─ 🛡  A2A AUTH REJECTED  [${ts}]${N}\n"
+                printf "${R}│${N}  ${D}ENFORCER : agent-service A2A auth middleware (JWT validation)${N}\n"
+                printf "${R}│${N}  📖 ${D}WHY: The A2A endpoint received a request without a valid JWT.${N}\n"
+                printf "${R}│${N}  ${D}     Agent card discovery (/.well-known/agent.json) is public, but${N}\n"
+                printf "${R}│${N}  ${D}     all other A2A endpoints require Bearer token authentication.${N}\n"
+                printf "${R}│${N}  ────────────────────────────────────────────────\n"
+                printf "${R}│${N}  reason : ${a2a_reason}\n"
+                printf "${R}│${N}  path   : ${a2a_path}\n"
+                printf "${R}└─ ✗ 401 returned — A2A request blocked${N}\n"
                 continue
             fi
             if echo "$line" | grep -q "Fetched SVID from SPIRE:"; then
@@ -544,7 +612,7 @@ print(f.get('method','?'), f.get('path','?'), f.get('status','?'), f.get('durati
             ;;
 
         # ── ROUTING DECISION ───────────────────────────────────────────────
-        "Routing decision received (policy authorized)")
+        "Routing decision received (Policy authorized)")
             from=$(echo "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('from_agent',''))" 2>/dev/null)
             to=$(echo   "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('to_agent',''))" 2>/dev/null)
             eff=$(echo  "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('effective_departments','[]'))" 2>/dev/null)
@@ -649,7 +717,7 @@ print(f.get('method','?'), f.get('path','?'), f.get('status','?'), f.get('durati
             ;;
 
         # ── ACCESS DENIED ──────────────────────────────────────────────────
-        "AUTHORIZATION BLOCKED: policy denied routing to agent")
+        "AUTHORIZATION BLOCKED: Policy denied routing to agent")
             agent=$(echo  "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('requested_agent',''))" 2>/dev/null)
             depts=$(echo  "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('departments','[]'))" 2>/dev/null)
             reason=$(echo "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('reason',''))" 2>/dev/null)

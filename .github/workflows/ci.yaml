@@ -50,6 +50,12 @@ jobs:
       - name: Run kubernetes-partner-agent tests
         run: cd kubernetes-partner-agent && uv run python -m pytest tests/ --cov=kubernetes_agent --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=100 -q
 
+      - name: Install root dependencies
+        run: uv sync --quiet
+
+      - name: Run root-level tests (helm, network policies, praxis, SPIRE, monitor)
+        run: uv run python -m pytest tests/ -v -q
+
       - name: Run agent-service A2A protocol E2E
         run: cd agent-service && uv run python test_a2a_e2e.py
 
@@ -165,13 +171,27 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
       - name: Build and start full stack
         run: make setup
         timeout-minutes: 15
 
+      - name: Install root dependencies
+        run: uv sync --quiet
+
       - name: Run E2E tests
         run: bash scripts/test-e2e.sh --skip-deploy
         timeout-minutes: 5
+
+      - name: Run root-level tests with live Docker services
+        run: uv run python -m pytest tests/ -v -q
 
       - name: Dump logs on failure
         if: failure()

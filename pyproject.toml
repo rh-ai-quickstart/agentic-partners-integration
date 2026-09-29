@@ -38,7 +38,7 @@ python_version = "3.12"
 mypy_path = "shared-models/src"
 
 [tool.pytest.ini_options]
-testpaths = ["shared-models/tests", "request-manager/tests", "agent-service/tests"]
+testpaths = ["shared-models/tests", "request-manager/tests", "agent-service/tests", "tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
