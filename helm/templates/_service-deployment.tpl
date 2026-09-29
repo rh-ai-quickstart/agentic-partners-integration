@@ -29,6 +29,7 @@ spec:
       labels:
         {{- include "partner-agent.labels" $context | nindent 8 }}
         app: {{ $fullName }}-{{ $serviceName }}
+        app.kubernetes.io/component: {{ $serviceName }}
         component: {{ $serviceName }}
     spec:
       serviceAccountName: {{ include "partner-agent.serviceAccountName" $context }}
@@ -193,9 +194,15 @@ spec:
       {{- end }}
       {{- if $context.Values.spire.enabled }}
       - name: spire-agent-socket
+        {{- if $context.Values.spire.csiDriver }}
+        csi:
+          driver: "csi.spiffe.io"
+          readOnly: true
+        {{- else }}
         hostPath:
           path: /run/spire/sockets
           type: DirectoryOrCreate
+        {{- end }}
       {{- end }}
       restartPolicy: Always
       terminationGracePeriodSeconds: 30

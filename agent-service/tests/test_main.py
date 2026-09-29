@@ -601,7 +601,7 @@ class TestAgentRegistry:
         mock_agent_manager_cls.return_value = mock_manager
 
         client = TestClient(patched_app)
-        response = client.get("/api/v1/agents/registry")
+        response = client.get("/api/v1/agents/registry", headers=DEFAULT_HEADERS)
 
         assert response.status_code == 200
         data = response.json()
@@ -641,7 +641,7 @@ class TestAgentRegistry:
         mock_agent_manager_cls.return_value = mock_manager
 
         client = TestClient(patched_app)
-        response = client.get("/api/v1/agents/registry")
+        response = client.get("/api/v1/agents/registry", headers=DEFAULT_HEADERS)
 
         data = response.json()
         assert "endpoint" not in data["agents"]["software-support"]
@@ -808,6 +808,7 @@ class TestAuthEnforcement:
         from fastapi.testclient import TestClient
 
         monkeypatch.setenv("ENFORCE_AGENT_AUTH", "false")
+        monkeypatch.setattr("shared_models.identity_middleware.IDENTITY_ENFORCEMENT", False)
 
         mock_agent = AsyncMock()
         mock_agent.create_response_with_retry.return_value = ("Hello!", False)
@@ -868,6 +869,152 @@ class TestAuthEnforcement:
             )
 
         assert response.status_code == 403
+
+    def test_jwt_delegated_claim_extracts_identity(self, patched_app, monkeypatch):
+        """JWT with act claim extracts delegation from claims, not headers."""
+        from dataclasses import dataclass, field
+
+        from fastapi.testclient import TestClient
+
+        monkeypatch.setenv("ENFORCE_AGENT_AUTH", "true")
+        monkeypatch.setenv("JWT_VALIDATION_ENABLED", "true")
+
+        @dataclass
+        class FakeTokenClaims:
+            subject: str = "user-123"
+            issuer: str = "http://keycloak:8080/realms/partner-agent"
+            audience: list = field(default_factory=lambda: ["agent-service"])
+            email: str = "carlos@example.com"
+            groups: list = field(default_factory=lambda: ["software"])
+            act: dict = field(default_factory=lambda: {"sub": "request-manager-svc"})
+            azp: str = "partner-agent-ui"
+            raw: dict = field(default_factory=lambda: {"sub": "user-123", "azp": "partner-agent-ui"})
+            is_delegated: bool = True
+            caller_identity: str = "user-123"
+
+        @dataclass
+        class FakePolicyDecision:
+            allow: bool = True
+            reason: str = "Delegated access granted"
+            effective_departments: list = field(default_factory=lambda: ["software"])
+
+        with (
+            patch("agent_service.agents.AgentManager") as mock_agent_manager_cls,
+            patch(
+                "agent_service.main.validate_bearer_token",
+                return_value=FakeTokenClaims(),
+            ),
+            patch(
+                "shared_models.policy_client.check_agent_authorization",
+                new_callable=AsyncMock,
+                return_value=FakePolicyDecision(),
+            ),
+            patch("agent_service.main.httpx.AsyncClient") as mock_httpx_cls,
+        ):
+            mock_agent = AsyncMock()
+            mock_agent.create_response_with_retry.return_value = ("Fixed!", False)
+            mock_manager = _make_mock_manager()
+            mock_manager.get_agent.return_value = mock_agent
+            mock_agent_manager_cls.return_value = mock_manager
+
+            mock_rag = MagicMock()
+            mock_rag.status_code = 200
+            mock_rag.json.return_value = {"response": "RAG", "sources": []}
+            mock_httpx_instance = AsyncMock()
+            mock_httpx_instance.post.return_value = mock_rag
+            mock_httpx_instance.__aenter__ = AsyncMock(return_value=mock_httpx_instance)
+            mock_httpx_instance.__aexit__ = AsyncMock(return_value=False)
+            mock_httpx_cls.return_value = mock_httpx_instance
+
+            client = TestClient(patched_app)
+            response = client.post(
+                "/api/v1/agents/software-support/invoke",
+                json={
+                    "session_id": "sess-jwt-deleg",
+                    "user_id": "carlos@example.com",
+                    "message": "Fix crash",
+                },
+                headers={
+                    "X-SPIFFE-ID": SERVICE_SPIFFE_ID,
+                    "Authorization": "Bearer fake-jwt-token",
+                },
+            )
+
+        assert response.status_code == 200
+
+    def test_jwt_with_header_delegation(self, patched_app, monkeypatch):
+        """JWT present (no act claim) but X-Delegation-User header → uses header delegation with JWT groups."""
+        from dataclasses import dataclass, field
+
+        from fastapi.testclient import TestClient
+
+        monkeypatch.setenv("ENFORCE_AGENT_AUTH", "true")
+        monkeypatch.setenv("JWT_VALIDATION_ENABLED", "true")
+
+        @dataclass
+        class FakeTokenClaims:
+            subject: str = "user-123"
+            issuer: str = "http://keycloak:8080/realms/partner-agent"
+            audience: list = field(default_factory=lambda: ["agent-service"])
+            email: str = "carlos@example.com"
+            groups: list = field(default_factory=lambda: ["software"])
+            act: object = None
+            azp: str = "partner-agent-ui"
+            raw: dict = field(default_factory=lambda: {"sub": "user-123"})
+            is_delegated: bool = False
+            caller_identity: str = "user-123"
+
+        @dataclass
+        class FakePolicyDecision:
+            allow: bool = True
+            reason: str = "Delegated access granted"
+            effective_departments: list = field(default_factory=lambda: ["software"])
+
+        with (
+            patch("agent_service.agents.AgentManager") as mock_agent_manager_cls,
+            patch(
+                "agent_service.main.validate_bearer_token",
+                return_value=FakeTokenClaims(),
+            ),
+            patch(
+                "shared_models.policy_client.check_agent_authorization",
+                new_callable=AsyncMock,
+                return_value=FakePolicyDecision(),
+            ),
+            patch("agent_service.main.httpx.AsyncClient") as mock_httpx_cls,
+        ):
+            mock_agent = AsyncMock()
+            mock_agent.create_response_with_retry.return_value = ("Fixed!", False)
+            mock_manager = _make_mock_manager()
+            mock_manager.get_agent.return_value = mock_agent
+            mock_agent_manager_cls.return_value = mock_manager
+
+            mock_rag = MagicMock()
+            mock_rag.status_code = 200
+            mock_rag.json.return_value = {"response": "RAG", "sources": []}
+            mock_httpx_instance = AsyncMock()
+            mock_httpx_instance.post.return_value = mock_rag
+            mock_httpx_instance.__aenter__ = AsyncMock(return_value=mock_httpx_instance)
+            mock_httpx_instance.__aexit__ = AsyncMock(return_value=False)
+            mock_httpx_cls.return_value = mock_httpx_instance
+
+            client = TestClient(patched_app)
+            response = client.post(
+                "/api/v1/agents/software-support/invoke",
+                json={
+                    "session_id": "sess-jwt-hdr",
+                    "user_id": "carlos@example.com",
+                    "message": "Fix crash",
+                    "transfer_context": {"departments": ["software"]},
+                },
+                headers={
+                    "X-SPIFFE-ID": SERVICE_SPIFFE_ID,
+                    "Authorization": "Bearer fake-jwt-token",
+                    "X-Delegation-User": "spiffe://partner.example.com/user/carlos",
+                },
+            )
+
+        assert response.status_code == 200
 
 
 class TestLifespan:

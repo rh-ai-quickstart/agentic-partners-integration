@@ -409,23 +409,3 @@ class AgentManager:
                 endpoints[name] = config["endpoint"].rstrip("/")
         return endpoints
 
-    def get_agent_capabilities_for_opa(self) -> dict[str, list[str]]:
-        """Get agent capabilities dict suitable for OPA policy.
-
-        Returns the same structure as agent_permissions.rego's
-        agent_capabilities map, including routing-agent with the
-        union of all specialist departments plus 'admin'.
-        """
-        specialists = self.get_agent_dept_map()
-
-        # routing-agent can route to any department
-        all_departments = set()
-        for depts in specialists.values():
-            all_departments.update(depts)
-        all_departments.add("admin")
-
-        capabilities: dict[str, list[str]] = {
-            "routing-agent": sorted(all_departments),
-        }
-        capabilities.update(specialists)
-        return capabilities

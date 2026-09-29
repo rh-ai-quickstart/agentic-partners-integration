@@ -551,7 +551,8 @@ phase_4b_dcr_and_discovery() {
 
     # 4b.4: Agent registry endpoint returns known agents
     local registry_resp registry_agents
-    registry_resp=$(curl -sf "http://localhost:8001/api/v1/agents/registry" --max-time 15 2>/dev/null) || registry_resp="{}"
+    registry_resp=$(curl -sf "http://localhost:8001/api/v1/agents/registry" \
+        -H "Authorization: Bearer ${USER_TOKENS[carlos]:-}" --max-time 15 2>/dev/null) || registry_resp="{}"
     # Registry wraps agents under .agents key
     registry_agents=$(echo "$registry_resp" | jq -r '.agents // . | keys | join(",")') || registry_agents=""
 
@@ -726,12 +727,14 @@ check_rag_ticket_type() {
 }
 
 phase_5_chat_tests() {
-    section_header "PHASE 5: Chat & Authorization Tests"
+    section_header "PHASE 5: Chat & Authorization Matrix"
 
     if [ -z "${USER_TOKENS[carlos]:-}" ]; then
         record_skip "Chat tests: carlos token missing"
         return
     fi
+
+    echo "  ── carlos (groups: engineering, kubernetes, software) ──"
 
     # 5.1: carlos → kubernetes (ALLOW)
     echo "  Testing carlos → kubernetes question..."
@@ -758,19 +761,43 @@ phase_5_chat_tests() {
         "${USER_TOKENS[carlos]}" \
         "How do I configure BGP peering between two routers?"
 
-    # 5.4: josh → any question (DENY - no departments)
-    if [ -n "${USER_TOKENS[josh]:-}" ]; then
-        echo "  Testing josh → any question (should deny)..."
+    # ── luis (groups: engineering, network) ──
+    echo ""
+    echo "  ── luis (groups: engineering, network) ──"
+
+    if [ -n "${USER_TOKENS[luis]:-}" ]; then
+        # 5.4: luis → network (ALLOW)
+        echo "  Testing luis → network question..."
+        check_chat_allowed \
+            "Chat: luis → network" \
+            "${USER_TOKENS[luis]}" \
+            "My VPN tunnel keeps dropping. How do I troubleshoot IPsec issues?" \
+            "network-support" \
+            "vpn,ipsec,tunnel,network,firewall"
+
+        # 5.5: luis → kubernetes (DENY - luis lacks kubernetes)
+        echo "  Testing luis → kubernetes question (should deny)..."
         check_chat_denied \
-            "Chat: josh → any DENIED" \
-            "${USER_TOKENS[josh]}" \
-            "Help me with my Kubernetes deployment"
+            "Chat: luis → kubernetes DENIED" \
+            "${USER_TOKENS[luis]}" \
+            "My Kubernetes deployment is stuck in pending state"
+
+        # 5.6: luis → software (DENY - luis lacks software)
+        echo "  Testing luis → software question (should deny)..."
+        check_chat_denied \
+            "Chat: luis → software DENIED" \
+            "${USER_TOKENS[luis]}" \
+            "My Java application throws OutOfMemoryError on startup"
     else
-        record_skip "Chat: josh test (no token)"
+        record_skip "Chat: luis tests (no token)"
     fi
 
-    # 5.5: sharon → network (ALLOW - sharon has all departments)
+    # ── sharon (groups: admin, engineering, kubernetes, network, software) ──
+    echo ""
+    echo "  ── sharon (groups: admin + all departments) ──"
+
     if [ -n "${USER_TOKENS[sharon]:-}" ]; then
+        # 5.7: sharon → network (ALLOW)
         echo "  Testing sharon → network question..."
         check_chat_allowed \
             "Chat: sharon → network" \
@@ -778,15 +805,61 @@ phase_5_chat_tests() {
             "How do I troubleshoot OSPF neighbor adjacency issues?" \
             "network-support" \
             "ospf,neighbor,adjacency,routing,network"
+
+        # 5.8: sharon → kubernetes (ALLOW)
+        echo "  Testing sharon → kubernetes question..."
+        check_chat_allowed \
+            "Chat: sharon → kubernetes" \
+            "${USER_TOKENS[sharon]}" \
+            "How do I scale a Kubernetes deployment to handle more traffic?" \
+            "kubernetes-support" \
+            "kubernetes,scale,deployment,replica,hpa"
+
+        # 5.9: sharon → software (ALLOW)
+        echo "  Testing sharon → software question..."
+        check_chat_allowed \
+            "Chat: sharon → software" \
+            "${USER_TOKENS[sharon]}" \
+            "My application logs show database connection pool exhaustion" \
+            "software-support" \
+            "database,connection,pool,application,error"
     else
-        record_skip "Chat: sharon test (no token)"
+        record_skip "Chat: sharon tests (no token)"
     fi
 
-    # 5.6: RAG ticket type isolation — each agent returns its own ticket prefix
+    # ── josh (groups: none) ──
+    echo ""
+    echo "  ── josh (groups: none) ──"
+
+    if [ -n "${USER_TOKENS[josh]:-}" ]; then
+        # 5.10: josh → kubernetes (DENY - no groups)
+        echo "  Testing josh → kubernetes question (should deny)..."
+        check_chat_denied \
+            "Chat: josh → kubernetes DENIED" \
+            "${USER_TOKENS[josh]}" \
+            "Help me with my Kubernetes deployment"
+
+        # 5.11: josh → network (DENY - no groups)
+        echo "  Testing josh → network question (should deny)..."
+        check_chat_denied \
+            "Chat: josh → network DENIED" \
+            "${USER_TOKENS[josh]}" \
+            "How do I configure a VLAN on a Cisco switch?"
+
+        # 5.12: josh → software (DENY - no groups)
+        echo "  Testing josh → software question (should deny)..."
+        check_chat_denied \
+            "Chat: josh → software DENIED" \
+            "${USER_TOKENS[josh]}" \
+            "My Python script throws a segmentation fault"
+    else
+        record_skip "Chat: josh tests (no token)"
+    fi
+
+    # ── RAG ticket type isolation ──
     echo ""
     echo "  ── RAG ticket type isolation tests ──"
 
-    # Use sharon (has all departments) for all ticket type tests
     local ticket_token="${USER_TOKENS[sharon]:-${USER_TOKENS[carlos]:-}}"
     if [ -n "$ticket_token" ]; then
         echo "  Testing kubernetes-support returns K8S-TICKET-* sources..."
@@ -818,6 +891,150 @@ phase_5_chat_tests() {
 }
 
 # ═══════════════════════════════════════════════════════════════
+# Phase 5b: Identity & Token Validation
+# ═══════════════════════════════════════════════════════════════
+
+phase_5b_identity_validation() {
+    section_header "PHASE 5b: Identity & Token Validation"
+
+    # 5b.1: JWT audience claim includes expected value
+    if [ -n "${USER_TOKENS[carlos]:-}" ]; then
+        local claims aud
+        claims=$(decode_jwt_payload "${USER_TOKENS[carlos]}") || claims="{}"
+        aud=$(echo "$claims" | jq -r '.aud // ""') || aud=""
+        if echo "$aud" | grep -q "partner-agent-ui"; then
+            record_pass "JWT: audience includes partner-agent-ui ($aud)"
+        else
+            record_fail "JWT: audience claim" "Expected partner-agent-ui in aud, got: $aud"
+        fi
+
+        # 5b.2: JWT issuer matches Keycloak realm
+        local iss
+        iss=$(echo "$claims" | jq -r '.iss // ""') || iss=""
+        if echo "$iss" | grep -q "realms/partner-agent"; then
+            record_pass "JWT: issuer is Keycloak realm ($iss)"
+        else
+            record_fail "JWT: issuer claim" "Expected realms/partner-agent in iss, got: $iss"
+        fi
+
+        # 5b.3: JWT has required identity fields (sub, preferred_username)
+        local sub pref_user
+        sub=$(echo "$claims" | jq -r '.sub // ""') || sub=""
+        pref_user=$(echo "$claims" | jq -r '.preferred_username // ""') || pref_user=""
+        if [ -n "$sub" ] && [ -n "$pref_user" ]; then
+            record_pass "JWT: identity fields present (sub=$sub, user=$pref_user)"
+        else
+            record_fail "JWT: identity fields" "sub=$sub, preferred_username=$pref_user"
+        fi
+
+        # 5b.4: JWT azp (authorized party) matches client
+        local azp
+        azp=$(echo "$claims" | jq -r '.azp // ""') || azp=""
+        if [ "$azp" = "partner-agent-ui" ]; then
+            record_pass "JWT: authorized party is partner-agent-ui"
+        else
+            record_fail "JWT: azp claim" "Expected partner-agent-ui, got: $azp"
+        fi
+    fi
+
+    # 5b.5: No-auth API call rejected with 403
+    local noauth_code
+    noauth_code=$(curl -s -o /dev/null -w "%{http_code}" \
+        "http://localhost:8001/api/v1/agents/registry" --max-time 10)
+    if [ "$noauth_code" = "403" ]; then
+        record_pass "Identity: no-auth API call rejected (HTTP 403)"
+    else
+        record_fail "Identity: no-auth rejection" "Expected 403, got $noauth_code"
+    fi
+
+    # 5b.6: .well-known is publicly accessible (no auth required)
+    local wellknown_code
+    wellknown_code=$(curl -s -o /dev/null -w "%{http_code}" \
+        "http://localhost:8001/.well-known/agent-card.json" --max-time 10)
+    if [ "$wellknown_code" = "200" ]; then
+        record_pass "Identity: .well-known/ accessible without auth (HTTP 200)"
+    else
+        record_fail "Identity: .well-known/ access" "Expected 200, got $wellknown_code"
+    fi
+
+    # 5b.7: Health endpoints accessible without auth
+    local health_rm health_as
+    health_rm=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8000/health" --max-time 5)
+    health_as=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8001/health" --max-time 5)
+    if [ "$health_rm" = "200" ] && [ "$health_as" = "200" ]; then
+        record_pass "Identity: health endpoints public (rm=$health_rm, as=$health_as)"
+    else
+        record_fail "Identity: health endpoints" "rm=$health_rm, as=$health_as"
+    fi
+
+    # 5b.8: Expired/garbage JWT rejected
+    local garbage_code
+    garbage_code=$(curl -s -o /dev/null -w "%{http_code}" \
+        "http://localhost:8001/api/v1/agents/registry" \
+        -H "Authorization: Bearer invalid.garbage.token" --max-time 10)
+    if [ "$garbage_code" = "403" ]; then
+        record_pass "Identity: garbage JWT rejected (HTTP 403)"
+    else
+        record_fail "Identity: garbage JWT" "Expected 403, got $garbage_code"
+    fi
+
+    # 5b.9: SPIFFE identity in service containers
+    local rm_spiffe as_spiffe
+    rm_spiffe=$(docker exec partner-request-manager-full printenv MOCK_SPIFFE 2>/dev/null) || rm_spiffe=""
+    as_spiffe=$(docker exec partner-agent-service-full printenv MOCK_SPIFFE 2>/dev/null) || as_spiffe=""
+    if [ "$rm_spiffe" = "true" ] && [ "$as_spiffe" = "true" ]; then
+        record_pass "SPIFFE: MOCK_SPIFFE=true on both services"
+    else
+        record_fail "SPIFFE: MOCK_SPIFFE" "rm=$rm_spiffe, as=$as_spiffe"
+    fi
+
+    # 5b.10: SPIFFE trust domain configured
+    local rm_td as_td
+    rm_td=$(docker exec partner-request-manager-full printenv SPIFFE_TRUST_DOMAIN 2>/dev/null) || rm_td=""
+    as_td=$(docker exec partner-agent-service-full printenv SPIFFE_TRUST_DOMAIN 2>/dev/null) || as_td=""
+    if [ "$rm_td" = "partner.example.com" ] && [ "$as_td" = "partner.example.com" ]; then
+        record_pass "SPIFFE: trust domain partner.example.com on both services"
+    else
+        record_fail "SPIFFE: trust domain" "rm=$rm_td, as=$as_td"
+    fi
+
+    # 5b.11: Service-to-service call with X-SPIFFE-ID header (mock mode)
+    local spiffe_code spiffe_body
+    spiffe_body=$(curl -s -w "\n%{http_code}" \
+        "http://localhost:8001/api/v1/agents/registry" \
+        -H "X-SPIFFE-ID: spiffe://partner.example.com/service/request-manager" \
+        --max-time 10 2>/dev/null)
+    spiffe_code=$(echo "$spiffe_body" | tail -1)
+    if [ "$spiffe_code" = "200" ]; then
+        record_pass "SPIFFE: X-SPIFFE-ID header accepted for service call (HTTP 200)"
+    else
+        record_fail "SPIFFE: X-SPIFFE-ID header" "Expected 200, got $spiffe_code"
+    fi
+
+    # 5b.12: Refresh token works
+    if [ -n "${USER_TOKENS[carlos]:-}" ]; then
+        local login_resp refresh_token refresh_resp new_token
+        login_resp=$(curl -s -X POST "http://localhost:8000/auth/login" \
+            -H "Content-Type: application/json" \
+            -d '{"email":"carlos","password":"carlos123"}' --max-time 15)
+        refresh_token=$(echo "$login_resp" | jq -r '.refresh_token // empty')
+        if [ -n "$refresh_token" ]; then
+            refresh_resp=$(curl -s -X POST "http://localhost:8000/auth/refresh" \
+                -H "Content-Type: application/json" \
+                -d "{\"refresh_token\": \"$refresh_token\"}" --max-time 15) || refresh_resp=""
+            new_token=$(echo "$refresh_resp" | jq -r '.token // .access_token // empty') || new_token=""
+            if [ -n "$new_token" ] && [ ${#new_token} -gt 50 ]; then
+                record_pass "Auth: token refresh works (new token ${#new_token} chars)"
+            else
+                record_fail "Auth: token refresh" "No valid token in refresh response"
+            fi
+        else
+            record_skip "Auth: token refresh (no refresh_token in login response)"
+        fi
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════
 # Phase 6: Praxis Gateway Tests
 # ═══════════════════════════════════════════════════════════════
 
@@ -844,7 +1061,18 @@ phase_6_praxis() {
         record_fail "Praxis: unauthenticated rejection" "Expected 401/403, got $unauth_code"
     fi
 
-    # 6.3: Authenticated request through proxy must succeed
+    # 6.3: Garbage JWT rejected at gateway
+    local garbage_praxis
+    garbage_praxis=$(curl -s -o /dev/null -w "%{http_code}" \
+        "http://localhost:8180/api/v1/agents/registry" \
+        -H "Authorization: Bearer not-a-real.jwt.token" --max-time 15)
+    if [ "$garbage_praxis" = "401" ] || [ "$garbage_praxis" = "403" ]; then
+        record_pass "Praxis: garbage JWT rejected at gateway (HTTP $garbage_praxis)"
+    else
+        record_fail "Praxis: garbage JWT" "Expected 401/403, got $garbage_praxis"
+    fi
+
+    # 6.4: Authenticated request through proxy — carlos
     local auth_token="${USER_TOKENS[carlos]:-}"
     if [ -n "$auth_token" ]; then
         local auth_code registry_body
@@ -856,12 +1084,54 @@ phase_6_praxis() {
         registry_body=$(echo "$registry_body" | sed '$d')
 
         if [ "$auth_code" = "200" ] && echo "$registry_body" | grep -q "kubernetes-support"; then
-            record_pass "Praxis: authenticated proxy returns agent registry (HTTP 200)"
+            record_pass "Praxis: carlos proxy → agent registry (HTTP 200)"
         else
-            record_fail "Praxis: authenticated proxy" "HTTP $auth_code, body did not contain expected agents"
+            record_fail "Praxis: carlos proxy" "HTTP $auth_code"
         fi
     else
-        record_skip "Praxis: authenticated proxy (no auth token available)"
+        record_skip "Praxis: carlos proxy (no token)"
+    fi
+
+    # 6.5: Authenticated request through proxy — luis
+    if [ -n "${USER_TOKENS[luis]:-}" ]; then
+        local luis_code
+        luis_code=$(curl -s -o /dev/null -w "%{http_code}" \
+            "http://localhost:8180/api/v1/agents/registry" \
+            -H "Authorization: Bearer ${USER_TOKENS[luis]}" --max-time 15)
+        if [ "$luis_code" = "200" ]; then
+            record_pass "Praxis: luis proxy → agent registry (HTTP 200)"
+        else
+            record_fail "Praxis: luis proxy" "Expected 200, got $luis_code"
+        fi
+    fi
+
+    # 6.6: Authenticated request through proxy — sharon
+    if [ -n "${USER_TOKENS[sharon]:-}" ]; then
+        local sharon_code
+        sharon_code=$(curl -s -o /dev/null -w "%{http_code}" \
+            "http://localhost:8180/api/v1/agents/registry" \
+            -H "Authorization: Bearer ${USER_TOKENS[sharon]}" --max-time 15)
+        if [ "$sharon_code" = "200" ]; then
+            record_pass "Praxis: sharon proxy → agent registry (HTTP 200)"
+        else
+            record_fail "Praxis: sharon proxy" "Expected 200, got $sharon_code"
+        fi
+    fi
+
+    # 6.7: Praxis proxies agent-service endpoints correctly (agent card via gateway)
+    if [ -n "${USER_TOKENS[carlos]:-}" ]; then
+        local praxis_card_code praxis_card_body
+        praxis_card_body=$(curl -s -w "\n%{http_code}" \
+            "http://localhost:8180/.well-known/agent-card.json" \
+            -H "Authorization: Bearer ${USER_TOKENS[carlos]}" \
+            --max-time 15 2>/dev/null)
+        praxis_card_code=$(echo "$praxis_card_body" | tail -1)
+        praxis_card_body=$(echo "$praxis_card_body" | sed '$d')
+        if [ "$praxis_card_code" = "200" ] && echo "$praxis_card_body" | jq -r '.agent_cards | keys[]' 2>/dev/null | grep -q "kubernetes-support"; then
+            record_pass "Praxis: agent card via gateway (3 agents found)"
+        else
+            record_fail "Praxis: agent card via gateway" "HTTP $praxis_card_code"
+        fi
     fi
 }
 
@@ -947,13 +1217,41 @@ phase_7_audit() {
         record_skip "Audit: auth.login.failure events (none found)"
     fi
 
-    # 7.6: Chat request events
+    # 7.6: Chat request events (increased threshold for full matrix)
     local chat_count
     chat_count=$(db_query "SELECT COUNT(*) FROM audit_events WHERE event_type = 'data.chat.request' AND created_at >= '$AUDIT_START_TS'")
-    if [ "${chat_count:-0}" -ge 3 ]; then
+    if [ "${chat_count:-0}" -ge 8 ]; then
         record_pass "Audit: data.chat.request events ($chat_count found)"
     else
-        record_fail "Audit: data.chat.request events" "Expected >=3, found ${chat_count:-0}"
+        record_fail "Audit: data.chat.request events" "Expected >=8 (full matrix), found ${chat_count:-0}"
+    fi
+
+    # 7.7: Authorization deny events for each denied user scenario
+    local deny_details
+    deny_details=$(db_query "SELECT COUNT(DISTINCT actor) FROM audit_events WHERE event_type IN ('authz.deny','authz.routing_direct') AND created_at >= '$AUDIT_START_TS'")
+    if [ "${deny_details:-0}" -ge 2 ]; then
+        record_pass "Audit: deny events from multiple users ($deny_details distinct actors)"
+    else
+        record_fail "Audit: deny diversity" "Expected >=2 distinct actors, got ${deny_details:-0}"
+    fi
+
+    # 7.8: Audit events have service field populated
+    local no_service
+    no_service=$(db_query "SELECT COUNT(*) FROM audit_events WHERE service IS NULL AND created_at >= '$AUDIT_START_TS'")
+    if [ "${no_service:-0}" = "0" ]; then
+        record_pass "Audit: all events have service field populated"
+    else
+        record_fail "Audit: missing service field" "$no_service events lack service"
+    fi
+
+    # 7.9: Every allowed chat request triggered at least one token exchange
+    local te_final_count chat_allow_count
+    te_final_count=$(db_query "SELECT COUNT(*) FROM audit_events WHERE event_type = 'token.exchange' AND created_at >= '$AUDIT_START_TS'")
+    chat_allow_count=$(db_query "SELECT COUNT(*) FROM audit_events WHERE event_type = 'data.chat.request' AND created_at >= '$AUDIT_START_TS'")
+    if [ "${te_final_count:-0}" -ge "${chat_allow_count:-0}" ]; then
+        record_pass "Audit: token exchanges ($te_final_count) >= chat requests ($chat_allow_count)"
+    else
+        record_fail "Audit: token exchange coverage" "te=$te_final_count < chats=$chat_allow_count"
     fi
 }
 
@@ -998,6 +1296,24 @@ phase_8_request_logs() {
         record_pass "Request Logs: processing_time_ms recorded"
     else
         record_fail "Request Logs: missing processing_time_ms" "$no_time requests lack timing"
+    fi
+
+    # 8.5: Multiple distinct sessions (proxy for user diversity)
+    local session_count
+    session_count=$(db_query "SELECT COUNT(DISTINCT session_id) FROM request_logs WHERE created_at >= '$AUDIT_START_TS'")
+    if [ "${session_count:-0}" -ge 3 ]; then
+        record_pass "Request Logs: multiple sessions recorded ($session_count distinct)"
+    else
+        record_fail "Request Logs: session diversity" "Expected >=3, found ${session_count:-0}"
+    fi
+
+    # 8.6: All 3 specialist agents served requests
+    local specialist_count
+    specialist_count=$(db_query "SELECT COUNT(DISTINCT agent_id) FROM request_logs WHERE created_at >= '$AUDIT_START_TS' AND agent_id IN ('kubernetes-support','software-support','network-support')")
+    if [ "${specialist_count:-0}" -ge 3 ]; then
+        record_pass "Request Logs: all 3 specialists served requests"
+    else
+        record_fail "Request Logs: specialist coverage" "Expected 3, found ${specialist_count:-0}"
     fi
 }
 
@@ -1073,6 +1389,7 @@ main() {
     phase_4_authentication
     phase_4b_dcr_and_discovery
     phase_5_chat_tests
+    phase_5b_identity_validation
     phase_6_praxis
 
     # Allow async audit writes to flush

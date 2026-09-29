@@ -1,0 +1,28 @@
+{{- if .Values.spire.enabled }}
+{{- $fullName := include "partner-agent.fullname" . }}
+{{- $chartName := include "partner-agent.name" . }}
+{{- $saName := include "partner-agent.serviceAccountName" . }}
+{{- $services := list "request-manager" "agent-service" "kubernetes-agent" "praxis" }}
+{{- range $svc := $services }}
+---
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: {{ $fullName }}-{{ $svc }}
+spec:
+  spiffeIDTemplate: "spiffe://{{ $.Values.spire.trustDomain }}/ns/{{ $.Release.Namespace }}/sa/{{ $saName }}"
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $chartName }}
+      app.kubernetes.io/component: {{ $svc }}
+  namespaceSelector:
+    matchNames:
+    - {{ $.Release.Namespace }}
+  dnsNameTemplates:
+  - "{{ $fullName }}-{{ $svc }}.{{ $.Release.Namespace }}.svc.cluster.local"
+  workloadSelectorTemplates:
+  - "k8s:ns:{{ $.Release.Namespace }}"
+  - "k8s:sa:{{ $saName }}"
+  jwtTTL: 1h
+{{- end }}
+{{- end }}

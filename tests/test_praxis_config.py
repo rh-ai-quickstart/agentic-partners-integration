@@ -98,12 +98,14 @@ class TestPolicyJwtPlugin:
         )
         assert jwt_plugin["config"].get("claim_mapper") == "keycloak"
 
-    def test_plugin_has_skip_audience_validation(self, policy):
+    def test_plugin_validates_audience(self, policy):
         jwt_plugin = next(
             p for p in policy["plugins"] if p.get("kind") == "identity/jwt"
         )
         issuer = jwt_plugin["config"]["trusted_issuers"][0]
-        assert issuer.get("skip_audience_validation") is True
+        assert "skip_audience_validation" not in issuer
+        assert "audiences" in issuer
+        assert "partner-agent-ui" in issuer["audiences"]
 
     def test_plugin_has_insecure_http_for_docker_network(self, policy):
         jwt_plugin = next(
@@ -257,8 +259,11 @@ class TestHelmTemplatePolicy:
     def test_helm_policy_has_perform_http_capability(self, helm_praxis_deployment_text):
         assert "perform_http" in helm_praxis_deployment_text
 
-    def test_helm_policy_has_skip_audience_validation(self, helm_praxis_deployment_text):
-        assert "skip_audience_validation: true" in helm_praxis_deployment_text
+    def test_helm_policy_has_audiences(self, helm_praxis_deployment_text):
+        assert "audiences:" in helm_praxis_deployment_text
+        assert "partner-agent-ui" in helm_praxis_deployment_text
+        assert "agent-service" in helm_praxis_deployment_text
+        assert "skip_audience_validation" not in helm_praxis_deployment_text
 
     def test_helm_policy_uses_port_8080_for_keycloak(self, helm_praxis_deployment_text):
         assert "keycloak:8080" in helm_praxis_deployment_text

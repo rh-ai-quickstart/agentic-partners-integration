@@ -86,6 +86,65 @@ class TestTokenClaims:
         assert claims.actor_subject is None
 
 
+class TestCallerIdentity:
+    """Tests for TokenClaims.caller_identity fallback chain."""
+
+    def test_caller_identity_from_sub(self):
+        from agent_service.jwt_auth import TokenClaims
+
+        claims = TokenClaims(
+            subject="user-123",
+            issuer="iss",
+            audience=["agent-service"],
+            raw={"sub": "user-123", "azp": "partner-agent-ui"},
+        )
+        assert claims.caller_identity == "user-123"
+
+    def test_caller_identity_fallback_to_client_id(self):
+        from agent_service.jwt_auth import TokenClaims
+
+        claims = TokenClaims(
+            subject="",
+            issuer="iss",
+            audience=["agent-service"],
+            raw={"client_id": "request-manager-svc", "azp": "rm"},
+        )
+        assert claims.caller_identity == "request-manager-svc"
+
+    def test_caller_identity_fallback_to_azp(self):
+        from agent_service.jwt_auth import TokenClaims
+
+        claims = TokenClaims(
+            subject="",
+            issuer="iss",
+            audience=["agent-service"],
+            raw={"azp": "partner-agent-ui"},
+        )
+        assert claims.caller_identity == "partner-agent-ui"
+
+    def test_caller_identity_fallback_to_preferred_username(self):
+        from agent_service.jwt_auth import TokenClaims
+
+        claims = TokenClaims(
+            subject="",
+            issuer="iss",
+            audience=["agent-service"],
+            raw={"preferred_username": "carlos@example.com"},
+        )
+        assert claims.caller_identity == "carlos@example.com"
+
+    def test_caller_identity_ultimate_fallback_to_subject_field(self):
+        from agent_service.jwt_auth import TokenClaims
+
+        claims = TokenClaims(
+            subject="fallback-sub",
+            issuer="iss",
+            audience=["agent-service"],
+            raw={},
+        )
+        assert claims.caller_identity == "fallback-sub"
+
+
 class TestJWTAuthError:
     def test_default_message(self):
         from agent_service.jwt_auth import JWTAuthError

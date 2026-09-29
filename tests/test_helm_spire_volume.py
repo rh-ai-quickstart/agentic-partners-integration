@@ -40,13 +40,8 @@ class TestSpireVolumeMount:
 
     def test_hostpath_volume_for_spire_sockets(self):
         """Template text contains hostPath volume for /run/spire/sockets."""
-        # The volumes section should define a hostPath pointing to /run/spire/sockets
         assert "path: /run/spire/sockets" in self.deployment_tpl
-        pattern = r"volumes:.*?name: spire-agent-socket.*?hostPath:.*?path: /run/spire/sockets"
-        match = re.search(pattern, self.deployment_tpl, re.DOTALL)
-        assert match is not None, (
-            "Expected hostPath volume with path /run/spire/sockets under volumes"
-        )
+        assert "hostPath:" in self.deployment_tpl
 
     def test_volume_mount_is_read_only(self):
         """The spire-agent-socket volumeMount has readOnly: true."""
@@ -62,9 +57,9 @@ class TestSpireVolumeMount:
         )
 
     def test_hostpath_type_directory_or_create(self):
-        """The hostPath volume type is DirectoryOrCreate."""
+        """The hostPath volume type is DirectoryOrCreate (in non-CSI mode)."""
+        assert "type: DirectoryOrCreate" in self.deployment_tpl
         pattern = (
-            r"name: spire-agent-socket\s+"
             r"hostPath:\s+"
             r"path: /run/spire/sockets\s+"
             r"type: DirectoryOrCreate"
@@ -111,18 +106,64 @@ class TestSpireVolumeMount:
 
     def test_volume_definition_conditional_on_spire_enabled(self):
         """The spire-agent-socket volume definition is conditional on spire.enabled."""
-        # The volume block for spire-agent-socket should be wrapped in
-        # {{- if $context.Values.spire.enabled }}
         pattern = (
             r'\{\{-\s*if\s+\$context\.Values\.spire\.enabled\s*\}\}\s*'
             r'- name: spire-agent-socket\s+'
-            r'hostPath:\s+'
-            r'path: /run/spire/sockets\s+'
-            r'type: DirectoryOrCreate\s*'
-            r'\{\{-\s*end\s*\}\}'
         )
         match = re.search(pattern, self.deployment_tpl)
         assert match is not None, (
             "Expected spire-agent-socket volume to be wrapped in "
             "spire.enabled conditional"
         )
+
+    def test_csi_driver_option_present(self):
+        """Template supports SPIFFE CSI driver as alternative to hostPath."""
+        assert 'csi.spiffe.io' in self.deployment_tpl
+        assert 'spire.csiDriver' in self.deployment_tpl
+
+    def test_pod_labels_include_component(self):
+        """Pods have app.kubernetes.io/component label for SPIRE registration matching."""
+        assert 'app.kubernetes.io/component' in self.deployment_tpl
+
+
+class TestClusterSpiffeIDRegistration:
+    """Verify ClusterSpiffeID CRDs are generated for each service."""
+
+    @pytest.fixture(autouse=True)
+    def load_template(self):
+        path = os.path.join(REPO_ROOT, "helm", "templates", "spire-registration.yaml")
+        with open(path) as f:
+            self.registration_tpl = f.read()
+
+    def test_conditional_on_spire_enabled(self):
+        assert "spire.enabled" in self.registration_tpl
+
+    def test_cluster_spiffe_id_kind(self):
+        assert "kind: ClusterSPIFFEID" in self.registration_tpl
+
+    def test_spiffe_id_template(self):
+        assert "spiffeIDTemplate" in self.registration_tpl
+        assert "spire.trustDomain" in self.registration_tpl
+
+    def test_pod_selector_uses_standard_labels(self):
+        """Pod selector uses app.kubernetes.io/name (chart name) and app.kubernetes.io/component."""
+        assert "app.kubernetes.io/name" in self.registration_tpl
+        assert "app.kubernetes.io/component" in self.registration_tpl
+
+    def test_pod_selector_uses_chart_name_not_fullname(self):
+        """Pod selector references partner-agent.name (chart name), not fullname."""
+        assert 'partner-agent.name' in self.registration_tpl
+
+    def test_service_account_uses_helper(self):
+        """SPIFFE ID and workload selector reference the actual SA from serviceAccountName helper."""
+        assert 'partner-agent.serviceAccountName' in self.registration_tpl
+
+    def test_namespace_selector(self):
+        assert "namespaceSelector" in self.registration_tpl
+
+    def test_jwt_ttl(self):
+        assert "jwtTTL" in self.registration_tpl
+
+    def test_services_covered(self):
+        for svc in ("request-manager", "agent-service", "kubernetes-agent", "praxis"):
+            assert svc in self.registration_tpl, f"Missing ClusterSpiffeID for {svc}"

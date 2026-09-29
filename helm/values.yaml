@@ -198,22 +198,17 @@ dcr:
 spire:
   enabled: false  # Set to true when SPIRE operator is deployed on cluster
   required: false  # When true, services fail-closed if SPIRE is unavailable
+  csiDriver: false  # Use SPIFFE CSI driver instead of hostPath for SVID mounts
   trustDomain: "partner.example.com"
   # Authentication mode for Keycloak: "iat" (Initial Access Token) or "spiffe" (JWT-SVID assertion)
-  authenticationMode: "iat"
+  authenticationMode: "spiffe"
 
-# OPA policy engine (deprecated — policy evaluation is now done locally via agent_capabilities.yaml)
-opa:
-  enabled: false
-  image: openpolicyagent/opa
-  tag: "latest"
-  resources:
-    requests:
-      memory: "128Mi"
-      cpu: "100m"
-    limits:
-      memory: "256Mi"
-      cpu: "200m"
+# OpenShift integration (admission control, RBAC for Keycloak groups)
+openshift:
+  admissionPolicy:
+    enabled: false  # Set to true on OpenShift 4.14+ clusters
+  rbac:
+    enabled: false  # Set to true to create RBAC bindings for Keycloak groups
 
 # Kubernetes Partner Agent
 kubernetesAgent:

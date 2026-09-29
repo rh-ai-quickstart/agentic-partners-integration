@@ -258,6 +258,98 @@ for aud_client in "${AUDIENCE_CLIENTS[@]}"; do
     fi
 done
 
+# Add self-audience mapper so tokens include "partner-agent-ui" in aud
+if [ -n "$PAU_UUID" ]; then
+    SELF_MAPPER_EXISTS=$(curl -sf "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${PAU_UUID}/protocol-mappers/models" \
+        -H "Authorization: Bearer ${ADMIN_TOKEN}" | jq -r '.[] | select(.name=="audience-self") | .id // empty')
+    if [ -z "$SELF_MAPPER_EXISTS" ]; then
+        curl -sf -X POST "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${PAU_UUID}/protocol-mappers/models" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{
+                "name": "audience-self",
+                "protocol": "openid-connect",
+                "protocolMapper": "oidc-audience-mapper",
+                "consentRequired": false,
+                "config": {
+                    "included.custom.audience": "partner-agent-ui",
+                    "id.token.claim": "false",
+                    "access.token.claim": "true",
+                    "introspection.token.claim": "true"
+                }
+            }'
+        echo "  OK Added self-audience mapper: partner-agent-ui"
+    else
+        echo "  - Self-audience mapper exists"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# Per-service confidential clients (GAP 2: upstream parity)
+# Each service authenticates via JWT-SVID client_assertion (SPIFFE)
+# and has its own service account for the two-grant token exchange.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Creating per-service confidential clients..."
+SERVICE_CLIENTS=("request-manager-svc" "agent-service-svc")
+
+for svc_client in "${SERVICE_CLIENTS[@]}"; do
+    SVC_EXISTS=$(curl -sf "${KEYCLOAK_URL}/admin/realms/${REALM}/clients?clientId=${svc_client}" \
+        -H "Authorization: Bearer ${ADMIN_TOKEN}" | jq -r '.[0].id // empty')
+
+    if [ -z "$SVC_EXISTS" ]; then
+        curl -sf -X POST "${KEYCLOAK_URL}/admin/realms/${REALM}/clients" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{
+                \"clientId\": \"${svc_client}\",
+                \"name\": \"${svc_client}\",
+                \"enabled\": true,
+                \"publicClient\": false,
+                \"directAccessGrantsEnabled\": false,
+                \"standardFlowEnabled\": false,
+                \"serviceAccountsEnabled\": true,
+                \"clientAuthenticatorType\": \"federated-jwt\",
+                \"protocol\": \"openid-connect\",
+                \"attributes\": {
+                    \"standard.token.exchange.enabled\": \"true\",
+                    \"token.endpoint.auth.signing.alg\": \"RS256\",
+                    \"jwt.credential.issuer\": \"spiffe\",
+                    \"use.jwks.url\": \"true\",
+                    \"jwks.url\": \"http://spire-oidc-provider:8443/keys\"
+                }
+            }"
+        echo "  OK Created service client: ${svc_client}"
+
+        # Add group mapper
+        SVC_UUID=$(curl -sf "${KEYCLOAK_URL}/admin/realms/${REALM}/clients?clientId=${svc_client}" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" | jq -r '.[0].id // empty')
+        if [ -n "$SVC_UUID" ]; then
+            curl -sf -X POST "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${SVC_UUID}/protocol-mappers/models" \
+                -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+                -H "Content-Type: application/json" \
+                -d '{
+                    "name": "groups",
+                    "protocol": "openid-connect",
+                    "protocolMapper": "oidc-group-membership-mapper",
+                    "consentRequired": false,
+                    "config": {
+                        "full.path": "false",
+                        "introspection.token.claim": "true",
+                        "userinfo.token.claim": "true",
+                        "multivalued": "true",
+                        "id.token.claim": "true",
+                        "access.token.claim": "true",
+                        "claim.name": "groups"
+                    }
+                }'
+            echo "  OK Added group mapper to ${svc_client}"
+        fi
+    else
+        echo "  - Service client exists: ${svc_client}"
+    fi
+done
+
 # ---------------------------------------------------------------------------
 # Social login identity providers (Google, GitHub, Microsoft)
 # All three are optional.  Each is skipped when its env vars are not set.

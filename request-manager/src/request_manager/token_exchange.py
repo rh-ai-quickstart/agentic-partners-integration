@@ -64,6 +64,9 @@ KEYCLOAK_REALM: str = os.getenv("KEYCLOAK_REALM", "partner-agent")
 KEYCLOAK_CLIENT_ID: str = os.getenv("KEYCLOAK_CLIENT_ID", "partner-agent-ui")
 KEYCLOAK_CLIENT_SECRET: str = os.getenv("KEYCLOAK_CLIENT_SECRET", "")
 SPIRE_AUTH_MODE: str = os.getenv("SPIRE_AUTH_MODE", "iat")
+SERVICE_CLIENT_ID: str = os.getenv("SERVICE_CLIENT_ID", "request-manager-svc")
+SERVICE_CLIENT_SECRET: str = os.getenv("SERVICE_CLIENT_SECRET", "")
+TWO_GRANT_ENABLED: bool = os.getenv("TWO_GRANT_ENABLED", "true").lower() == "true"
 
 # JWT-SPIFFE client assertion type (RFC 7523 profile for SPIFFE)
 CLIENT_ASSERTION_TYPE_JWT_SPIFFE = (
@@ -156,6 +159,49 @@ async def _get_dcr_actor_token(token_endpoint: str) -> Optional[str]:
     except Exception as exc:
         logger.debug("DCR actor token fetch failed: %s", exc)
     return None
+
+async def _get_service_token(token_endpoint: str) -> Optional[str]:
+    """Grant 1: get a service-identity token using per-service client credentials.
+
+    Uses SERVICE_CLIENT_ID (e.g. request-manager-svc) to authenticate
+    to Keycloak and obtain a service account token. This token is then
+    used as the actor_token in Grant 2 (RFC 8693 exchange).
+
+    Falls back to SPIFFE client_assertion if configured. Returns None if
+    neither client credentials nor SPIFFE are available.
+    """
+    if not TWO_GRANT_ENABLED:
+        return None
+
+    spiffe_assertion = _get_spiffe_client_assertion()
+    try:
+        data: Dict[str, Any] = {"grant_type": "client_credentials"}
+
+        if spiffe_assertion:
+            data["client_assertion_type"] = CLIENT_ASSERTION_TYPE_JWT_SPIFFE
+            data["client_assertion"] = spiffe_assertion
+        elif SERVICE_CLIENT_SECRET:
+            data["client_id"] = SERVICE_CLIENT_ID
+            data["client_secret"] = SERVICE_CLIENT_SECRET
+        else:
+            return None
+
+        async with httpx.AsyncClient(timeout=10.0) as http:
+            resp = await http.post(
+                token_endpoint,
+                data=data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+        if resp.status_code == 200:
+            return resp.json().get("access_token")
+        logger.debug(
+            "Service token request failed (HTTP %s)",
+            resp.status_code,
+        )
+    except Exception as exc:
+        logger.debug("Service token fetch failed: %s", exc)
+    return None
+
 
 # RFC 8693 token type URNs
 TOKEN_TYPE_ACCESS_TOKEN = "urn:ietf:params:oauth:token-type:access_token"
@@ -304,7 +350,12 @@ class TokenExchangeClient:
         # When DCR_ENABLED, we additionally fetch a service-identity actor_token.
         auth_method = "legacy"
         actor_token_value: Optional[str] = None
-        if DCR_ENABLED:
+
+        service_token = await _get_service_token(self.token_endpoint)
+        if service_token:
+            actor_token_value = service_token
+            auth_method = "two-grant"
+        elif DCR_ENABLED:
             actor_token_value = await _get_dcr_actor_token(self.token_endpoint)
             if actor_token_value:
                 auth_method = "dcr-actor"

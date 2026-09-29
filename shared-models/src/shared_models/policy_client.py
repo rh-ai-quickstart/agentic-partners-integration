@@ -236,7 +236,7 @@ async def check_agent_authorization(
 ) -> PolicyDecision:
     """Evaluate whether an agent invocation is authorized.
 
-    Six rules, evaluated in-process:
+    In-process evaluation using agent_capabilities.yaml (served by Praxis):
 
     1. Service-to-service without delegation -> allow
     2. Direct user access -> allow
@@ -244,14 +244,6 @@ async def check_agent_authorization(
     4. Delegated access with empty intersection -> deny
     5. Autonomous agent without delegation -> deny
     6. Unknown agent -> deny
-
-    Args:
-        caller_spiffe_id: SPIFFE ID of the calling service/user
-        agent_name: Name of the target agent (e.g. "software-support")
-        delegation: Delegation context (user -> agent), if applicable
-
-    Returns:
-        PolicyDecision with allow/deny, reason, and effective departments
     """
     try:
         caller_type = parse_spiffe_type(caller_spiffe_id)

@@ -10,6 +10,7 @@ from request_manager.token_exchange import (
     TokenExchangeClient,
     TokenExchangeError,
     _get_dcr_actor_token,
+    _get_service_token,
     _get_spiffe_client_assertion,
 )
 
@@ -275,6 +276,103 @@ class TestGetDcrActorToken:
             side_effect=RuntimeError("DCR broken"),
         ):
             result = await _get_dcr_actor_token("https://keycloak/token")
+
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _get_service_token — two-grant pattern (Grant 1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestGetServiceToken:
+    """Tests for _get_service_token (two-grant pattern Grant 1)."""
+
+    @patch("request_manager.token_exchange.TWO_GRANT_ENABLED", False)
+    async def test_returns_none_when_disabled(self):
+        result = await _get_service_token("http://kc/token")
+        assert result is None
+
+    @patch("request_manager.token_exchange.TWO_GRANT_ENABLED", True)
+    @patch("request_manager.token_exchange._get_spiffe_client_assertion", return_value=None)
+    @patch("request_manager.token_exchange.SERVICE_CLIENT_SECRET", "")
+    async def test_returns_none_when_no_credentials(self, _):
+        result = await _get_service_token("http://kc/token")
+        assert result is None
+
+    @patch("request_manager.token_exchange.TWO_GRANT_ENABLED", True)
+    @patch("request_manager.token_exchange._get_spiffe_client_assertion", return_value=None)
+    @patch("request_manager.token_exchange.SERVICE_CLIENT_SECRET", "test-secret")
+    @patch("request_manager.token_exchange.SERVICE_CLIENT_ID", "request-manager-svc")
+    async def test_uses_client_credentials(self, _):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"access_token": "svc-token-123"}
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post.return_value = mock_resp
+
+        with patch("request_manager.token_exchange.httpx.AsyncClient", return_value=mock_client):
+            result = await _get_service_token("http://kc/token")
+
+        assert result == "svc-token-123"
+        call_data = mock_client.post.call_args[1]["data"]
+        assert call_data["grant_type"] == "client_credentials"
+        assert call_data["client_id"] == "request-manager-svc"
+        assert call_data["client_secret"] == "test-secret"
+
+    @patch("request_manager.token_exchange.TWO_GRANT_ENABLED", True)
+    @patch("request_manager.token_exchange._get_spiffe_client_assertion", return_value="jwt-svid-token")
+    async def test_uses_spiffe_assertion(self, _):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"access_token": "spiffe-svc-token"}
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post.return_value = mock_resp
+
+        with patch("request_manager.token_exchange.httpx.AsyncClient", return_value=mock_client):
+            result = await _get_service_token("http://kc/token")
+
+        assert result == "spiffe-svc-token"
+        call_data = mock_client.post.call_args[1]["data"]
+        assert "client_assertion" in call_data
+
+    @patch("request_manager.token_exchange.TWO_GRANT_ENABLED", True)
+    @patch("request_manager.token_exchange._get_spiffe_client_assertion", return_value=None)
+    @patch("request_manager.token_exchange.SERVICE_CLIENT_SECRET", "test-secret")
+    @patch("request_manager.token_exchange.SERVICE_CLIENT_ID", "request-manager-svc")
+    async def test_non_200_returns_none(self, _):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 401
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post.return_value = mock_resp
+
+        with patch("request_manager.token_exchange.httpx.AsyncClient", return_value=mock_client):
+            result = await _get_service_token("http://kc/token")
+
+        assert result is None
+
+    @patch("request_manager.token_exchange.TWO_GRANT_ENABLED", True)
+    @patch("request_manager.token_exchange._get_spiffe_client_assertion", return_value=None)
+    @patch("request_manager.token_exchange.SERVICE_CLIENT_SECRET", "test-secret")
+    @patch("request_manager.token_exchange.SERVICE_CLIENT_ID", "request-manager-svc")
+    async def test_exception_returns_none(self, _):
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post.side_effect = Exception("network error")
+
+        with patch("request_manager.token_exchange.httpx.AsyncClient", return_value=mock_client):
+            result = await _get_service_token("http://kc/token")
 
         assert result is None
 
@@ -802,6 +900,59 @@ class TestExchangeForAgentDCRPath:
         call_args = mock_client.post.call_args
         payload = call_args[1]["data"]
         assert payload["client_secret"] == "my-secret"
+
+        await client.close()
+
+
+# ---------------------------------------------------------------------------
+# exchange_for_agent — two-grant service token path (lines 354-357)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestExchangeForAgentTwoGrantPath:
+    """Tests for the two-grant pattern in exchange_for_agent."""
+
+    @patch("request_manager.token_exchange._get_service_token")
+    @patch("request_manager.token_exchange.AuditService")
+    @patch("request_manager.token_exchange.httpx.AsyncClient")
+    async def test_service_token_used_as_actor_token(self, mock_httpx, mock_audit, mock_svc_fn):
+        """When _get_service_token succeeds, it's used as actor_token with two-grant auth method."""
+        test_token = _make_test_token()
+        mock_svc_fn.return_value = "service-grant1-token"
+
+        new_token = _make_test_token(aud="agent-x")
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "access_token": new_token,
+            "token_type": "Bearer",
+            "expires_in": 300,
+        }
+
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.aclose = AsyncMock()
+        mock_httpx.return_value = mock_client
+
+        mock_audit.emit = AsyncMock()
+
+        client = TokenExchangeClient()
+        result = await client.exchange_for_agent(
+            subject_token=test_token,
+            target_agent="agent-x",
+            actor_service="request-manager",
+        )
+
+        assert result["access_token"] == new_token
+
+        call_args = mock_client.post.call_args
+        payload = call_args[1]["data"]
+        assert payload["actor_token"] == "service-grant1-token"
+        assert payload["actor_token_type"] == "urn:ietf:params:oauth:token-type:access_token"
+
+        audit_call = mock_audit.emit.call_args
+        assert audit_call[1]["metadata"]["auth_method"] == "two-grant"
 
         await client.close()
 

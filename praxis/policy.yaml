@@ -27,7 +27,10 @@ plugins:
     - issuer: http://partner-keycloak-full:8090/realms/partner-agent
       algorithms:
       - RS256
-      skip_audience_validation: true
+      audiences:
+      - partner-agent-ui
+      - agent-service
+      - kubernetes-agent
       decoding_key:
         kind: jwks_url
         url: http://partner-keycloak-full:8090/realms/partner-agent/protocol/openid-connect/certs

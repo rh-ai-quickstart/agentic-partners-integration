@@ -257,12 +257,13 @@ async def invoke_agent(
                 ),
             )
 
-        # Per-hop JWT validation: verify the Bearer token independently
+        # Per-hop JWT validation: verify the Bearer token and extract claims
+        jwt_claims = None
         if _JWT_VALIDATION_ENABLED:
             auth_header = http_request.headers.get("Authorization")
             if auth_header:
                 try:
-                    validate_bearer_token(auth_header)
+                    jwt_claims = validate_bearer_token(auth_header)
                 except JWTAuthError:
                     logger.warning(
                         "JWT validation failed at agent-service",
@@ -282,75 +283,94 @@ async def invoke_agent(
                         detail="Authentication failed",
                     )
 
-        # If delegation context is present (a service acting on behalf of
-        # a user), verify authorization via policy engine. Without delegation headers,
-        # this is a plain service-to-service call (policy Rule 1: allowed).
-        delegation_user = http_request.headers.get("X-Delegation-User")
+        # Extract caller identity from JWT claims (cryptographic) or fall back
+        # to delegation headers. JWT claims are authoritative when available.
+        delegation_user = None
+        delegation_departments: list[str] = []
+
+        if jwt_claims and jwt_claims.is_delegated:
+            delegation_user = jwt_claims.caller_identity
+            delegation_departments = jwt_claims.groups
+        elif jwt_claims:
+            delegation_user = http_request.headers.get("X-Delegation-User")
+            if delegation_user:
+                transfer_ctx = request.transfer_context or {}
+                delegation_departments = transfer_ctx.get("departments", jwt_claims.groups)
+        else:
+            delegation_user = http_request.headers.get("X-Delegation-User")
+            if delegation_user:
+                transfer_ctx = request.transfer_context or {}
+                delegation_departments = transfer_ctx.get("departments", [])
+
+        # Unconditional policy check (fail-closed). The policy engine handles
+        # all cases: service-to-service (Rule 1), user (Rule 2), delegated
+        # (Rules 3/4), autonomous agent (Rule 5), unknown agent (Rule 6).
+        from shared_models.identity import make_spiffe_id
+        from shared_models.policy_client import (
+            Delegation,
+            check_agent_authorization,
+        )
+
+        delegation = None
         if delegation_user:
-            transfer_ctx = request.transfer_context or {}
-            delegation_departments = transfer_ctx.get("departments", [])
-
-            from shared_models.identity import make_spiffe_id
-            from shared_models.policy_client import (
-                Delegation,
-                check_agent_authorization,
-            )
-
             delegation = Delegation(
                 user_spiffe_id=delegation_user,
                 agent_spiffe_id=make_spiffe_id("agent", agent_name),
                 user_departments=delegation_departments,
+                act_claim=jwt_claims.act if jwt_claims else None,
+                original_user_email=jwt_claims.email if jwt_claims else None,
             )
 
-            policy_decision = await check_agent_authorization(
-                caller_spiffe_id=identity.spiffe_id,
-                agent_name=agent_name,
-                delegation=delegation,
-            )
+        policy_decision = await check_agent_authorization(
+            caller_spiffe_id=identity.spiffe_id,
+            agent_name=agent_name,
+            delegation=delegation,
+        )
 
-            if not policy_decision.allow:
-                logger.warning(
-                    "Agent invocation rejected by policy engine",
-                    agent_name=agent_name,
-                    caller=identity.spiffe_id,
-                    delegation_user=delegation_user,
-                    reason=policy_decision.reason,
-                )
-                await AuditService.emit(
-                    event_type="authz.deny",
-                    actor=delegation_user,
-                    action="invoke_agent",
-                    resource=agent_name,
-                    outcome="failure",
-                    reason=policy_decision.reason,
-                    metadata={
-                        "caller": identity.spiffe_id,
-                        "departments": delegation_departments,
-                        "layer": "defense-in-depth",
-                    },
-                    service="agent-service",
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Authorization denied: {policy_decision.reason}",
-                )
-
-            logger.info(
-                "Agent invocation authorized by policy engine",
+        if not policy_decision.allow:
+            logger.warning(
+                "Agent invocation rejected by policy engine",
                 agent_name=agent_name,
                 caller=identity.spiffe_id,
-                effective_departments=policy_decision.effective_departments,
+                delegation_user=delegation_user,
+                reason=policy_decision.reason,
             )
             await AuditService.emit(
-                event_type="authz.allow",
-                actor=delegation_user,
+                event_type="authz.deny",
+                actor=delegation_user or identity.spiffe_id,
                 action="invoke_agent",
                 resource=agent_name,
-                outcome="success",
+                outcome="failure",
+                reason=policy_decision.reason,
                 metadata={
                     "caller": identity.spiffe_id,
-                    "effective_departments": policy_decision.effective_departments,
+                    "departments": delegation_departments,
                     "layer": "defense-in-depth",
+                },
+                service="agent-service",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Authorization denied: {policy_decision.reason}",
+            )
+
+        logger.info(
+            "Agent invocation authorized by policy engine",
+            agent_name=agent_name,
+            caller=identity.spiffe_id,
+            effective_departments=policy_decision.effective_departments,
+        )
+        await AuditService.emit(
+            event_type="authz.allow",
+            actor=delegation_user or identity.spiffe_id,
+            action="invoke_agent",
+            resource=agent_name,
+            outcome="success",
+            metadata={
+                "caller": identity.spiffe_id,
+                "effective_departments": policy_decision.effective_departments,
+                "identity_source": "jwt-claims" if jwt_claims else "headers",
+                "layer": "defense-in-depth",
                 },
                 service="agent-service",
             )

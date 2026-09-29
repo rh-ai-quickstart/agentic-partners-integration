@@ -452,6 +452,46 @@ class TestDecodeKeycloakJwt:
         with pytest.raises(pyjwt.PyJWTError):
             _decode_keycloak_jwt("bad-token")
 
+    @patch("request_manager.auth_endpoints._get_jwks_client")
+    def test_passes_audience_to_jwt_decode(self, mock_get_client):
+        """_decode_keycloak_jwt passes JWT_EXPECTED_AUDIENCE for aud verification."""
+        from request_manager.auth_endpoints import _decode_keycloak_jwt
+
+        mock_client = MagicMock()
+        mock_signing_key = MagicMock()
+        mock_signing_key.key = "test-key"
+        mock_client.get_signing_key_from_jwt.return_value = mock_signing_key
+        mock_get_client.return_value = mock_client
+
+        with patch(
+            "jwt.decode", return_value={"sub": "user1"}
+        ) as mock_decode:
+            _decode_keycloak_jwt("test-token")
+
+        call_kwargs = mock_decode.call_args
+        assert call_kwargs[1]["options"]["verify_aud"] is True
+        assert call_kwargs[1]["audience"] == "partner-agent-ui"
+
+    @patch("request_manager.auth_endpoints._get_jwks_client")
+    def test_rejects_wrong_audience(self, mock_get_client):
+        """_decode_keycloak_jwt raises InvalidAudienceError for wrong audience."""
+        import jwt as pyjwt
+
+        from request_manager.auth_endpoints import _decode_keycloak_jwt
+
+        mock_client = MagicMock()
+        mock_signing_key = MagicMock()
+        mock_signing_key.key = "test-key"
+        mock_client.get_signing_key_from_jwt.return_value = mock_signing_key
+        mock_get_client.return_value = mock_client
+
+        with patch(
+            "jwt.decode",
+            side_effect=pyjwt.exceptions.InvalidAudienceError("Invalid audience"),
+        ):
+            with pytest.raises(pyjwt.exceptions.InvalidAudienceError):
+                _decode_keycloak_jwt("wrong-aud-token")
+
 
 # ---------------------------------------------------------------------------
 # /auth/login - additional coverage (lines 160-161, 193-196)

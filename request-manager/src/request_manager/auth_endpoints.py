@@ -50,6 +50,7 @@ KEYCLOAK_URL: str = os.getenv("KEYCLOAK_URL", "http://keycloak:8080")
 KEYCLOAK_REALM: str = os.getenv("KEYCLOAK_REALM", "partner-agent")
 KEYCLOAK_CLIENT_ID: str = os.getenv("KEYCLOAK_CLIENT_ID", "partner-agent-ui")
 KEYCLOAK_CLIENT_SECRET: str = os.getenv("KEYCLOAK_CLIENT_SECRET", "")
+JWT_EXPECTED_AUDIENCE: str = os.getenv("JWT_EXPECTED_AUDIENCE", "partner-agent-ui")
 
 # Cached JWKS client (created lazily)
 _jwks_client: Optional[jwt.PyJWKClient] = None
@@ -78,7 +79,8 @@ def _decode_keycloak_jwt(token: str) -> dict:
         signing_key.key,
         algorithms=["RS256"],
         issuer=expected_issuer,
-        options={"verify_aud": False, "verify_iss": True},
+        audience=JWT_EXPECTED_AUDIENCE,
+        options={"verify_aud": True, "verify_iss": True},
     )
 
 

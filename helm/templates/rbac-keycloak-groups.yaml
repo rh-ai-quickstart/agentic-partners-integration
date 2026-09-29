@@ -1,0 +1,66 @@
+{{- if .Values.openshift.rbac.enabled }}
+{{- $fullName := include "partner-agent.fullname" . }}
+{{- $namespace := .Release.Namespace }}
+
+# ClusterRole for partner agent operators (Keycloak admin group)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fullName }}-operator
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get"]
+---
+# Bind Keycloak admin group to operator role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $fullName }}-admin-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $fullName }}-operator
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: "keycloak:admin"
+
+{{- range $dept := list "engineering" "kubernetes" "network" "software" }}
+---
+# Namespace-scoped role for {{ $dept }} department
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fullName }}-{{ $dept }}-viewer
+  namespace: {{ $namespace }}
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fullName }}-{{ $dept }}-binding
+  namespace: {{ $namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $fullName }}-{{ $dept }}-viewer
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: "keycloak:{{ $dept }}"
+{{- end }}
+
+{{- end }}

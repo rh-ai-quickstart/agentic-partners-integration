@@ -2,7 +2,7 @@
   "realm": "partner-agent",
   "displayName": "Partner Agent System",
   "enabled": true,
-  "sslRequired": "none",
+  "sslRequired": "external",
   "registrationAllowed": false,
   "loginWithEmailAllowed": true,
   "duplicateEmailsAllowed": false,
@@ -38,6 +38,7 @@
       "config": {
         "clientId": "spiffe-federation",
         "clientAuthMethod": "private_key_jwt",
+        "clientAssertionSigningAlg": "RS256",
         "useJwksUrl": "true",
         "jwksUrl": "http://spire-oidc-provider:8443/keys",
         "tokenUrl": "",
@@ -45,7 +46,8 @@
         "issuer": "https://oidc-discovery.partner.example.com",
         "defaultScope": "openid",
         "syncMode": "IMPORT",
-        "validateSignature": "true"
+        "validateSignature": "true",
+        "pkceEnabled": "false"
       }
     }
   ],
@@ -104,6 +106,102 @@
             "id.token.claim": "true",
             "access.token.claim": "true",
             "claim.name": "groups"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "request-manager-svc",
+      "name": "Request Manager Service",
+      "description": "Per-service confidential client for request-manager — authenticates via SPIFFE JWT-SVID federated assertion",
+      "enabled": true,
+      "publicClient": false,
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "clientAuthenticatorType": "federated-jwt",
+      "protocol": "openid-connect",
+      "attributes": {
+        "standard.token.exchange.enabled": "true",
+        "token.endpoint.auth.signing.alg": "RS256",
+        "jwt.credential.issuer": "spiffe",
+        "use.jwks.url": "true",
+        "jwks.url": "http://spire-oidc-provider:8443/keys"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "introspection.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups"
+          }
+        },
+        {
+          "name": "audience-agent-service",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "agent-service",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "agent-service-svc",
+      "name": "Agent Service",
+      "description": "Per-service confidential client for agent-service — authenticates via SPIFFE JWT-SVID federated assertion",
+      "enabled": true,
+      "publicClient": false,
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "clientAuthenticatorType": "federated-jwt",
+      "protocol": "openid-connect",
+      "attributes": {
+        "standard.token.exchange.enabled": "true",
+        "token.endpoint.auth.signing.alg": "RS256",
+        "jwt.credential.issuer": "spiffe",
+        "use.jwks.url": "true",
+        "jwks.url": "http://spire-oidc-provider:8443/keys"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "introspection.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups"
+          }
+        },
+        {
+          "name": "audience-kubernetes-agent",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "kubernetes-agent",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
           }
         }
       ]
@@ -174,6 +272,18 @@
           "protocolMapper": "oidc-audience-resolve-mapper",
           "consentRequired": false,
           "config": {}
+        },
+        {
+          "name": "audience-self",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "partner-agent-ui",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
         },
         {
           "name": "audience-agent-service",

@@ -59,6 +59,15 @@ class TokenClaims:
             return self.act.get("sub")
         return self.azp
 
+    @property
+    def caller_identity(self) -> str:
+        """Extract caller identity using fallback chain: sub → client_id → azp → preferred_username."""
+        for key in ("sub", "client_id", "azp", "preferred_username"):
+            value = self.raw.get(key)
+            if value:
+                return value
+        return self.subject
+
 
 class JWTAuthError(Exception):
     """Raised when JWT validation fails at the agent-service layer."""

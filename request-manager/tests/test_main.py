@@ -429,9 +429,9 @@ class TestRequestManagerStartup:
 class TestExceptionHandlersExtended:
     """Extended tests for exception handlers (lines 217-246)."""
 
-    def test_http_exception_returns_structured_error(self):
+    def test_http_exception_returns_structured_error(self, monkeypatch):
         """HTTPException handler returns ErrorResponse format (lines 214-223)."""
-        # Add a temporary route that raises HTTPException
+        monkeypatch.setattr("shared_models.identity_middleware.IDENTITY_ENFORCEMENT", False)
         from fastapi import HTTPException as FastAPIHTTPException
 
         from request_manager.main import app
@@ -453,8 +453,9 @@ class TestExceptionHandlersExtended:
             r for r in app.routes if getattr(r, "path", "") != "/test-http-error"
         ]
 
-    def test_general_exception_returns_500(self):
+    def test_general_exception_returns_500(self, monkeypatch):
         """General exception handler returns 500 with structured error (lines 226-237)."""
+        monkeypatch.setattr("shared_models.identity_middleware.IDENTITY_ENFORCEMENT", False)
         from request_manager.main import app
 
         @app.get("/test-general-error")

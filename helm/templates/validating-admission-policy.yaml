@@ -1,0 +1,40 @@
+{{- if .Values.openshift.admissionPolicy.enabled }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "partner-agent.fullname" . }}-namespace-scope
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["pods", "services", "configmaps", "secrets"]
+    - apiGroups: ["apps"]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["deployments", "statefulsets", "daemonsets"]
+  matchConditions:
+  - name: "in-partner-namespace"
+    expression: "object.metadata.namespace == '{{ .Release.Namespace }}'"
+  validations:
+  - expression: >-
+      object.metadata.labels.exists(l, l == 'app.kubernetes.io/managed-by') &&
+      object.metadata.labels['app.kubernetes.io/managed-by'] == 'Helm'
+    message: "Resources in the partner namespace must be managed by Helm"
+    reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ include "partner-agent.fullname" . }}-namespace-scope
+spec:
+  policyName: {{ include "partner-agent.fullname" . }}-namespace-scope
+  validationActions:
+  - Deny
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ .Release.Namespace }}
+{{- end }}
