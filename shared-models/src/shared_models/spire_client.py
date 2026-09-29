@@ -253,7 +253,3 @@ def get_spire_client() -> SPIREClient:
     if _spire_client is None:
         _spire_client = SPIREClient()
     return _spire_client
-
-
-# For compatibility
-SPIFFE_AVAILABLE = True

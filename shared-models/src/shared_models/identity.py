@@ -1,10 +1,11 @@
 """
 SPIFFE Workload Identity for Python/FastAPI services.
 
-Production implementation using real SPIRE/SPIFFE.
-Uses official spiffe library from https://pypi.org/project/spiffe/
-
-Identity is fetched from SPIRE Agent via the Workload API (X.509-SVIDs).
+SPIFFE_MODE controls identity trust and outbound behavior:
+  - ``mock``: trust X-SPIFFE-ID header (inbound), hardcoded identity (outbound)
+  - ``spire-header``: trust X-SPIFFE-ID header (inbound, NetworkPolicy-guarded),
+    real SVID from SPIRE (outbound)
+  - ``mtls``: only trust mTLS peer cert (inbound), real SVID from SPIRE (outbound)
 """
 
 import logging
@@ -16,12 +17,10 @@ from fastapi import Request
 
 logger = logging.getLogger(__name__)
 
-# Configuration from environment
 TRUST_DOMAIN: str = os.getenv("SPIFFE_TRUST_DOMAIN", "partner.example.com")
-MOCK_SPIFFE: bool = os.getenv("MOCK_SPIFFE", "false").lower() in ("true", "1", "yes")
+SPIFFE_MODE: str = os.getenv("SPIFFE_MODE", "mock").lower()
 
-# Import SPIRE client (production)
-from .spire_client import SPIFFE_AVAILABLE, get_spire_client
+from .spire_client import get_spire_client
 
 
 @dataclass
@@ -55,12 +54,10 @@ def make_spiffe_id(entity_type: str, name: str) -> str:
 def extract_identity(request: Request) -> Optional[WorkloadIdentity]:
     """Extract workload identity from an incoming request.
 
-    In mock mode (MOCK_SPIFFE=true): trusts the X-SPIFFE-ID header.
-    In production mode (MOCK_SPIFFE=false): only trusts mTLS peer certificate.
-    The header is ignored in production to prevent spoofing — any caller
-    could set X-SPIFFE-ID to an arbitrary SPIFFE URI without this guard.
+    mTLS peer certificate is always checked first (all modes).
+    In ``mock`` and ``spire-header`` modes the X-SPIFFE-ID header is trusted
+    as a fallback.  In ``mtls`` mode the header is ignored to prevent spoofing.
     """
-    # Production: only trust cryptographically-verified mTLS peer cert
     scope = request.scope
     transport = scope.get("transport")
     if transport is not None:
@@ -71,8 +68,7 @@ def extract_identity(request: Request) -> Optional[WorkloadIdentity]:
                 if san_type == "URI" and san_value.startswith("spiffe://"):
                     return WorkloadIdentity(spiffe_id=san_value)
 
-    # Mock mode only: trust X-SPIFFE-ID header for local development
-    if MOCK_SPIFFE:
+    if SPIFFE_MODE in ("mock", "spire-header"):
         spiffe_id = request.headers.get("X-SPIFFE-ID")
         if spiffe_id:
             return WorkloadIdentity(spiffe_id=spiffe_id)
@@ -102,16 +98,11 @@ def outbound_identity_headers(
     """
     headers: dict[str, str] = {}
 
-    if MOCK_SPIFFE:
+    if SPIFFE_MODE == "mock":
         spiffe_id = make_spiffe_id("service", service_name)
         headers["X-SPIFFE-ID"] = spiffe_id
         logger.info(f"Using mock SPIFFE identity: {spiffe_id}")
     else:
-        if not SPIFFE_AVAILABLE:
-            raise RuntimeError(
-                "SPIFFE library not available. Install with: pip install spiffe"
-            )
-
         try:
             client = get_spire_client()
             svid_info = client.fetch_svid()

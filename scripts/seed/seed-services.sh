@@ -141,7 +141,7 @@ docker run -d \
     -e "GEMINI_API_ENDPOINT=$GEMINI_API_ENDPOINT" \
     -e "LOG_LEVEL=INFO" \
     -e "RAG_API_ENDPOINT=http://partner-rag-api-full:8080/answer" \
-    -e "MOCK_SPIFFE=${MOCK_SPIFFE:-true}" \
+    -e "SPIFFE_MODE=${SPIFFE_MODE:-mock}" \
     -e "SPIFFE_TRUST_DOMAIN=partner.example.com" \
     -e "SPIFFE_ENDPOINT_SOCKET=/run/spire/sockets/agent.sock" \
     -e "KEYCLOAK_URL=http://partner-keycloak-full:8090" \
@@ -208,7 +208,7 @@ docker run -d \
     -e "AGENT_TIMEOUT=120" \
     -e "LOG_LEVEL=INFO" \
     -e "STRUCTURED_CONTEXT_ENABLED=true" \
-    -e "MOCK_SPIFFE=${MOCK_SPIFFE:-true}" \
+    -e "SPIFFE_MODE=${SPIFFE_MODE:-mock}" \
     -e "SPIFFE_TRUST_DOMAIN=partner.example.com" \
     -e "KEYCLOAK_URL=http://partner-keycloak-full:8090" \
     -e "KEYCLOAK_REALM=$REALM" \

@@ -40,7 +40,7 @@
         "clientAuthMethod": "private_key_jwt",
         "clientAssertionSigningAlg": "RS256",
         "useJwksUrl": "true",
-        "jwksUrl": "http://spire-oidc-provider:8443/keys",
+        "jwksUrl": "https://spire-oidc-provider:8443/keys",
         "tokenUrl": "",
         "authorizationUrl": "",
         "issuer": "https://oidc-discovery.partner.example.com",

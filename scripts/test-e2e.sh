@@ -978,14 +978,14 @@ phase_5b_identity_validation() {
         record_fail "Identity: garbage JWT" "Expected 403, got $garbage_code"
     fi
 
-    # 5b.9: SPIFFE identity in service containers
+    # 5b.9: SPIFFE identity mode in service containers
     local rm_spiffe as_spiffe
-    rm_spiffe=$(docker exec partner-request-manager-full printenv MOCK_SPIFFE 2>/dev/null) || rm_spiffe=""
-    as_spiffe=$(docker exec partner-agent-service-full printenv MOCK_SPIFFE 2>/dev/null) || as_spiffe=""
-    if [ "$rm_spiffe" = "true" ] && [ "$as_spiffe" = "true" ]; then
-        record_pass "SPIFFE: MOCK_SPIFFE=true on both services"
+    rm_spiffe=$(docker exec partner-request-manager-full printenv SPIFFE_MODE 2>/dev/null) || rm_spiffe=""
+    as_spiffe=$(docker exec partner-agent-service-full printenv SPIFFE_MODE 2>/dev/null) || as_spiffe=""
+    if [ -n "$rm_spiffe" ] && [ -n "$as_spiffe" ]; then
+        record_pass "SPIFFE: SPIFFE_MODE=$rm_spiffe on both services"
     else
-        record_fail "SPIFFE: MOCK_SPIFFE" "rm=$rm_spiffe, as=$as_spiffe"
+        record_fail "SPIFFE: SPIFFE_MODE" "rm=$rm_spiffe, as=$as_spiffe"
     fi
 
     # 5b.10: SPIFFE trust domain configured

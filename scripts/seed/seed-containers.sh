@@ -69,7 +69,7 @@ if ! docker ps --format '{{.Names}}' | grep -q "^partner-keycloak-full$"; then
         -e KC_HOSTNAME_PORT=8090 \
         -e KC_HOSTNAME_STRICT=false \
         -e KC_HOSTNAME_STRICT_HTTPS=false \
-        quay.io/keycloak/keycloak:latest start-dev --import-realm --features=token-exchange,admin-fine-grained-authz --http-port=8090 > /dev/null
+        quay.io/keycloak/keycloak:26.5 start-dev --import-realm --features=token-exchange,admin-fine-grained-authz --http-port=8090 > /dev/null
 
     echo "  ✓ Keycloak started with token-exchange enabled"
     echo "  Waiting for Keycloak to be ready..."

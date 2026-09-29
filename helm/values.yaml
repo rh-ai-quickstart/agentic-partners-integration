@@ -197,6 +197,9 @@ dcr:
 # SPIFFE/SPIRE workload identity
 spire:
   enabled: false  # Set to true when SPIRE operator is deployed on cluster
+  # Identity mode: "mock" (hardcoded headers), "spire-header" (real SVID, header-based),
+  # "mtls" (real SVID, mTLS only — requires service mesh)
+  mode: "mock"
   required: false  # When true, services fail-closed if SPIRE is unavailable
   csiDriver: false  # Use SPIFFE CSI driver instead of hostPath for SVID mounts
   trustDomain: "partner.example.com"
@@ -209,6 +212,19 @@ openshift:
     enabled: false  # Set to true on OpenShift 4.14+ clusters
   rbac:
     enabled: false  # Set to true to create RBAC bindings for Keycloak groups
+
+# External Secrets Operator (ESO) — sync secrets from Vault/AWS SM/GCP SM
+externalSecrets:
+  enabled: false  # When true, ESO ExternalSecret resources replace inline secrets.yaml
+  store:
+    kind: ClusterSecretStore
+    name: vault-backend
+  refreshInterval: 1h
+  keys:
+    dbPassword: secret/data/partner-agent/db-password
+    dbUsername: secret/data/partner-agent/db-username
+    llmApiKey: secret/data/partner-agent/llm-api-key
+    keycloakAdmin: secret/data/partner-agent/keycloak-admin
 
 # Kubernetes Partner Agent
 kubernetesAgent:

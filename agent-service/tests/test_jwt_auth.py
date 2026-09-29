@@ -492,7 +492,7 @@ class TestJWTValidationInMainInvoke:
     @patch("agent_service.agents.AgentManager")
     def test_jwt_validation_failure_returns_401(self, mock_agent_manager_cls, monkeypatch):
         """When JWT validation is enabled and token is invalid, returns 401."""
-        monkeypatch.setattr("shared_models.identity.MOCK_SPIFFE", True)
+        monkeypatch.setattr("shared_models.identity.SPIFFE_MODE", "mock")
         mock_manager = MagicMock()
         mock_manager.get_specialist_agents.return_value = {}
         mock_agent_manager_cls.return_value = mock_manager
@@ -532,7 +532,7 @@ class TestJWTValidationInMainInvoke:
     @patch("agent_service.agents.AgentManager")
     def test_jwt_validation_skipped_when_no_auth_header(self, mock_agent_manager_cls, monkeypatch):
         """When no Authorization header is present, JWT validation is skipped."""
-        monkeypatch.setattr("shared_models.identity.MOCK_SPIFFE", True)
+        monkeypatch.setattr("shared_models.identity.SPIFFE_MODE", "mock")
         from unittest.mock import AsyncMock
 
         mock_agent = AsyncMock()
@@ -576,7 +576,7 @@ class TestJWTValidationInMainInvoke:
     @patch("agent_service.agents.AgentManager")
     def test_jwt_validation_skipped_when_disabled(self, mock_agent_manager_cls, monkeypatch):
         """When JWT_VALIDATION_ENABLED is False, validation is completely skipped."""
-        monkeypatch.setattr("shared_models.identity.MOCK_SPIFFE", True)
+        monkeypatch.setattr("shared_models.identity.SPIFFE_MODE", "mock")
         from unittest.mock import AsyncMock
 
         mock_agent = AsyncMock()

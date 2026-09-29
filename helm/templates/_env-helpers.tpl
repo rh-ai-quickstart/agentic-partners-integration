@@ -170,11 +170,11 @@ DCR environment variables (Dynamic Client Registration)
 SPIRE/SPIFFE environment variables
 */}}
 {{- define "partner-agent.spireEnvVars" }}
-{{- if .Values.spire.enabled }}
-- name: MOCK_SPIFFE
-  value: "false"
+- name: SPIFFE_MODE
+  value: {{ .Values.spire.mode | default (ternary "spire-header" "mock" .Values.spire.enabled) | quote }}
 - name: SPIFFE_TRUST_DOMAIN
   value: {{ .Values.spire.trustDomain | default "partner.example.com" | quote }}
+{{- if .Values.spire.enabled }}
 - name: SPIFFE_ENDPOINT_SOCKET
   value: "/run/spire/sockets/agent.sock"
 - name: SPIRE_AUTH_MODE
@@ -182,10 +182,6 @@ SPIRE/SPIFFE environment variables
 - name: SPIRE_REQUIRED
   value: {{ .Values.spire.required | default false | quote }}
 {{- else }}
-- name: MOCK_SPIFFE
-  value: "true"
-- name: SPIFFE_TRUST_DOMAIN
-  value: {{ .Values.spire.trustDomain | default "partner.example.com" | quote }}
 - name: SPIRE_AUTH_MODE
   value: "iat"
 - name: SPIRE_REQUIRED

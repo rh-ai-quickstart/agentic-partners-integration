@@ -2,7 +2,8 @@
 FastAPI middleware for workload identity extraction.
 
 Identity sources (checked in order):
-  1. SPIFFE — mTLS peer cert (production) or X-SPIFFE-ID header (MOCK_SPIFFE)
+  1. SPIFFE — mTLS peer cert (all modes), or X-SPIFFE-ID header
+     (``mock`` / ``spire-header`` SPIFFE_MODE)
   2. JWT Bearer token — ``sub`` / ``preferred_username`` mapped to a
      ``spiffe://<trust-domain>/user/<name>`` identity
 
