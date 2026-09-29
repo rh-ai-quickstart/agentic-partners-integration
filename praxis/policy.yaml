@@ -1,20 +1,46 @@
-# Praxis Policy Engine (PPE) — transparent proxy policy
+# Praxis Policy Engine (PPE) — JWT-validated gateway policy
 #
-# Praxis 0.7.0 blocks JWKS URL fetches to RFC 1918 addresses and has
-# a kid-matching bug with inline JWK keys, so gateway-level JWT
-# validation is deferred to a future release.
+# Praxis 0.7.1 fixes SSRF blocks on RFC 1918 JWKS fetches and the
+# kid-matching bug, enabling gateway-level JWT validation.
 #
-# Authentication and authorization are enforced at the application layer:
-#   - request-manager: validates JWT tokens from Keycloak
-#   - agent-service: runs policy_client.py permission intersection checks
+# Authentication: identity/jwt plugin validates tokens from Keycloak
+# Authorization: requires authenticated requests (valid JWT)
 #
-# This policy allows all requests through the gateway. The defense-in-depth
-# architecture means auth is still enforced, just not at the proxy layer.
+# Health checks use the admin port (/ready on 127.0.0.1:9901),
+# not the proxy port, so no path-based auth bypass is needed.
+
+engine_settings:
+  dispatch: policy
+
+plugins:
+- name: keycloak-jwt
+  kind: identity/jwt
+  hooks:
+  - identity.resolve
+  on_error: fail
+  capabilities:
+  - perform_http
+  config:
+    role: user
+    header: Authorization
+    trusted_issuers:
+    - issuer: http://partner-keycloak-full:8090/realms/partner-agent
+      algorithms:
+      - RS256
+      skip_audience_validation: true
+      decoding_key:
+        kind: jwks_url
+        url: http://partner-keycloak-full:8090/realms/partner-agent/protocol/openid-connect/certs
+        insecure_http: true
+    claim_mapper: keycloak
 
 global:
   attribute_files:
     - /etc/praxis/agent_capabilities.yaml
 
+  authentication:
+  - keycloak-jwt
+
   authorization:
     pre_invocation:
-      - allow
+    - require(authenticated)

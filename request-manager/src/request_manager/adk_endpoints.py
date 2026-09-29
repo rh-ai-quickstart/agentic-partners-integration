@@ -477,15 +477,19 @@ async def adk_audit_events(
 
 
 @router.get("/agents")
-async def adk_agents() -> Dict[str, Any]:
+async def adk_agents(request: Request) -> Dict[str, Any]:
     """Return the agent registry from agent-service for UI discovery."""
     agent_service_url = os.getenv(
         "AGENT_SERVICE_URL", "http://agent-service:8080"
     )
     registry_url = f"{agent_service_url.rstrip('/')}/api/v1/agents/registry"
+    headers = {}
+    auth = request.headers.get("authorization")
+    if auth:
+        headers["Authorization"] = auth
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(registry_url)
+            resp = await client.get(registry_url, headers=headers)
             resp.raise_for_status()
             return resp.json()
     except Exception as e:

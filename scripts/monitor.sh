@@ -53,17 +53,17 @@ cat << 'DIAGRAM'
   │      request-manager shows this badge to Keycloak to prove it's a        │
   │      trusted service before Keycloak will issue a new scoped token.      │
   │                                                                          │
-  │  ⚖️  PRAXIS GATEWAY  —  the "transparent reverse proxy"                   │
-  │      A Rust reverse-proxy (ghcr.io/praxis-proxy/praxis:0.7.0) that      │
-  │      sits between request-manager and agent-service. Currently running   │
-  │      as a transparent proxy (allow-all policy) because Praxis 0.7.0     │
-  │      blocks JWKS fetches to RFC 1918 Docker network IPs and has a       │
-  │      kid-matching bug with inline JWK keys.  JWT validation and authz   │
-  │      are enforced at the application layer: request-manager (Layer 1)   │
-  │      and agent-service (Layer 2, defense-in-depth).  Gateway-level JWT  │
-  │      enforcement will be added in a future Praxis release.  The proxy   │
-  │      still provides routing, load balancing, access logging, and        │
-  │      request-id propagation.                                             │
+  │  ⚖️  PRAXIS GATEWAY  —  the "JWT-enforcing reverse proxy"                 │
+  │      A Rust reverse-proxy (ghcr.io/praxis-proxy/praxis:0.7.1) that      │
+  │      sits between request-manager and agent-service. Runs the            │
+  │      identity/jwt plugin with Keycloak claim_mapper to validate every    │
+  │      incoming JWT at the gateway layer. The authorization rule            │
+  │      require(authenticated) rejects any request without a valid JWT.     │
+  │      The allow_private_idp flag enables JWKS fetches to RFC 1918         │
+  │      Docker network addresses. Health checks use the admin port          │
+  │      (127.0.0.1:9901/ready). The gateway provides routing, load          │
+  │      balancing, access logging, request-id propagation, AND gateway-     │
+  │      level JWT enforcement (Layer 0 — before application layers).        │
   │                                                                          │
   │  🔄  TOKEN EXCHANGE (RFC 8693)  —  the "scoped day-pass"                │
   │      Carlos's login token is like a master key. You don't hand a master  │
@@ -125,13 +125,13 @@ cat << 'DIAGRAM'
        │
        ▼
   ┌──────────────────────────────────────────────────────────────────────┐
-  │  PRAXIS GATEWAY  (transparent proxy — routing + access logging)       │
+  │  PRAXIS GATEWAY  (JWT-enforcing proxy — Praxis 0.7.1)                 │
   │                                                                      │
-  │  Step 5 ── GATEWAY PROXY  (transparent — auth deferred)              │
-  │    MODE     : allow-all (Praxis 0.7.0 JWKS/kid bugs — see policy)   │
-  │    PROVIDES : routing, load balancing, access log, request-id        │
-  │    AUTH     : deferred to application layer (Layers 1 + 2)           │
-  │    PASS     : forwards all requests to agent-service                 │
+  │  Step 5 ── GATEWAY JWT ENFORCEMENT  (Layer 0)                        │
+  │    MODE     : require(authenticated) — identity/jwt plugin           │
+  │    PROVIDES : JWT validation, routing, load balancing, access log    │
+  │    PLUGIN   : keycloak-jwt (JWKS fetch → validate sig, claims)       │
+  │    REJECTS  : any request without a valid Keycloak JWT → 403         │
   └──────────────────────────────────────────────────────────────────────┘
        │
        ▼
@@ -497,7 +497,7 @@ print(f.get('method','?'), f.get('path','?'), f.get('status','?'), f.get('durati
                 px_agent=$(echo "$px_path" | grep -oP '/agents/\K[^/]+' || echo "")
 
                 printf "\n${C}┌─ ⚡ PRAXIS GATEWAY  [${ts}]${N}\n"
-                printf "${C}│${N}  ${D}ROLE     : transparent reverse proxy (Rust, Praxis 0.7.0)${N}\n"
+                printf "${C}│${N}  ${D}ROLE     : JWT-enforcing reverse proxy (Rust, Praxis 0.7.1)${N}\n"
                 printf "${C}│${N}  ${D}UPSTREAM : ${px_upstream}${N}\n"
                 printf "${C}│${N}  ────────────────────────────────────────────────\n"
                 printf "${C}│${N}  request  : ${W}${px_method} ${px_path}${N}\n"
@@ -579,13 +579,13 @@ print(f.get('method','?'), f.get('path','?'), f.get('status','?'), f.get('durati
 
             printf "\n${M}┌─ 🤖 AGENT CALL  [${ts}]  hop ${hop}  (${svc} → praxis → ${agent})${N}\n"
             printf "${M}│${N}  ${D}CALLER   : request-manager  (spiffe://partner.example.com/request-manager)${N}\n"
-            printf "${M}│${N}  ${D}GATEWAY  : Praxis — transparent proxy (routing + access log)${N}\n"
+            printf "${M}│${N}  ${D}GATEWAY  : Praxis 0.7.1 — JWT-enforcing proxy (Layer 0)${N}\n"
             printf "${M}│${N}  ${D}VERIFIER : agent-service — policy_client.py check (defense-in-depth)${N}\n"
             printf "${M}│${N}  📖 ${D}WHY: request-manager sends the request through the Praxis gateway. Praxis${N}\n"
-            printf "${M}│${N}  ${D}     routes the request to agent-service (allow-all policy — JWT validation${N}\n"
-            printf "${M}│${N}  ${D}     deferred due to Praxis 0.7.0 JWKS bugs). agent-service runs its own${N}\n"
-            printf "${M}│${N}  ${D}     policy check (defense-in-depth). Three headers travel with the request:${N}\n"
-            printf "${M}│${N}  ${D}     scoped JWT, SPIRE SVID, and delegation header identifying the user.${N}\n"
+            printf "${M}│${N}  ${D}     validates the JWT (Layer 0: identity/jwt plugin + require(authenticated)),${N}\n"
+            printf "${M}│${N}  ${D}     then routes to agent-service. agent-service runs its own policy check${N}\n"
+            printf "${M}│${N}  ${D}     (defense-in-depth). Three headers travel with the request: scoped JWT,${N}\n"
+            printf "${M}│${N}  ${D}     SPIRE SVID, and delegation header identifying the user.${N}\n"
             printf "${M}│${N}  ────────────────────────────────────────────────\n"
             printf "${M}│${N}  agent      : ${W}${agent}${N}\n"
             printf "${M}│${N}  endpoint   : ${D}${url}${N}\n"

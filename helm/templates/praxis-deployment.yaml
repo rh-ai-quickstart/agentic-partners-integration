@@ -69,17 +69,15 @@ spec:
           seccompProfile:
             type: RuntimeDefault
         livenessProbe:
-          httpGet:
-            path: /health
-            port: 8080
+          exec:
+            command: ["wget", "-q", "-O-", "http://127.0.0.1:9901/ready"]
           initialDelaySeconds: 10
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 3
         readinessProbe:
-          httpGet:
-            path: /health
-            port: 8080
+          exec:
+            command: ["wget", "-q", "-O-", "http://127.0.0.1:9901/ready"]
           initialDelaySeconds: 5
           periodSeconds: 5
           timeoutSeconds: 3
@@ -153,6 +151,7 @@ data:
           - filter: access_log
           - filter: policy
             config_path: /etc/praxis/policy.yaml
+            allow_private_idp: true
 
       - name: routing
         filters:
@@ -182,11 +181,39 @@ metadata:
     {{- include "partner-agent.labels" . | nindent 4 }}
 data:
   policy.yaml: |
+    engine_settings:
+      dispatch: policy
+
+    plugins:
+    - name: keycloak-jwt
+      kind: identity/jwt
+      hooks:
+      - identity.resolve
+      on_error: fail
+      capabilities:
+      - perform_http
+      config:
+        role: user
+        header: Authorization
+        trusted_issuers:
+        - issuer: http://{{ $fullName }}-keycloak:8080/realms/partner-agent
+          algorithms:
+          - RS256
+          skip_audience_validation: true
+          decoding_key:
+            kind: jwks_url
+            url: http://{{ $fullName }}-keycloak:8080/realms/partner-agent/protocol/openid-connect/certs
+            insecure_http: true
+        claim_mapper: keycloak
+
     global:
       attribute_files:
         - /etc/praxis/agent_capabilities.yaml
 
+      authentication:
+      - keycloak-jwt
+
       authorization:
         pre_invocation:
-          - allow
+        - require(authenticated)
 {{- end }}

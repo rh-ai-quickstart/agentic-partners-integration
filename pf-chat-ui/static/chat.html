@@ -974,7 +974,9 @@
                 </div>`;
 
             try {
-                const resp = await fetch(`${API_ENDPOINT}/adk/agents`);
+                const resp = await fetch(`${API_ENDPOINT}/adk/agents`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
                 if (!resp.ok) throw new Error('registry unavailable');
                 const data = await resp.json();
                 const agents = data.agents || {};

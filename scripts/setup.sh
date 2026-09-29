@@ -173,8 +173,8 @@ else
     echo "  ✗ RAG API not responding"
 fi
 
-# Check Praxis Gateway
-if curl -sf http://localhost:8180/health > /dev/null 2>&1; then
+# Check Praxis Gateway (admin /ready inside container — proxy port requires JWT)
+if docker exec partner-praxis-gateway-full wget -q -O- http://127.0.0.1:9901/ready 2>/dev/null | grep -q '"ok"'; then
     echo "  ✓ Praxis Gateway healthy"
 else
     echo "  ✗ Praxis Gateway not responding"

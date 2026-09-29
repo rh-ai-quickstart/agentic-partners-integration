@@ -178,7 +178,7 @@ docker run -d \
     -e "PRAXIS_CONFIG=/etc/praxis/config.yaml" \
     -e "PRAXIS_LOG_FORMAT=json" \
     -e "RUST_LOG=info" \
-    ghcr.io/praxis-proxy/praxis:0.7.0 > /dev/null
+    ghcr.io/praxis-proxy/praxis:0.7.1 > /dev/null
 
 echo "  OK Praxis Policy Gateway started"
 sleep 3

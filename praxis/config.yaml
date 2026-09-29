@@ -1,15 +1,10 @@
 # Praxis Proxy — gateway configuration
 #
 # Transparent reverse proxy between request-manager and agent-service.
-# Praxis 0.7.0 cannot do JWT validation in Docker networks (SSRF protection
-# blocks JWKS fetches to RFC 1918 addresses, kid-matching bug with inline JWK).
+# Praxis 0.7.1 — JWT validation via identity/jwt plugin in policy.yaml
 #
 # Architecture:
-#   request-manager → Praxis (:8080) → agent-service (:8080)
-#
-# Auth is enforced at the application layer (request-manager validates JWTs,
-# agent-service runs policy_client.py permission checks). The PPE policy
-# filter here is set to allow-all. See policy.yaml for details.
+#   request-manager -> Praxis (:8080) -> agent-service (:8080)
 
 admin:
   address: "127.0.0.1:9901"
@@ -41,6 +36,7 @@ filter_chains:
       - filter: access_log
       - filter: policy
         config_path: /etc/praxis/policy.yaml
+        allow_private_idp: true
 
   - name: routing
     filters:

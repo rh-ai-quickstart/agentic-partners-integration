@@ -16,6 +16,7 @@ from a2a.server.tasks import InMemoryTaskStore
 from starlette.applications import Starlette
 
 from .agent_cards import create_agent_card
+from .auth_middleware import A2AAuthMiddleware
 from .executor import SpecialistAgentExecutor
 
 logger = logging.getLogger(__name__)
@@ -41,7 +42,9 @@ def _build_a2a_app(agent_name: str, config: dict[str, Any], base_url: str) -> St
         http_handler=handler,
     )
 
-    return a2a_app.build(rpc_url="/")
+    starlette_app = a2a_app.build(rpc_url="/")
+    starlette_app.add_middleware(A2AAuthMiddleware)
+    return starlette_app
 
 
 def get_a2a_app(agent_name: str, config: dict[str, Any]) -> Starlette:

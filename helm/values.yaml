@@ -181,7 +181,7 @@ keycloak:
 praxis:
   enabled: true
   image: ghcr.io/praxis-proxy/praxis
-  tag: "0.7.0"
+  tag: "0.7.1"
   resources:
     requests:
       memory: "64Mi"

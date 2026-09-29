@@ -375,8 +375,18 @@ phase_3_readiness() {
         fi
     done
 
-    # Praxis readiness — check health through the proxy
-    if wait_for_url "http://localhost:8180/health" 60 "Praxis Gateway"; then
+    # Praxis readiness — admin /ready inside container (proxy port requires JWT)
+    local praxis_up=false
+    local praxis_wait=0
+    while [ "$praxis_wait" -lt 60 ]; do
+        if docker exec partner-praxis-gateway-full wget -q -O- http://127.0.0.1:9901/ready 2>/dev/null | grep -q '"ok"'; then
+            praxis_up=true
+            break
+        fi
+        sleep 2
+        praxis_wait=$((praxis_wait + 2))
+    done
+    if $praxis_up; then
         record_pass "Readiness: Praxis Gateway"
     else
         record_fail "Readiness: Praxis Gateway" "Not healthy after 60s"
@@ -814,23 +824,44 @@ phase_5_chat_tests() {
 phase_6_praxis() {
     section_header "PHASE 6: Praxis Gateway Tests"
 
-    # Health through Praxis — transparent proxy, should reach agent-service
-    local http_code
-    http_code=$(curl -s -o /dev/null -w "%{http_code}" \
-        "http://localhost:8180/health" --max-time 15)
-    if [ "$http_code" = "200" ]; then
-        record_pass "Praxis: health proxied to agent-service (HTTP 200)"
+    # 6.1: Praxis admin health (inside container, not through the policy engine)
+    local admin_body
+    admin_body=$(docker exec partner-praxis-gateway-full \
+        wget -q -O- http://127.0.0.1:9901/ready 2>/dev/null || echo "")
+    if echo "$admin_body" | grep -q '"ok"'; then
+        record_pass "Praxis: admin /ready endpoint"
     else
-        record_fail "Praxis: health proxy" "Expected 200, got $http_code"
+        record_fail "Praxis: admin /ready" "Expected {\"status\":\"ok\"}, got: $admin_body"
     fi
 
-    # Agent registry through Praxis — should return agent list
-    local registry_body
-    registry_body=$(curl -s "http://localhost:8180/api/v1/agents/registry" --max-time 15 2>/dev/null || echo "{}")
-    if echo "$registry_body" | grep -q "kubernetes-support"; then
-        record_pass "Praxis: agent registry proxied successfully"
+    # 6.2: Unauthenticated request through proxy must be rejected (JWT policy enforced)
+    local unauth_code
+    unauth_code=$(curl -s -o /dev/null -w "%{http_code}" \
+        "http://localhost:8180/api/v1/agents/registry" --max-time 15)
+    if [ "$unauth_code" = "401" ] || [ "$unauth_code" = "403" ]; then
+        record_pass "Praxis: unauthenticated request rejected (HTTP $unauth_code)"
     else
-        record_fail "Praxis: agent registry proxy" "Registry did not contain expected agents"
+        record_fail "Praxis: unauthenticated rejection" "Expected 401/403, got $unauth_code"
+    fi
+
+    # 6.3: Authenticated request through proxy must succeed
+    local auth_token="${USER_TOKENS[carlos]:-}"
+    if [ -n "$auth_token" ]; then
+        local auth_code registry_body
+        registry_body=$(curl -s -w "\n%{http_code}" \
+            "http://localhost:8180/api/v1/agents/registry" \
+            -H "Authorization: Bearer $auth_token" \
+            --max-time 15 2>/dev/null)
+        auth_code=$(echo "$registry_body" | tail -1)
+        registry_body=$(echo "$registry_body" | sed '$d')
+
+        if [ "$auth_code" = "200" ] && echo "$registry_body" | grep -q "kubernetes-support"; then
+            record_pass "Praxis: authenticated proxy returns agent registry (HTTP 200)"
+        else
+            record_fail "Praxis: authenticated proxy" "HTTP $auth_code, body did not contain expected agents"
+        fi
+    else
+        record_skip "Praxis: authenticated proxy (no auth token available)"
     fi
 }
 
