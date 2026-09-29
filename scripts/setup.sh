@@ -19,10 +19,9 @@ if [ -f "$PROJECT_ROOT/.env" ]; then
     source "$PROJECT_ROOT/.env"
 fi
 
-# Verify required environment variables
+# GOOGLE_API_KEY is optional — seed-services.sh auto-starts a mock LLM when absent
 if [ -z "$GOOGLE_API_KEY" ]; then
-    echo "ERROR: GOOGLE_API_KEY not set in .env"
-    exit 1
+    echo "  No GOOGLE_API_KEY — mock LLM will be used for e2e testing"
 fi
 
 cd "$PROJECT_ROOT"

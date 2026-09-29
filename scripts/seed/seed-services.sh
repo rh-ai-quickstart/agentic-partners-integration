@@ -109,6 +109,14 @@ docker run -d \
 
 echo "  OK RAG API started"
 sleep 3
+
+# Ingest knowledge base (runs inside the RAG container which has the data + script)
+echo "  Ingesting knowledge base..."
+if docker exec partner-rag-api-full python3 /app/ingest_knowledge.py 2>&1 | tail -5; then
+    echo "  OK Knowledge base ingested"
+else
+    echo "  WARNING: Knowledge ingestion failed (RAG queries may return empty)"
+fi
 echo ""
 
 # =============================================================================
@@ -133,6 +141,7 @@ docker run -d \
     -e "GEMINI_API_ENDPOINT=$GEMINI_API_ENDPOINT" \
     -e "LOG_LEVEL=INFO" \
     -e "RAG_API_ENDPOINT=http://partner-rag-api-full:8080/answer" \
+    -e "MOCK_SPIFFE=${MOCK_SPIFFE:-true}" \
     -e "SPIFFE_TRUST_DOMAIN=partner.example.com" \
     -e "SPIFFE_ENDPOINT_SOCKET=/run/spire/sockets/agent.sock" \
     -e "KEYCLOAK_URL=http://partner-keycloak-full:8090" \
@@ -199,6 +208,7 @@ docker run -d \
     -e "AGENT_TIMEOUT=120" \
     -e "LOG_LEVEL=INFO" \
     -e "STRUCTURED_CONTEXT_ENABLED=true" \
+    -e "MOCK_SPIFFE=${MOCK_SPIFFE:-true}" \
     -e "SPIFFE_TRUST_DOMAIN=partner.example.com" \
     -e "KEYCLOAK_URL=http://partner-keycloak-full:8090" \
     -e "KEYCLOAK_REALM=$REALM" \
