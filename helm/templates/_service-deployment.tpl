@@ -145,6 +145,7 @@ spec:
           mountPath: /run/spire/sockets
           readOnly: true
         {{- end }}
+        {{- include "partner-agent.spireVolumeMount" $context | nindent 8 }}
         {{- if $serviceConfig.resources }}
         resources:
           {{- toYaml $serviceConfig.resources | nindent 10 }}
@@ -204,6 +205,7 @@ spec:
           type: DirectoryOrCreate
         {{- end }}
       {{- end }}
+      {{- include "partner-agent.spireVolume" $context | nindent 6 }}
       restartPolicy: Always
       terminationGracePeriodSeconds: 30
 ---

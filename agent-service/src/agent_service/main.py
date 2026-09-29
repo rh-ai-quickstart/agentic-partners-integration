@@ -744,15 +744,29 @@ If the knowledge base doesn't have relevant information, say so explicitly.""",
 
 
 if __name__ == "__main__":
+    import ssl
+
     import uvicorn
+    from shared_models.mtls import svid_paths
 
     port = int(os.getenv("PORT", "8080"))
     host = os.getenv("HOST", "0.0.0.0")
+    spiffe_mode = os.getenv("SPIFFE_MODE", "mock").lower()
 
-    uvicorn.run(
-        "agent_service.main:app",
-        host=host,
-        port=port,
-        reload=os.getenv("RELOAD", "false").lower() == "true",
-        log_level="info",
-    )
+    uvicorn_kwargs: dict = {
+        "host": host,
+        "port": port,
+        "reload": os.getenv("RELOAD", "false").lower() == "true",
+        "log_level": "info",
+    }
+
+    if spiffe_mode == "mtls":
+        paths = svid_paths()
+        uvicorn_kwargs.update(
+            ssl_keyfile=paths["key"],
+            ssl_certfile=paths["cert"],
+            ssl_ca_certs=paths["bundle"],
+            ssl_cert_reqs=ssl.CERT_OPTIONAL,
+        )
+
+    uvicorn.run("agent_service.main:app", **uvicorn_kwargs)

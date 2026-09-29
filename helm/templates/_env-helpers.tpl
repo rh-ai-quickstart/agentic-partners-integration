@@ -181,11 +181,39 @@ SPIRE/SPIFFE environment variables
   value: {{ .Values.spire.authenticationMode | default "iat" | quote }}
 - name: SPIRE_REQUIRED
   value: {{ .Values.spire.required | default false | quote }}
+{{- if eq (.Values.spire.mode | default "") "mtls" }}
+- name: SVID_DIR
+  value: "/run/spire/svids"
+{{- end }}
 {{- else }}
 - name: SPIRE_AUTH_MODE
   value: "iat"
 - name: SPIRE_REQUIRED
   value: "false"
+{{- end }}
+{{- end }}
+
+{{/*
+SPIFFE CSI volume and mount for mTLS mode
+*/}}
+{{- define "partner-agent.spireVolume" }}
+{{- if and .Values.spire.enabled (eq (.Values.spire.mode | default "") "mtls") }}
+- name: spire-svids
+{{- if .Values.spire.csiDriver }}
+  csi:
+    driver: "csi.spiffe.io"
+    readOnly: true
+{{- else }}
+  emptyDir: {}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- define "partner-agent.spireVolumeMount" }}
+{{- if and .Values.spire.enabled (eq (.Values.spire.mode | default "") "mtls") }}
+- name: spire-svids
+  mountPath: /run/spire/svids
+  readOnly: true
 {{- end }}
 {{- end }}
 

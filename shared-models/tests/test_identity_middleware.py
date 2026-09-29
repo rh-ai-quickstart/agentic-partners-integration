@@ -2,7 +2,6 @@
 
 import base64
 import json
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from shared_models.identity import WorkloadIdentity
@@ -268,4 +267,10 @@ class TestIdentityFromBearer:
         token = self._make_token({})
         request = MagicMock()
         request.headers = {"Authorization": f"Bearer {token}"}
+        assert _identity_from_bearer(request) is None
+
+    def test_returns_none_for_corrupt_payload(self):
+        """Three-part token where the payload is not valid base64/JSON."""
+        request = MagicMock()
+        request.headers = {"Authorization": "Bearer header.not~valid~b64.sig"}
         assert _identity_from_bearer(request) is None

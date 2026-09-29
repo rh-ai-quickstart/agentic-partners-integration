@@ -317,16 +317,24 @@ class TestOutboundIdentityHeaders:
         assert "X-Request-ID" not in headers
 
     @patch("shared_models.identity.SPIFFE_MODE", "mtls")
-    @patch("shared_models.identity.get_spire_client")
-    def test_mtls_mode_fetches_real_svid(self, mock_get_spire):
-        mock_client = MagicMock()
-        mock_svid = MagicMock()
-        mock_svid.spiffe_id = "spiffe://test.example.com/service/request-manager"
-        mock_client.fetch_svid.return_value = mock_svid
-        mock_get_spire.return_value = mock_client
-
+    def test_mtls_mode_no_spiffe_header(self):
+        """mTLS mode: identity is in client cert, no X-SPIFFE-ID header."""
         headers = outbound_identity_headers("request-manager")
-        assert headers["X-SPIFFE-ID"] == "spiffe://test.example.com/service/request-manager"
+        assert "X-SPIFFE-ID" not in headers
+
+    @patch("shared_models.identity.SPIFFE_MODE", "mtls")
+    def test_mtls_mode_still_sets_delegation_headers(self):
+        """mTLS mode: delegation headers are still set even without X-SPIFFE-ID."""
+        headers = outbound_identity_headers(
+            "request-manager",
+            delegation_user="spiffe://test.example.com/user/alice",
+            delegation_agent="spiffe://test.example.com/agent/support",
+            request_id="req-mtls-001",
+        )
+        assert "X-SPIFFE-ID" not in headers
+        assert headers["X-Delegation-User"] == "spiffe://test.example.com/user/alice"
+        assert headers["X-Delegation-Agent"] == "spiffe://test.example.com/agent/support"
+        assert headers["X-Request-ID"] == "req-mtls-001"
 
     @patch("shared_models.identity.SPIFFE_MODE", "mock")
     def test_mock_mode_generates_synthetic_identity(self):

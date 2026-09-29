@@ -43,6 +43,32 @@ else
 fi
 
 # =============================================================================
+# 0. mTLS: fetch SVIDs if SPIFFE_MODE=mtls
+# =============================================================================
+SPIFFE_MODE="${SPIFFE_MODE:-mock}"
+SVID_DIR="/run/spire/svids"
+
+if [ "$SPIFFE_MODE" = "mtls" ]; then
+    echo "[0/7] Fetching SVIDs for mTLS..."
+    docker volume create svid-files >/dev/null 2>&1 || true
+
+    # Use the SPIRE agent to write SVIDs to the shared volume
+    docker run --rm \
+        --name svid-fetch \
+        --network partner-agent-network \
+        -v spire-socket:/run/spire/sockets:ro \
+        -v svid-files:${SVID_DIR} \
+        ghcr.io/spiffe/spire-agent:1.9.0 \
+        api fetch x509 \
+        -write ${SVID_DIR} \
+        -socketPath /run/spire/sockets/agent.sock \
+        -timeout 10s
+
+    echo "  OK SVIDs fetched to svid-files volume"
+    echo ""
+fi
+
+# =============================================================================
 # 1. Run Database Migrations
 # =============================================================================
 echo "[1/7] Running database migrations..."
@@ -127,6 +153,13 @@ echo "[3/7] Starting Agent Service..."
 docker stop partner-agent-service-full 2>/dev/null || true
 docker rm partner-agent-service-full 2>/dev/null || true
 
+AGENT_MTLS_VOLS=""
+AGENT_MTLS_ENVS=""
+if [ "$SPIFFE_MODE" = "mtls" ]; then
+    AGENT_MTLS_VOLS="-v svid-files:${SVID_DIR}:ro"
+    AGENT_MTLS_ENVS="-e SVID_DIR=${SVID_DIR}"
+fi
+
 docker run -d \
     --name partner-agent-service-full \
     --network partner-agent-network \
@@ -134,6 +167,7 @@ docker run -d \
     -p 8001:8080 \
     -v spire-socket:/run/spire/sockets:ro \
     -v "${PROJECT_ROOT}/policies/agent_capabilities.yaml:/etc/praxis/agent_capabilities.yaml:ro" \
+    ${AGENT_MTLS_VOLS} \
     -e "DATABASE_URL=$DB_URL" \
     -e "LLM_BACKEND=gemini" \
     -e "GOOGLE_API_KEY=$GOOGLE_API_KEY" \
@@ -141,7 +175,7 @@ docker run -d \
     -e "GEMINI_API_ENDPOINT=$GEMINI_API_ENDPOINT" \
     -e "LOG_LEVEL=INFO" \
     -e "RAG_API_ENDPOINT=http://partner-rag-api-full:8080/answer" \
-    -e "SPIFFE_MODE=${SPIFFE_MODE:-mock}" \
+    -e "SPIFFE_MODE=${SPIFFE_MODE}" \
     -e "SPIFFE_TRUST_DOMAIN=partner.example.com" \
     -e "SPIFFE_ENDPOINT_SOCKET=/run/spire/sockets/agent.sock" \
     -e "KEYCLOAK_URL=http://partner-keycloak-full:8090" \
@@ -153,6 +187,7 @@ docker run -d \
     -e "KEYCLOAK_ADMIN_USERNAME=${KEYCLOAK_ADMIN_USERNAME:-admin}" \
     -e "KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin123}" \
     -e "POLICY_CAPABILITIES_PATH=/etc/praxis/agent_capabilities.yaml" \
+    ${AGENT_MTLS_ENVS} \
     partner-agent-service:${IMAGE_TAG} > /dev/null
 
 echo "  OK Agent Service started"
@@ -192,6 +227,13 @@ echo "[5/7] Starting Request Manager..."
 docker stop partner-request-manager-full 2>/dev/null || true
 docker rm partner-request-manager-full 2>/dev/null || true
 
+RM_MTLS_VOLS=""
+RM_MTLS_ENVS=""
+if [ "$SPIFFE_MODE" = "mtls" ]; then
+    RM_MTLS_VOLS="-v svid-files:${SVID_DIR}:ro"
+    RM_MTLS_ENVS="-e SVID_DIR=${SVID_DIR}"
+fi
+
 docker run -d \
     --name partner-request-manager-full \
     --network partner-agent-network \
@@ -199,6 +241,7 @@ docker run -d \
     -p 8000:8080 \
     -v spire-socket:/run/spire/sockets:ro \
     -v "${PROJECT_ROOT}/policies/agent_capabilities.yaml:/etc/praxis/agent_capabilities.yaml:ro" \
+    ${RM_MTLS_VOLS} \
     -e "DATABASE_URL=$DB_URL" \
     -e "LLM_BACKEND=gemini" \
     -e "GOOGLE_API_KEY=$GOOGLE_API_KEY" \
@@ -208,7 +251,7 @@ docker run -d \
     -e "AGENT_TIMEOUT=120" \
     -e "LOG_LEVEL=INFO" \
     -e "STRUCTURED_CONTEXT_ENABLED=true" \
-    -e "SPIFFE_MODE=${SPIFFE_MODE:-mock}" \
+    -e "SPIFFE_MODE=${SPIFFE_MODE}" \
     -e "SPIFFE_TRUST_DOMAIN=partner.example.com" \
     -e "KEYCLOAK_URL=http://partner-keycloak-full:8090" \
     -e "KEYCLOAK_REALM=$REALM" \
@@ -223,6 +266,7 @@ docker run -d \
     -e "KEYCLOAK_ADMIN_USERNAME=${KEYCLOAK_ADMIN_USERNAME:-admin}" \
     -e "KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin123}" \
     -e "POLICY_CAPABILITIES_PATH=/etc/praxis/agent_capabilities.yaml" \
+    ${RM_MTLS_ENVS} \
     partner-request-manager:${IMAGE_TAG} > /dev/null
 
 echo "  OK Request Manager started"

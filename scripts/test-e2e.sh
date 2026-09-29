@@ -1011,7 +1011,21 @@ phase_5b_identity_validation() {
         record_fail "SPIFFE: X-SPIFFE-ID header" "Expected 200, got $spiffe_code"
     fi
 
-    # 5b.12: Refresh token works
+    # 5b.12: mTLS configuration (SVID_DIR when SPIFFE_MODE=mtls)
+    if [ "$rm_spiffe" = "mtls" ]; then
+        local rm_svid_dir as_svid_dir
+        rm_svid_dir=$(docker exec partner-request-manager-full printenv SVID_DIR 2>/dev/null) || rm_svid_dir=""
+        as_svid_dir=$(docker exec partner-agent-service-full printenv SVID_DIR 2>/dev/null) || as_svid_dir=""
+        if [ -n "$rm_svid_dir" ] && [ -n "$as_svid_dir" ]; then
+            record_pass "mTLS: SVID_DIR set on both services ($rm_svid_dir)"
+        else
+            record_fail "mTLS: SVID_DIR" "rm=$rm_svid_dir, as=$as_svid_dir"
+        fi
+    else
+        record_skip "mTLS: SVID_DIR (not in mtls mode)"
+    fi
+
+    # 5b.13: Refresh token works
     if [ -n "${USER_TOKENS[carlos]:-}" ]; then
         local login_resp refresh_token refresh_resp new_token
         login_resp=$(curl -s -X POST "http://localhost:8000/auth/login" \

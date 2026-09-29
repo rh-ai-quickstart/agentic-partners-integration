@@ -596,3 +596,35 @@ class TestMainBlock:
         mock_uvicorn.assert_called_once()
         call_args = mock_uvicorn.call_args
         assert call_args[0][0] == "request_manager.main:app"
+
+    def test_main_block_mtls(self, monkeypatch):
+        """__main__ block with SPIFFE_MODE=mtls passes SSL params."""
+        monkeypatch.setenv("SPIFFE_MODE", "mtls")
+        monkeypatch.setenv("PORT", "8443")
+
+        mock_paths = {
+            "cert": "/run/spire/svids/svid.0.pem",
+            "key": "/run/spire/svids/svid.0.key",
+            "bundle": "/run/spire/svids/bundle.0.pem",
+        }
+
+        with patch("uvicorn.run") as mock_uvicorn:
+            import runpy
+            import ssl
+
+            with patch("shared_models.mtls.svid_paths", return_value=mock_paths):
+                try:
+                    runpy.run_module(
+                        "request_manager.main",
+                        run_name="__main__",
+                        alter_sys=False,
+                    )
+                except Exception:
+                    pass
+
+        mock_uvicorn.assert_called_once()
+        call_kwargs = mock_uvicorn.call_args[1]
+        assert call_kwargs["ssl_keyfile"] == mock_paths["key"]
+        assert call_kwargs["ssl_certfile"] == mock_paths["cert"]
+        assert call_kwargs["ssl_ca_certs"] == mock_paths["bundle"]
+        assert call_kwargs["ssl_cert_reqs"] == ssl.CERT_OPTIONAL

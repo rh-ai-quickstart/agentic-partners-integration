@@ -267,15 +267,29 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
 
 
 if __name__ == "__main__":
+    import ssl
+
     import uvicorn
+    from shared_models.mtls import get_svid_dir, svid_paths
 
     port = int(os.getenv("PORT", "8080"))
     host = os.getenv("HOST", "0.0.0.0")
+    spiffe_mode = os.getenv("SPIFFE_MODE", "mock").lower()
 
-    uvicorn.run(
-        "request_manager.main:app",
-        host=host,
-        port=port,
-        reload=os.getenv("RELOAD", "false").lower() == "true",
-        log_level=os.getenv("LOG_LEVEL", "INFO").lower(),
-    )
+    uvicorn_kwargs: dict = {
+        "host": host,
+        "port": port,
+        "reload": os.getenv("RELOAD", "false").lower() == "true",
+        "log_level": os.getenv("LOG_LEVEL", "INFO").lower(),
+    }
+
+    if spiffe_mode == "mtls":
+        paths = svid_paths()
+        uvicorn_kwargs.update(
+            ssl_keyfile=paths["key"],
+            ssl_certfile=paths["cert"],
+            ssl_ca_certs=paths["bundle"],
+            ssl_cert_reqs=ssl.CERT_OPTIONAL,
+        )
+
+    uvicorn.run("request_manager.main:app", **uvicorn_kwargs)

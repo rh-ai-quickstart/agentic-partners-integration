@@ -673,6 +673,28 @@ class TestAuthEnforcement:
         assert response.status_code == 403
         assert "Caller identity required" in response.json()["detail"]
 
+    @patch("shared_models.identity_middleware.IDENTITY_ENFORCEMENT", False)
+    def test_endpoint_rejects_no_identity_when_middleware_disabled(
+        self, patched_app, monkeypatch
+    ):
+        """Endpoint-level auth rejects even when middleware enforcement is off."""
+        from fastapi.testclient import TestClient
+
+        monkeypatch.setenv("ENFORCE_AGENT_AUTH", "true")
+
+        client = TestClient(patched_app)
+        response = client.post(
+            "/api/v1/agents/routing-agent/invoke",
+            json={
+                "session_id": "sess-noauth-ep",
+                "user_id": "user@test.com",
+                "message": "Hello",
+            },
+        )
+
+        assert response.status_code == 403
+        assert "mTLS certificate" in response.json()["detail"]
+
     @patch("agent_service.agents.AgentManager")
     def test_allows_request_with_service_identity(
         self, mock_agent_manager_cls, patched_app, monkeypatch
@@ -1043,7 +1065,7 @@ class TestMainBlock:
 
     @patch("uvicorn.run")
     def test_main_block(self, mock_uvicorn_run, patched_app, monkeypatch):
-        """Lines 433-438: __main__ block runs uvicorn.run with correct params."""
+        """__main__ block runs uvicorn.run with correct params."""
         monkeypatch.setenv("PORT", "9090")
         monkeypatch.setenv("HOST", "127.0.0.1")
         monkeypatch.setenv("RELOAD", "true")
@@ -1059,6 +1081,30 @@ class TestMainBlock:
             reload=True,
             log_level="info",
         )
+
+    @patch("uvicorn.run")
+    def test_main_block_mtls(self, mock_uvicorn_run, patched_app, monkeypatch):
+        """__main__ block with SPIFFE_MODE=mtls passes SSL params."""
+        monkeypatch.setenv("SPIFFE_MODE", "mtls")
+        monkeypatch.setenv("PORT", "8443")
+
+        mock_paths = {
+            "cert": "/run/spire/svids/svid.0.pem",
+            "key": "/run/spire/svids/svid.0.key",
+            "bundle": "/run/spire/svids/bundle.0.pem",
+        }
+
+        import runpy
+        import ssl
+
+        with patch("shared_models.mtls.svid_paths", return_value=mock_paths):
+            runpy.run_module("agent_service.main", run_name="__main__", alter_sys=False)
+
+        call_kwargs = mock_uvicorn_run.call_args
+        assert call_kwargs[1]["ssl_keyfile"] == mock_paths["key"]
+        assert call_kwargs[1]["ssl_certfile"] == mock_paths["cert"]
+        assert call_kwargs[1]["ssl_ca_certs"] == mock_paths["bundle"]
+        assert call_kwargs[1]["ssl_cert_reqs"] == ssl.CERT_OPTIONAL
 
 
 class TestAgentServiceStartup:

@@ -12,6 +12,7 @@ import httpx
 import jwt
 from shared_models import configure_logging
 from shared_models.identity import make_spiffe_id, outbound_identity_headers
+from shared_models.mtls import httpx_mtls_kwargs
 
 from .credential_service import CredentialService
 from .token_exchange import TokenExchangeClient, TokenExchangeError
@@ -53,7 +54,7 @@ class EnhancedAgentClient:
         """
         self.agent_service_url = agent_service_url.rstrip("/")
         self.agent_endpoints: Dict[str, str] = agent_endpoints or {}
-        self.client = httpx.AsyncClient(timeout=timeout)
+        self.client = httpx.AsyncClient(timeout=timeout, **httpx_mtls_kwargs())
 
         logger.info(
             "Initialized EnhancedAgentClient",

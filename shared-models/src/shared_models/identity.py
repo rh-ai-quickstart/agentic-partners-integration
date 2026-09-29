@@ -102,6 +102,9 @@ def outbound_identity_headers(
         spiffe_id = make_spiffe_id("service", service_name)
         headers["X-SPIFFE-ID"] = spiffe_id
         logger.info(f"Using mock SPIFFE identity: {spiffe_id}")
+    elif SPIFFE_MODE == "mtls":
+        # In mTLS mode identity is in the client certificate — no header needed.
+        logger.debug("mTLS mode: identity will be in client certificate, no header set")
     else:
         try:
             client = get_spire_client()

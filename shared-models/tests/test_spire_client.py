@@ -3,6 +3,7 @@
 Tests cover:
 - SVIDInfo dataclass and __repr__
 - SPIREClient initialization (socket_path, cli_path params)
+- SPIREClient.write_svid_files() — all branches
 - SPIREClient._find_cli() with os.path.exists checks
 - SPIREClient.fetch_svid() — all branches
 - SPIREClient.fetch_jwt_svid() — all branches
@@ -10,6 +11,7 @@ Tests cover:
 - get_spire_client() singleton
 """
 
+import os
 import subprocess
 from unittest.mock import MagicMock, patch
 
@@ -252,6 +254,86 @@ class TestFetchJwtSvid:
             with patch("subprocess.run", side_effect=OSError("permission denied")):
                 with pytest.raises(RuntimeError, match="SPIRE JWT-SVID fetch failed"):
                     client.fetch_jwt_svid("https://keycloak/dcr")
+
+
+# ── SPIREClient.write_svid_files ────────────────────────────────────────────
+
+class TestWriteSvidFiles:
+    def test_raises_if_no_cli(self):
+        client = SPIREClient(socket_path="/tmp/s.sock", cli_path=None)
+        with pytest.raises(RuntimeError, match="spire-agent CLI not found"):
+            client.write_svid_files("/tmp/svids")
+
+    def test_raises_if_socket_not_found(self):
+        client = SPIREClient(socket_path="/nonexistent/sock", cli_path="/usr/bin/spire-agent")
+        with patch("os.path.exists", return_value=False):
+            with pytest.raises(RuntimeError, match="SPIRE socket not found"):
+                client.write_svid_files("/tmp/svids")
+
+    def test_success(self, tmp_path):
+        svid_dir = str(tmp_path / "svids")
+        client = SPIREClient(socket_path="/tmp/s.sock", cli_path="/usr/bin/spire-agent")
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "Writing SVID files\n"
+
+        import os
+        def run_side_effect(*args, **kwargs):
+            os.makedirs(svid_dir, exist_ok=True)
+            for f in ["svid.0.pem", "svid.0.key", "bundle.0.pem"]:
+                (tmp_path / "svids" / f).write_text("cert-data")
+            return mock_result
+
+        with patch("os.path.exists", return_value=True):
+            with patch("subprocess.run", side_effect=run_side_effect):
+                paths = client.write_svid_files(svid_dir)
+
+        assert paths["cert"].endswith("svid.0.pem")
+        assert paths["key"].endswith("svid.0.key")
+        assert paths["bundle"].endswith("bundle.0.pem")
+
+    def test_nonzero_returncode(self, tmp_path):
+        client = SPIREClient(socket_path="/tmp/s.sock", cli_path="/usr/bin/spire-agent")
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stderr = "write failed"
+        mock_result.stdout = ""
+        with patch("os.path.exists", return_value=True):
+            with patch("subprocess.run", return_value=mock_result):
+                with pytest.raises(RuntimeError, match="SPIRE CLI write failed"):
+                    client.write_svid_files(str(tmp_path / "svids"))
+
+    def test_missing_output_file(self, tmp_path):
+        svid_dir = str(tmp_path / "svids")
+        client = SPIREClient(socket_path="/tmp/s.sock", cli_path="/usr/bin/spire-agent")
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+
+        def run_side_effect(*args, **kwargs):
+            os.makedirs(svid_dir, exist_ok=True)
+            # Only create cert — key and bundle missing → should fail
+            (tmp_path / "svids" / "svid.0.pem").write_text("cert")
+            return mock_result
+
+        real_exists = os.path.exists
+        with patch("os.path.exists", side_effect=lambda p: p == client.socket_path or real_exists(p)):
+            with patch("subprocess.run", side_effect=run_side_effect):
+                with pytest.raises(RuntimeError, match="file missing"):
+                    client.write_svid_files(svid_dir)
+
+    def test_timeout(self, tmp_path):
+        client = SPIREClient(socket_path="/tmp/s.sock", cli_path="/usr/bin/spire-agent")
+        with patch("os.path.exists", return_value=True):
+            with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="spire-agent", timeout=10)):
+                with pytest.raises(RuntimeError, match="timed out"):
+                    client.write_svid_files(str(tmp_path / "svids"))
+
+    def test_generic_exception(self, tmp_path):
+        client = SPIREClient(socket_path="/tmp/s.sock", cli_path="/usr/bin/spire-agent")
+        with patch("os.path.exists", return_value=True):
+            with patch("subprocess.run", side_effect=OSError("permission denied")):
+                with pytest.raises(RuntimeError, match="SPIRE SVID write failed"):
+                    client.write_svid_files(str(tmp_path / "svids"))
 
 
 # ── SPIREClient.is_available ────────────────────────────────────────────────

@@ -15,6 +15,7 @@ from shared_models.aaa_service import AAAService
 from shared_models.audit import AuditService
 from shared_models.database import get_db
 from shared_models.models import IntegrationType
+from shared_models.mtls import httpx_mtls_kwargs
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .aaa_middleware import AAAMiddleware
@@ -488,7 +489,7 @@ async def adk_agents(request: Request) -> Dict[str, Any]:
     if auth:
         headers["Authorization"] = auth
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, **httpx_mtls_kwargs()) as client:
             resp = await client.get(registry_url, headers=headers)
             resp.raise_for_status()
             return resp.json()

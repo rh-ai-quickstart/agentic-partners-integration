@@ -224,6 +224,67 @@ class SPIREClient:
             logger.error(f"Failed to fetch JWT-SVID from SPIRE: {e}")
             raise RuntimeError(f"SPIRE JWT-SVID fetch failed: {e}") from e
 
+    def write_svid_files(self, output_dir: str) -> dict:
+        """Fetch X.509-SVID and write cert/key/bundle files to disk.
+
+        Runs ``spire-agent api fetch x509 -write <dir>`` which writes:
+        ``svid.0.pem``, ``svid.0.key``, ``bundle.0.pem``.
+
+        Returns dict with keys ``cert``, ``key``, ``bundle`` → file paths.
+        """
+        if not self.cli_path:
+            raise RuntimeError(
+                "spire-agent CLI not found. SPIRE integration requires the CLI tool."
+            )
+        if not os.path.exists(self.socket_path):
+            raise RuntimeError(
+                f"SPIRE socket not found at {self.socket_path}. "
+                "Ensure SPIRE Agent is running."
+            )
+
+        os.makedirs(output_dir, exist_ok=True)
+
+        try:
+            result = subprocess.run(
+                [
+                    self.cli_path,
+                    "api", "fetch", "x509",
+                    "-write", output_dir,
+                    "-socketPath", self.socket_path,
+                    "-timeout", "5s",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"SPIRE CLI write failed: {result.stderr or result.stdout}"
+                )
+
+            paths = {
+                "cert": os.path.join(output_dir, "svid.0.pem"),
+                "key": os.path.join(output_dir, "svid.0.key"),
+                "bundle": os.path.join(output_dir, "bundle.0.pem"),
+            }
+
+            for name, path in paths.items():
+                if not os.path.exists(path):
+                    raise RuntimeError(
+                        f"SPIRE wrote SVIDs but {name} file missing at {path}"
+                    )
+
+            logger.info(f"Wrote SVID files to {output_dir}")
+            return paths
+
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("SPIRE CLI write timed out after 10 seconds")
+        except RuntimeError:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to write SVID files: {e}")
+            raise RuntimeError(f"SPIRE SVID write failed: {e}") from e
+
     def is_available(self) -> bool:
         """
         Check if SPIRE Agent is available.

@@ -11,6 +11,7 @@ from shared_models import SessionResponse, configure_logging
 from shared_models.audit import AuditService
 from shared_models.identity import make_spiffe_id
 from shared_models.models import NormalizedRequest
+from shared_models.mtls import httpx_mtls_kwargs
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .agent_client_enhanced import EnhancedAgentClient
@@ -437,7 +438,7 @@ class DirectHTTPStrategy(CommunicationStrategy):
             f"{self._agent_service_url.rstrip('/')}/api/v1/agents/registry"
         )
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, **httpx_mtls_kwargs()) as client:
                 resp = await client.get(registry_url)
                 resp.raise_for_status()
                 data = resp.json()
@@ -481,7 +482,7 @@ class DirectHTTPStrategy(CommunicationStrategy):
             base = invoke_url.split("/api/v1/agents/")[0] if "/api/v1/agents/" in invoke_url else invoke_url.rstrip("/")
             base_urls[name] = base
 
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=5.0, **httpx_mtls_kwargs()) as client:
             for name, base_url in base_urls.items():
                 card_url = f"{base_url}/.well-known/agent-card.json"
                 try:
